@@ -1,0 +1,6 @@
+{
+  "site_url": "https://YOUR_TENANT.sharepoint.com/sites/YOUR_SITE",
+  "folder_path": "HFC Reports",
+  "main_file": "feedback_main.xlsx",
+  "audit_file": "feedback_audit.xlsx"
+}

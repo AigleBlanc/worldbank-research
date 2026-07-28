@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Rscript *)",
+      "Bash(R *)",
+      "Bash(open *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(find *)",
+      "Bash(grep *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(python3 *)",
+      "Bash(python3 -c \"import json; json.load\\(open\\('/Users/apollinaire/Desktop/WB, 2026/hfc-autoresearch/CLAUDE/.claude/settings.json'\\)\\); print\\('valid JSON'\\)\")",
+      "Read(//Users/apollinaire/Downloads/**)",
+      "Bash(wc -l \"/Users/apollinaire/Downloads/full-report-2026-07-23.html\" *)",
+      "Bash(grep -o '<title>[^<]*</title>' \"/Users/apollinaire/Downloads/full-report-2026-07-23.html\" | head -5 *)",
+      "Bash(F=\"/Users/apollinaire/Downloads/full-report-2026-07-23.html\" *)",
+      "Bash(grep -n \"FEEDBACK_SHEET\\\\|assets/$\" -A15 \"/Users/apollinaire/Desktop/WB, 2026/hfc-autoresearch/CLAUDE/skills/hfc-fieldloop/README.md\")",
+      "Bash(echo \"exit: $?\")",
+      "Bash(python3 -c \"import json; d=json.load\\(open\\('assets/lib/google_sa.json'\\)\\); print\\('keys:', list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(python3 -c ' *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(sudo *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean -f *)"
+    ],
+    "ask": [],
+    "defaultMode": "acceptEdits"
+  }
+}
