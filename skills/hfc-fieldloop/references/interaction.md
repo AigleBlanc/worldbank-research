@@ -41,7 +41,7 @@ Same gates and semantics as the Cursor FieldLoop product; only the tool name and
 | **Additional checks** | After proposed modules reviewed — **always fires, even under Accept-all pace; never skip or auto-answer (F23)** | No additional checks (recommended) |
 | Custom check name | If user requested an extra check | Confirm proposed name + `hfc/checks/<name>.R` |
 | **Product structure** | After modules + extras; before build | Continue with this structure (recommended) |
-| OneDrive | Before build | Use project/skill config (recommended) / I will edit the site URL / Local twin only |
+| OneDrive | Before build | Use project/skill config (recommended) / I will enable/edit the folder settings / Local twin only |
 | **Feedback columns** | Before writing feedback twin | Keep these feedback columns (recommended) / Modify columns |
 | Map focus | If GPS / M8 on | Country / City / World |
 | Report type | Before build | HTML (recommended) |

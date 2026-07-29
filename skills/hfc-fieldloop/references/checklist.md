@@ -26,7 +26,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 | Item | Notes |
 |---|---|
-| `hfc/config/onedrive.json` with real `site_url`/`folder_path` | Prefer over skill placeholders |
+| `hfc/config/onedrive.json` with `"enabled": true` + `folder_path` | Prefer over skill default (`enabled: false`) |
 | Local twin only if OneDrive missing / `--no-onedrive` | Builder must still succeed |
 | One-time interactive sign-in via `scripts/onedrive_auth_setup.R`, run by the user outside Claude Code | Token then cached and auto-refreshed; no secrets stored in this package |
 | Folder shared with collaborators via OneDrive's own "Specific people" UI (once, by hand) | Code never mints its own share links |

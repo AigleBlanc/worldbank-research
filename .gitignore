@@ -4,3 +4,6 @@ malawi2/
 
 # Date files
 data/
+
+# Claude specs
+.claude/ 

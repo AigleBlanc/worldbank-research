@@ -12,7 +12,7 @@
 | F8 | Asking unbounded per-column free-text instead of module options |
 | F9 | Building without writing `hfc/config/modules.yaml` from confirmed options (silent default overwrite of user picks) |
 | F10 | Requiring monorepo gold / Malawi paths for a new survey drop-in |
-| F11 | Treating placeholder `YOUR_TENANT`/`YOUR_SITE` OneDrive JSON as live config |
+| F11 | Treating an `onedrive.json` with `"enabled": false` (or missing) as live config |
 | F12 | Enabling irrelevant M11 checks (e.g. food/ravens) when form/heuristics found no candidates |
 | F13 | Age/outlier copy that assumes child surveys when roles are generic adults/HH |
 | F14 | Calling deleted eval harness paths (`eval/`, `verify_all`, `run_demo`, SimUser as required) |

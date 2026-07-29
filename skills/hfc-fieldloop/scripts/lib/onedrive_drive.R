@@ -12,12 +12,12 @@
 # scripts/onedrive_auth_setup.R); it cannot be completed from a non-interactive
 # Rscript invocation (e.g. one launched by Claude Code via the Bash tool).
 #
-# Target: a shared SharePoint/Team site document library (not one person's
-# individual OneDrive), so multiple teammates can each sign in with their own
-# account against the same shared folder. That folder's access (e.g. sharing
-# it with specific external collaborators) is set up once by hand in the
-# OneDrive/SharePoint web UI — this code never mints its own share links, it
-# just uploads into the folder whose access is already configured.
+# Target: whoever runs the pipeline connects it to their OWN individual
+# OneDrive for Business account — no SharePoint site or Team needs to be
+# created. That person then manually shares the resulting folder with
+# collaborators (edit access) via OneDrive's normal "Specific people" sharing
+# UI — this code never mints its own share links, it just uploads into
+# whatever folder access has already been configured by hand.
 
 source_feedback_libs <- function(lib_dir) {
   source(file.path(lib_dir, "utils.R"), local = FALSE)
@@ -39,16 +39,19 @@ skill_dir_guess <- function(project_root = NULL) {
   NA_character_
 }
 
-#' Load site_url/folder_path/file names from onedrive.json
+#' Load folder_path/file names from onedrive.json
 #' Preference: hfc/config/onedrive.json → legacy config/ → assets/lib/onedrive.json.
 #' Unlike the old google_drive.json, this file holds no secrets — delegated
-#' auth needs no stored credential, just where to look.
+#' auth needs no stored credential, just where to look. There's no site/tenant
+#' URL to configure either — `get_business_onedrive()` connects to whichever
+#' account is signed in, so the only signal for "is this actually set up" is
+#' the explicit `enabled` flag (the skill ships `enabled: false`).
 load_onedrive_config <- function(project_root, skill_dir = NULL) {
   if (is.null(skill_dir) || is.na(skill_dir)) skill_dir <- skill_dir_guess(project_root)
   empty <- function(path = NA_character_, reason = NULL) {
     list(
       found = FALSE, path = path,
-      site_url = NA_character_, folder_path = NA_character_,
+      folder_path = NA_character_,
       main_file = NA_character_, audit_file = NA_character_,
       reason = reason
     )
@@ -70,14 +73,10 @@ load_onedrive_config <- function(project_root, skill_dir = NULL) {
   for (cfg_path in paths) {
     raw <- tryCatch(jsonlite::fromJSON(cfg_path), error = function(e) NULL)
     if (is.null(raw)) next
-    site_url <- if (!is.null(raw$site_url)) as.character(raw$site_url) else NA_character_
-    if (is.na(site_url) || !nzchar(site_url) || grepl("YOUR_", site_url, fixed = TRUE)) {
-      next # placeholder-only config; try the next path in the preference order
-    }
+    if (!isTRUE(raw$enabled)) next # not yet set up; try the next path in the preference order
     return(list(
       found = TRUE,
       path = normalizePath(cfg_path),
-      site_url = site_url,
       folder_path = if (!is.null(raw$folder_path) && nzchar(as.character(raw$folder_path))) {
         as.character(raw$folder_path)
       } else "HFC Reports",
@@ -89,18 +88,18 @@ load_onedrive_config <- function(project_root, skill_dir = NULL) {
       } else "feedback_audit.xlsx"
     ))
   }
-  empty(path = normalizePath(paths[[1]]), reason = "placeholder_or_incomplete_onedrive_json")
+  empty(path = normalizePath(paths[[1]]), reason = "not_enabled_in_onedrive_json")
 }
 
-# Cache the ms_drive object per site_url within one R session, so a single
-# `Rscript run_setup_build.R` run doesn't re-resolve the site on every call.
+# Cache the ms_drive object within one R session, so a single
+# `Rscript run_setup_build.R` run doesn't re-authenticate on every call.
 .onedrive_drive_cache <- new.env(parent = emptyenv())
 
 get_onedrive_drive <- function(cfg) {
-  key <- cfg$site_url
+  key <- "business_onedrive"
   cached <- mget(key, envir = .onedrive_drive_cache, ifnotfound = list(NULL))[[1]]
   if (!is.null(cached)) return(cached)
-  drive <- Microsoft365R::get_sharepoint_site(site_url = cfg$site_url)$get_drive()
+  drive <- Microsoft365R::get_business_onedrive()
   assign(key, drive, envir = .onedrive_drive_cache)
   drive
 }

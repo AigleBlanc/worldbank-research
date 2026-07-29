@@ -49,7 +49,7 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 > - `hfc/report/index.html` — findings by module (searchable tables, GPS map)
 > - `hfc/output/tracking.xlsx` — summary tabs
 > - `hfc/output/feedback_sheet.xlsx` + `hfc/registry/feedback.csv` — local twin (`status`, `resolved`)
-> - `hfc/config/onedrive.json` — `site_url`/`folder_path`, `main_file` (field) and `audit_file` (code)
+> - `hfc/config/onedrive.json` — `enabled`/`folder_path`, `main_file` (field) and `audit_file` (code)
 > - `hfc/registry/findings.csv` — stable `finding_id`s
 
 ## Folder structure

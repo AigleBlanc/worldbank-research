@@ -46,7 +46,7 @@ Installs: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxl
 
 **OneDrive auth (optional):** delegated, one-time interactive sign-in — no secrets stored in this package. Run `Rscript .claude/skills/hfc-fieldloop/scripts/onedrive_auth_setup.R` **once, yourself, in a normal interactive R/RStudio session** (not through Claude Code) to complete the browser/device-code login; `Microsoft365R`/`AzureAuth` then cache the token locally and refresh it silently on every later run.
 
-**Site/folder config:** copy `assets/lib/onedrive.example.json` → project `hfc/config/onedrive.json` and replace the placeholder with your real SharePoint/Team site URL and folder. Skill `assets/lib/onedrive.json` stays placeholders only. Without a real `site_url`, use `--no-onedrive` (local twin only).
+**Folder config:** copy `assets/lib/onedrive.example.json` → project `hfc/config/onedrive.json`, set `"enabled": true`, and adjust `folder_path`/file names if you want. No SharePoint site or Team is needed — this connects to your own individual OneDrive for Business. Skill `assets/lib/onedrive.json` ships `"enabled": false`. Without it enabled, use `--no-onedrive` (local twin only).
 
 ## Instructions
 
@@ -117,7 +117,7 @@ One-path rebuild after setup: `Rscript hfc/code/main.R` (from survey project roo
 | Tracking | `hfc/output/tracking.xlsx` |
 | Feedback twin | `hfc/output/feedback_sheet.xlsx`, `hfc/registry/feedback.csv` |
 | Findings | `hfc/registry/findings.csv` |
-| OneDrive main / audit | `hfc/config/onedrive.json` (`site_url`, `folder_path`, `main_file`, `audit_file`) |
+| OneDrive main / audit | `hfc/config/onedrive.json` (`enabled`, `folder_path`, `main_file`, `audit_file`) |
 | Report link | `hfc/project.yaml` → `report_onedrive_url` |
 | Resolved data | `data/raw/*_resolved.*` |
 
