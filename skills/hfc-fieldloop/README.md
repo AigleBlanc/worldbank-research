@@ -1,150 +1,102 @@
-# HFC FieldLoop — drop-in skill (VS Code + Claude Code)
+# HFC FieldLoop
 
-Copy this folder into any survey project as **`.claude/skills/hfc-fieldloop/`**.
+FieldLoop runs High-Frequency Checks on your survey data, builds an HTML report, and gives you one shared spreadsheet (`issue_tracking.xlsx`) where the field team, the RA, and the AI agent all track and resolve data-quality issues together.
+
+It never touches your original data file. Every fix is written to a separate copy (`data/intermediate/`), so your raw export always stays exactly as it was collected.
+
+---
+
+## 1. Install it
+
+Copy this folder into your survey project as `.claude/skills/hfc-fieldloop/`:
 
 ```
-any_survey/                            ← open this folder in VS Code
-├── .claude/skills/hfc-fieldloop/      ← this folder (skill)
-├── data/raw/                          ← .dta / .csv (+ optional form.xlsx)
-└── hfc/                               ← built product (after setup)
+your_survey/
+├── .claude/skills/hfc-fieldloop/   ← this skill
+├── data/raw/                       ← your survey export (.csv, .dta, .xlsx)
+└── hfc/                            ← created automatically once you run it
 ```
 
-**From this monorepo:** copy `skills/hfc-fieldloop/` → `any_survey/.claude/skills/hfc-fieldloop/` (create `.claude/skills/` if needed). Claude Code requires the leading-dot `.claude` name in the **target** project.
+Open `your_survey/` (not a parent folder containing many projects) in VS Code with Claude Code.
 
-Browse the skill tree: open [`structure.html`](structure.html). After setup, review **`hfc/structure.html`** in a browser before confirming Continue.
+## 2. Two things YOU need to run yourself
 
-## Overview
+Everything else in this skill is run automatically by the AI agent when you talk to it — you never type an `Rscript` command by hand for normal use. Only these two setup steps are on you:
 
-FieldLoop builds a versioned HFC package for **this** survey: checks (M1–M13, including audio/picture media files), tracking workbook, HTML report, and a feedback loop with field/RAs (two Excel files — main + audit — in a shared OneDrive folder, or local Excel twin only). A second pass applies accepted fixes to a `*_resolved` sibling beside the raw file.
-
-It does **not** replace your analysis pipeline or mutate originals in `data/raw/`.
-
-| Say | Pipeline |
-|---|---|
-| **Run HFC FieldLoop** / `/hfc-fieldloop` (+ `for <project>` if needed) | Discover → AskUserQuestion (data, required fields, modules, extras, `hfc/` structure, OneDrive, columns) → build under `hfc/` |
-| **Process HFC feedback** (+ `for <project>` if needed) | Pull feedback → option cards → apply → `*_resolved` + update `resolved` |
-
-Confirms use Claude Code **AskUserQuestion** cards. Free-text **Other** is built in. You should not type long replies like `M1=Y M2=Y M11=none`.
-
-## Data
-
-- Put microdata under `data/raw/` (`.dta`, `.csv`, or respondent `.xlsx`).
-- Optional SurveyCTO-like form improves M11 survey-specific proposals, M3 Form Version, and M4 Duration section detection; setup proceeds without it.
-- Optional media binaries under `data/raw/media/` (or `media/` beside the export) for **M12** on-disk checks; filename columns are still checked if the folder is missing.
-- Never overwrite the original file; fixes write `*_resolved` next to it.
-
-## Software requirements
-
-1. R (≥ 4.3 recommended)
-2. From the **survey project root** (parent of `.claude/`, e.g. `any_survey/`):
-
+**a) Install the R packages** (once, from a terminal in your survey project folder):
 ```bash
 Rscript .claude/skills/hfc-fieldloop/install.R
 ```
 
-Installs: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite; plus Microsoft365R, geosphere (OneDrive/GPS). Optional for M12 audio duration: `av` (or system `ffprobe`) — install does not fail without it.
+**b) Set up OneDrive** (optional, but recommended if more than one person will edit the tracking file). Skip this if you're fine with everything staying local on your own computer.
+1. Open `.claude/skills/hfc-fieldloop/assets/lib/onedrive.json` and set `"enabled": true`. Pick a `folder_path` (e.g. `"HFC Reports"`) — this is where things will be stored in your OneDrive.
+2. Sign in once, yourself, outside of Claude Code, in a normal R or RStudio session:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/setup_onedrive_auth.R
+   ```
+   This opens a browser login. After this one time, the agent can read/write that OneDrive folder automatically — no further sign-ins needed.
+3. Share that OneDrive folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
 
-**OneDrive auth (optional):** delegated, one-time interactive sign-in — no secrets stored in this package. Run `Rscript .claude/skills/hfc-fieldloop/scripts/onedrive_auth_setup.R` **once, yourself, in a normal interactive R/RStudio session** (not through Claude Code) to complete the browser/device-code login; `Microsoft365R`/`AzureAuth` then cache the token locally and refresh it silently on every later run.
+If you skip OneDrive, everything still works — the tracking file just lives locally at `hfc/output/issue_tracking.xlsx` instead of being shared automatically.
 
-**Folder config:** copy `assets/lib/onedrive.example.json` → project `hfc/config/onedrive.json`, set `"enabled": true`, and adjust `folder_path`/file names if you want. No SharePoint site or Team is needed — this connects to your own individual OneDrive for Business. Skill `assets/lib/onedrive.json` ships `"enabled": false`. Without it enabled, use `--no-onedrive` (local twin only).
+## 3. Run it
 
-## Instructions
+In Claude Code, just talk to it in plain language. Two things to say:
 
-**Survey project root** = the folder that contains both `.claude/skills/hfc-fieldloop/` and `data/raw/` (e.g. `any_survey/`). It is *not* a parent monorepo root unless that is also where your survey data lives.
-
-### Tell Claude Code which project
-
-If you opened the survey folder itself in VS Code, say:
-
-```text
-Run HFC FieldLoop
-```
-
-or type `/hfc-fieldloop`.
-
-If you opened a **parent** workspace (monorepo, multi-survey repo), **name the project folder** in the prompt so the agent does not use the workspace root:
-
-```text
-Run HFC FieldLoop for test/malawi1
-```
-
-Also fine: `for malawi1`, `project: test/malawi1`.
-
-Same rule for feedback: `Process HFC feedback for test/malawi1`.
-
-The agent should set `project_root` to that folder (the parent of that project’s `.claude/`), confirm `data/raw/` there, and run scripts with that path — not `.` at the monorepo root.
-
-### Setup steps
-
-1. Copy this skill to `.claude/skills/hfc-fieldloop/` in the survey project; add data to `data/raw/` (and optional `data/raw/media/`).
-2. From the **survey project root** (not the monorepo root unless they are the same):
-
-```bash
-Rscript .claude/skills/hfc-fieldloop/install.R
-```
-
-3. In VS Code + Claude Code: prompt as above (include the project path when the workspace is larger than one survey), or `/hfc-fieldloop`.
-4. When the agent asks, **choose** the option cards (data → **required fields: unique ID(s), country/timezone, last date** → modules → additional checks → open `hfc/structure.html` → Continue → OneDrive → feedback columns → map focus). Use **Other** only when no option fits. Do not type `M1=Y M2=…`.
-5. The **main** feedback file and the report link both live in the shared OneDrive folder (if configured) — access is set up once, by hand, via OneDrive's own sharing UI.
-6. Later: **Process HFC feedback** (again with the project path if needed); again use option cards rather than typing long replies.
-
-### CLI (from survey project root)
-
-After `hfc/config/modules.yaml` / `role_map.yaml` exist (or accept profile defaults):
-
-```bash
-# cwd = survey project root
-Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --open
-Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --no-onedrive --open
-```
-
-Other helpers:
-
-```bash
-Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R . export
-Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R . import
-Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R .
-```
-
-One-path rebuild after setup: `Rscript hfc/code/main.R` (from survey project root; written from `assets/main.R`).
-
-## Outputs map
-
-| Artifact | Location |
+| Say this | When |
 |---|---|
-| Product map | `hfc/structure.html` |
+| **"Run HFC FieldLoop"** | First time, or whenever you want to re-check the data (e.g. new submissions came in) |
+| **"Process HFC feedback"** | After the field team/RA has written comments on flagged rows in `issue_tracking.xlsx` |
+
+If your VS Code window has more than one survey project open, add the folder name: `"Run HFC FieldLoop for malawi_survey"`.
+
+The agent will ask you questions along the way using clickable option cards (never type long answers — just pick an option, or choose "Other" if nothing fits).
+
+---
+
+## How "Run HFC FieldLoop" works
+
+1. The agent finds your data (and form, if you have one) and confirms it with you.
+2. It asks a few required questions: what column identifies each person/household/unit, what to call that in the report, how to check for duplicates, which country/timezone, and the last day of data collection.
+3. It proposes which checks to run (M1–M13: duplicates, outliers, GPS, timing, missing data, etc.) — accept the defaults or review them one by one.
+4. It builds the report and opens `hfc/report/index.html` in your browser.
+5. It creates (or updates) `issue_tracking.xlsx` — one row per flagged issue.
+
+If `issue_tracking.xlsx` already exists (a second run), the agent doesn't overwrite it blindly — it shows you exactly what changed and asks you to confirm before anything is replaced. Nothing the field team already wrote is ever lost or silently dropped.
+
+## How "Process HFC feedback" works
+
+The field team and RA write comments directly into `issue_tracking.xlsx` (RIL Comment column) on any row they want fixed. Once that's done:
+
+1. Say **"Process HFC feedback"**.
+2. The agent finds every row that's still `Open` and has a comment, and shows you the list.
+3. For each one, the agent writes the fix in code, applies it to a copy of the data, and proposes what the `Status` and `Corrections` should say.
+4. Once all rows are handled, it shows you a summary of what will change in the shared tracking file and asks you to confirm.
+5. Only after you confirm does the live `issue_tracking.xlsx` actually get updated.
+
+### What the `Status` column means
+
+| Status | What it means | Who sets it |
+|---|---|---|
+| `Open` | Not yet resolved — the default | Automatic |
+| `Accepted` | Field/RA confirms this is a real issue (optional — not required for the agent to act) | Field team / RA |
+| `Revise` | Field/RA disagrees with the flag | Field team / RA |
+| `Resolved` | The agent applied a fix | Agent, after you confirm |
+| `Needs Review` | The agent couldn't confidently fix it — needs a human look | Agent, after you confirm |
+
+You don't have to set `Accepted` before the agent will act — it picks up any `Open` row that has a comment.
+
+---
+
+## Where things end up
+
+| What | Where |
+|---|---|
 | HTML report | `hfc/report/index.html` |
-| Tracking | `hfc/output/tracking.xlsx` |
-| Feedback twin | `hfc/output/feedback_sheet.xlsx`, `hfc/registry/feedback.csv` |
-| Findings | `hfc/registry/findings.csv` |
-| OneDrive main / audit | `hfc/config/onedrive.json` (`enabled`, `folder_path`, `main_file`, `audit_file`) |
-| Report link | `hfc/project.yaml` → `report_onedrive_url` |
-| Resolved data | `data/raw/*_resolved.*` |
+| Shared tracking file | `issue_tracking.xlsx` — in your OneDrive folder if configured, otherwise `hfc/output/issue_tracking.xlsx` |
+| Fixed data (raw is never touched) | `data/intermediate/` |
+| Your original data | `data/raw/` — never modified |
 
-## Folder structure (this skill)
+## A note on privacy
 
-```
-.claude/skills/hfc-fieldloop/
-├── SKILL.md
-├── README.md
-├── install.R
-├── structure.html
-├── references/          # prompts, interaction, modules, schema, checklist, flags, ai_use
-├── assets/
-│   ├── main.R
-│   ├── README_template.md
-│   ├── README_example.md
-│   ├── feedback_template.csv
-│   ├── check_templates/   # M1–M13 + custom_fed_example.R
-│   └── lib/               # onedrive*.json (no secrets — delegated auth)
-└── scripts/
-    ├── run_setup_build.R
-    ├── apply_feedback.R
-    ├── sync_feedback.R
-    ├── onedrive_auth_setup.R  # one-time interactive sign-in (run by the user)
-    └── lib/               # media, form_logic, product_structure, …
-```
-
-## AI / confidentiality
-
-Do not upload household microdata or PII to commercial AI tools. See [`references/ai_use.md`](references/ai_use.md).
+Don't paste household/respondent-level data into commercial AI chat tools. See [`references/ai_use.md`](references/ai_use.md) for details.

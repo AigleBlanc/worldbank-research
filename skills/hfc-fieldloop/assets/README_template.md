@@ -18,7 +18,7 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 ## Overview
 
 - Survey / project name:
-- What FieldLoop produces for this survey (HTML report, tracking workbook, feedback file twin, resolved data):
+- What FieldLoop produces for this survey (HTML report, shared `issue_tracking.xlsx`, fixed data under `data/intermediate/`):
 - What it does **not** produce (e.g. cleaned analysis dataset, manuscript tables):
 - Setup vs post-feedback: one sentence each
 
@@ -27,7 +27,7 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 - Microdata path under `data/raw/` (filename, format, approximate n rows / cols if known):
 - Optional instrument / form path:
 - Access / confidentiality note (internal only, DUA, etc.):
-- Rule: never mutate originals; accepted fixes write `*_resolved` sibling beside the source file
+- Rule: never mutate originals; agent-authored fixes write to `data/intermediate/<stem>.<ext>` instead
 
 ## Software requirements
 
@@ -43,7 +43,7 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 1. Place `.claude/skills/hfc-fieldloop/` in the survey project; put microdata (+ optional form) in `data/raw/`.
 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 3. In VS Code + Claude Code: **Run HFC FieldLoop** or `/hfc-fieldloop` (add `for <project>` in a monorepo). Choose AskUserQuestion option cards; use **Other** for custom answers — do not type `M1=Y M2=…`.
-4. The **main** feedback file lives in a shared OneDrive folder (if using OneDrive) — access to that folder is set up once, by hand, via OneDrive's own sharing UI, and (for a fully unattended pipeline run) someone must have already completed the one-time interactive sign-in via `scripts/onedrive_auth_setup.R`.
+4. `issue_tracking.xlsx` lives in a shared OneDrive folder (if using OneDrive) — access to that folder is set up once, by hand, via OneDrive's own sharing UI, and (for a fully unattended pipeline run) someone must have already completed the one-time interactive sign-in via `setup_onedrive_auth.R`.
 
 CLI equivalent after modules confirmed:
 
@@ -55,14 +55,16 @@ Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --no-onedrive -
 
 ### After field feedback
 
-1. Say **Process HFC feedback** (or run apply script).
-2. Review proposed fixes; confirm.
-3. Expect `data/raw/<stem>_resolved.<ext>`; raw file unchanged.
+1. Say **Process HFC feedback**. There's no built-in fix engine — the agent reads each Open row with a RIL Comment and writes the fix itself, against a working clone (not the live file directly).
+2. Review proposed fixes; confirm per row, then confirm the merged file before it's committed back to the live `issue_tracking.xlsx`.
+3. Expect `data/intermediate/<stem>.<ext>` updated (raw file unchanged); `Status` set to `Resolved`/`Needs Review` in the live file only after that final confirm.
 
 ```bash
-Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R .
-Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R . export   # optional local twin
-Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R . import
+Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R clone .
+Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R list-open .
+Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R apply . --finding-id "<Issue ID>" --corrections "<text>"
+Rscript .claude/skills/hfc-fieldloop/scripts/merge_resolutions.R .
+Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R . merged_issue_resolutions.xlsx
 ```
 
 ## Outputs
@@ -71,13 +73,10 @@ Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R . import
 |---|---|---|
 | Product map | `hfc/structure.html` | Review tree in browser before Continue |
 | HTML report | `hfc/report/index.html` | Navigable findings (searchable tables, GPS map) |
-| Tracking workbook | `hfc/output/tracking.xlsx` | Tabular check summaries |
-| Feedback twin | `hfc/output/feedback_sheet.xlsx` / `hfc/registry/feedback.csv` | Local collaboration copy |
+| Issue tracking | OneDrive `issue_tracking.xlsx` (or local `hfc/output/issue_tracking.xlsx`) / `hfc/registry/issue_tracking.csv` | The one shared file — agent, RA, and field team all edit it |
 | Findings | `hfc/registry/findings.csv` | Machine-readable findings |
-| Main file | OneDrive folder from `hfc/config/onedrive.json` → `main_file` | Field / RA edits |
 | Report link | `hfc/project.yaml` → `report_onedrive_url` | Shareable link to the built report |
-| Audit file | `audit_file` | Code mid-process + `resolved` |
-| Resolved data | `data/raw/*_resolved.*` | After Pipeline B |
+| Fixed data | `data/intermediate/<stem>.<ext>` | After Pipeline B; raw unchanged |
 
 ## Folder structure
 

@@ -106,7 +106,7 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
     }
   }
   ds$.hfc_row <- seq_len(nrow(ds))
-  ds$.hfc_id_display <- composite_id_string(ds, roles$id, roles$id_sep %||% " / ")
+  ds$.hfc_id_display <- composite_id_string(ds, roles$entity_id, roles$entity_id_sep %||% " / ")
 
   # ---- M1 Completion --------------------------------------------------------
   if (isTRUE(modules$M1$on)) {
@@ -135,16 +135,16 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
       stats_list$M1 <- list(overall = stats_overall, by_group = by_group_df,
                             by_enumerator = by_enum_df, by_date = by_date_df)
 
-      if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$school) && roles$school %in% names(ds)) {
+      if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$group) && roles$group %in% names(ds)) {
         pct_median <- modules$M1$pct_median %||% 0.5
         counts <- ds %>% mutate(.complete = complete_flag) %>%
-          filter(.complete, !is.na(.data[[roles$school]])) %>%
-          group_by(.data[[roles$school]]) %>% summarise(n = n(), .groups = "drop")
+          filter(.complete, !is.na(.data[[roles$group]])) %>%
+          group_by(.data[[roles$group]]) %>% summarise(n = n(), .groups = "drop")
         if (nrow(counts) > 1) {
           tgt <- stats::median(counts$n)
-          low_units <- counts[[roles$school]][counts$n < pct_median * tgt]
+          low_units <- counts[[roles$group]][counts$n < pct_median * tgt]
           if (length(low_units)) {
-            flagged <- ds[as.character(ds[[roles$school]]) %in% as.character(low_units), , drop = FALSE]
+            flagged <- ds[as.character(ds[[roles$group]]) %in% as.character(low_units), , drop = FALSE]
             findings_list$m1_low <- mk_findings(
               flagged, "low_completion", "M1", "low_completion",
               sprintf("Site has fewer completed submissions than %.0f%% of the median", 100 * pct_median),
@@ -159,12 +159,18 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
   # ---- M2 Duplicates (was M1) ------------------------------------------------
   if (isTRUE(modules$M2$on)) {
     tryCatch({
-      idc <- modules$M2$id %||% roles$id
+      idc <- modules$M2$id %||% roles$entity_id
       idc <- idc[!is.na(idc) & nzchar(as.character(idc)) & idc %in% names(ds)]
-      if (length(idc)) {
+      # Extra disambiguating columns (e.g. round/wave) confirmed at setup so
+      # an entity legitimately surveyed more than once isn't flagged as a
+      # duplicate — see roles$dup_key_extra / the duplicate-check-key gate.
+      extra <- modules$M2$extra_keys %||% character()
+      extra <- extra[!is.na(extra) & nzchar(as.character(extra)) & extra %in% names(ds)]
+      full_key <- c(idc, extra)
+      if (length(full_key)) {
         dups <- ds %>%
-          filter(if_all(all_of(idc), ~ !is.na(.) & as.character(.) != "")) %>%
-          group_by(across(all_of(idc))) %>%
+          filter(if_all(all_of(full_key), ~ !is.na(.) & as.character(.) != "")) %>%
+          group_by(across(all_of(full_key))) %>%
           filter(n() > 1) %>%
           ungroup()
         findings_list$m2 <- mk_findings(dups, "duplicates_id", "M2", "duplicates",
@@ -213,7 +219,8 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
             tmp$.v <- sprintf("recorded=%s expected=%s", vc[mismatch], expected[mismatch])
             findings_list$m3 <- mk_findings(
               tmp, "form_version_mismatch", "M3", "form_version_mismatch",
-              "Recorded form version doesn't match the expected version for this date", roles, ".v"
+              "Recorded form version doesn't match the expected version for this date", roles, ".v",
+              variable_name = version_col
             )
           }
         }
@@ -271,14 +278,16 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
             tmp <- ds[long_flag, , drop = FALSE]; tmp$.v <- dur[long_flag]
             findings_list$m4_long <- mk_findings(
               tmp, "long_duration", "M4", "long_duration",
-              sprintf("Interview duration more than %s SD above the mean", sd_rule), roles, ".v"
+              sprintf("Interview duration more than %s SD above the mean", sd_rule), roles, ".v",
+              variable_name = dc
             )
           }
           if (any(short_flag)) {
             tmp <- ds[short_flag, , drop = FALSE]; tmp$.v <- dur[short_flag]
             findings_list$m4_short <- mk_findings(
               tmp, "short_duration", "M4", "short_duration",
-              sprintf("Interview duration more than %s SD below the mean", sd_rule), roles, ".v"
+              sprintf("Interview duration more than %s SD below the mean", sd_rule), roles, ".v",
+              variable_name = dc
             )
           }
         }
@@ -335,7 +344,8 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
           sprintf("Numeric outlier on %s (beyond %s SD)", vc, sd_rule)
         }
         findings_list[[paste0("m6_", vc)]] <- mk_findings(
-          utils::head(tmp, 200), sprintf("outlier_%s", vc), "M6", catg, label, roles, ".v"
+          utils::head(tmp, 200), sprintf("outlier_%s", vc), "M6", catg, label, roles, ".v",
+          variable_name = vc
         )
       }
     }, error = function(e) message("M6: ", e$message))
@@ -371,7 +381,8 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
               flagged <- ds[as.character(ds[[roles$enum]]) %in% hi, , drop = FALSE]
               findings_list[[paste0("m7_", vc)]] <- mk_findings(
                 flagged, sprintf("high_missing_%s", vc), "M7", "high_missingness",
-                sprintf("Enumerator has unusually high missingness on %s", vc), roles
+                sprintf("Enumerator has unusually high missingness on %s", vc), roles,
+                variable_name = vc
               )
             }
           }
@@ -390,13 +401,13 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
       xc <- modules$M8$x %||% roles$x
       yc <- modules$M8$y %||% roles$y
       thr <- modules$M8$threshold_m %||% 300
-      sch <- roles$school
-      if (!is.na(xc) && !is.na(yc) && !is.na(sch) && all(c(xc, yc, sch) %in% names(ds))) {
+      grp <- roles$group
+      if (!is.na(xc) && !is.na(yc) && !is.na(grp) && all(c(xc, yc, grp) %in% names(ds))) {
         tmp <- ds %>%
-          mutate(x = safe_num(.data[[xc]]), y = safe_num(.data[[yc]]), sch = .data[[sch]]) %>%
-          filter(is.finite(x), is.finite(y), !is.na(sch))
-        ref <- tmp %>% group_by(sch) %>% summarise(rx = median(x), ry = median(y), .groups = "drop")
-        tmp <- tmp %>% left_join(ref, by = "sch") %>%
+          mutate(x = safe_num(.data[[xc]]), y = safe_num(.data[[yc]]), grp = .data[[grp]]) %>%
+          filter(is.finite(x), is.finite(y), !is.na(grp))
+        ref <- tmp %>% group_by(grp) %>% summarise(rx = median(x), ry = median(y), .groups = "drop")
+        tmp <- tmp %>% left_join(ref, by = "grp") %>%
           mutate(dist_m = sqrt((x - rx)^2 + (y - ry)^2))
         if (median(abs(tmp$x), na.rm = TRUE) < 180 && median(abs(tmp$y), na.rm = TRUE) < 90) {
           if (requireNamespace("geosphere", quietly = TRUE)) {
@@ -451,7 +462,7 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
           findings_list[[paste0("m9_enum_", vc)]] <- mk_findings(
             tmp, sprintf("straightlining_enum_%s", vc), "M9", "straightlining_enum",
             sprintf("Enumerator gave the same answer on %s in %.0f%%+ of their surveys", vc, enum_thr * 100),
-            roles, ".v"
+            roles, ".v", variable_name = vc
           )
         }
       }
@@ -492,58 +503,12 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
     }, error = function(e) message("M10: ", e$message))
   }
 
-  # ---- M11 Survey-specific + custom checks (was M8) ---------------------------
+  # ---- M11 Survey-specific: custom checks only (fully AI-authored per project) ---
   if (isTRUE(modules$M11$on) || length(modules$M11$custom %||% character()) > 0) {
-    enabled <- modules$M11$enabled %||% character()
-    tryCatch({
-      if ("food_receipt" %in% enabled && !is.na(roles$food) && !is.na(roles$meal) &&
-          all(c(roles$food, roles$meal) %in% names(ds))) {
-        tmp <- ds %>%
-          mutate(.food = safe_num(.data[[roles$food]]), .meal = safe_num(.data[[roles$meal]])) %>%
-          filter(!is.na(.meal), !is.na(.food), .meal == 1, .food == 0)
-        findings_list$m11f <- mk_findings(tmp, "food_receipt", "M11", "food_receipt",
-                                          "Student did not receive food, but was supposed to receive food", roles)
-      }
-      if ("cognitive" %in% enabled) {
-        cog_cols <- unique(c(roles$ravens,
-                             grep("ravens_cpm_correct|stroop|cognitive", names(ds), value = TRUE)))
-        cog_cols <- cog_cols[!is.na(cog_cols) & cog_cols %in% names(ds)]
-        for (rc in head(cog_cols, 6)) {
-          v <- safe_num(ds[[rc]])
-          ok <- is.finite(v)
-          if (sum(ok) < 30) next
-          mu <- mean(v[ok]); sdv <- stats::sd(v[ok])
-          q <- stats::quantile(v[ok], c(0.01, 0.99), names = FALSE)
-          flag <- ok & (v <= q[1] | v >= q[2] |
-                          (is.finite(sdv) & sdv > 0 & abs(v - mu) > 1.5 * sdv))
-          if (!any(flag)) next
-          tmp <- ds[flag, , drop = FALSE]
-          tmp$.v <- v[flag]
-          findings_list[[paste0("m11c_", rc)]] <- mk_findings(
-            utils::head(tmp, 200), "cognitive_outlier", "M11", "cognitive_outlier",
-            "Cognitive / test score outlier (beyond ~1.5 SD or tails)", roles, ".v"
-          )
-          break
-        }
-      }
-      if ("enrolment" %in% enabled) {
-        encol <- grep("enroll|enrolled", names(ds), ignore.case = TRUE, value = TRUE)[1]
-        if (!is.na(encol)) {
-          tmp <- ds %>% filter(as.character(.data[[encol]]) %in% c("0", "No", "no", "2"))
-          if (exists("filter_expected_skips", mode = "function") && !is.null(form_map)) {
-            tmp <- filter_expected_skips(tmp, ds, encol, form_map)
-          }
-          findings_list$m11e <- mk_findings(tmp, "enrolment", "M11", "enrolment",
-                                            "Child not enrolled / enrolment issue", roles)
-        }
-      }
-    }, error = function(e) message("M11: ", e$message))
-
     custom <- modules$M11$custom %||% character()
-    custom <- unique(c(custom, setdiff(enabled, c("food_receipt", "cognitive", "enrolment"))))
     if (!is.null(project_root) && length(custom)) {
       for (cname in custom) {
-        if (!nzchar(cname) || cname %in% c("food_receipt", "cognitive", "enrolment")) next
+        if (!nzchar(cname)) next
         cfile <- hfc_path(project_root, "checks", paste0(cname, ".R"))
         if (!file.exists(cfile)) {
           message("Custom check missing: ", cfile)
@@ -606,5 +571,6 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
 
   findings <- bind_rows(findings_list)
   if (nrow(findings) == 0) findings <- empty_findings()
+  findings <- dedupe_finding_ids(findings)
   list(findings = findings, stats = stats_list)
 }

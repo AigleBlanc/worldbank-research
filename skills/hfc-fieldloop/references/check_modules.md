@@ -6,17 +6,20 @@ Recommended choices are listed first. Star in labels = recommended.
 
 ## Required fields (dedicated gate, before module pace)
 
-Three fields are confirmed in sequence, **before any module cards** (see `interaction.md`'s Gate map) — not folded into M1–M13 review:
+Four fields are confirmed in sequence, **before any module cards** (see `interaction.md`'s Gate map) — not folded into M1–M13 review:
 
-1. **Unique identifier(s).** AskUserQuestion: single column vs. combine multiple columns (composite key, e.g. `household_id` + `member_id`).
-   - Single: profile shortlists ≤3 candidates using names, labels, and uniqueness stats (`shortlist_submission_ids()`).
-   - Composite: `multiSelect: true` over ≤4 candidates (`shortlist_composite_id_candidates()` — pools moderate-uniqueness + roster/member-like columns). After selection, report joint uniqueness inline in chat (not another gate); M2 Duplicates is the safety net if the combination isn't perfectly unique.
-2. **Country(ies) + timezone.** AskUserQuestion: single vs. multiple countries.
+1. **Entity ID.** AskUserQuestion: single column vs. combine multiple columns (composite key, e.g. `household_id` + `member_id`) — this is the analysis-unit identifier (person/household/school/...), **not necessarily row-unique**.
+   - Single: profile shortlists ≤3 candidates using names, labels, and uniqueness stats (`shortlist_entity_ids()`).
+   - Composite: `multiSelect: true` over ≤4 candidates (`shortlist_composite_entity_ids()` — pools moderate-uniqueness + roster/member-like columns). After selection, report joint uniqueness inline in chat (not another gate).
+2. **Duplicate-check key.** Check whether Entity ID is already 100% unique per row in the raw data.
+   - Already unique: auto-resolve to "Entity ID alone," state it inline in chat, **skip the AskUserQuestion** — don't interrupt the common case.
+   - Repeats (e.g. a household surveyed across multiple rounds): AskUserQuestion — Entity ID alone (only if the repeats really are duplicates) / add detected round/wave-like column(s) (`detect_duplicate_key_candidates()`, `multiSelect: true`, ≤4 candidates) / Other. Do not skip when Entity ID repeats (F27) — this feeds M2's actual grouping key, so a household legitimately surveyed twice isn't flagged as a duplicate.
+3. **Country(ies) + timezone.** AskUserQuestion: single vs. multiple countries.
    - Single: confirm one country → one global timezone (best-effort guess from any weak signal, e.g. project/folder name, is fine as one option — free-text Other is always available).
    - Multiple: shortlist a country-indicator column (`shortlist_country_columns()`), resolve each distinct value's timezone (`resolve_country_timezone_column()`), and **always show the resolved timezone back for confirmation/override** (F24) — never treat a lookup match as live without showing it. Unmatched countries fall back to asking for a raw IANA timezone string directly.
-3. **Last date of data collection.** AskUserQuestion: use the detected max date from the data (recommended) vs. a different date (Other). Do not skip (F25) — this drives report-wide bold-highlighting and the Last Day tab.
+4. **Last date of data collection.** AskUserQuestion: use the detected max date from the data (recommended) vs. a different date (Other). Do not skip (F25) — this drives report-wide bold-highlighting and the Last Day tab.
 
-Persist to `hfc/config/role_map.yaml`: `id`, `id_sep`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`.
+Persist to `hfc/config/role_map.yaml`: `entity_id`, `entity_id_sep`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`.
 
 ## Nested / skip-logic questions
 
@@ -50,10 +53,10 @@ Cards when reviewing:
 1. M2 — Duplicates
    - On (recommended)
    - Off
-2. M2 — ID column(s) — usually already chosen in the required-fields gate; only re-ask if reviewing
-3. M2 — Extra dup keys (optional)
-   - None (recommended)
-   - Device + enumerator
+2. M2 — Entity ID column(s) — usually already chosen in the required-fields gate; only re-ask if reviewing
+3. M2 — Extra dup keys — usually already chosen in the duplicate-check-key sub-gate (e.g. round/wave); only re-ask if reviewing
+   - None (recommended when Entity ID is already unique)
+   - [detected round/wave-like column(s)]
 
 ## M3 — Form Version
 
@@ -127,14 +130,13 @@ Flat table only: Variable | Mean | SD | Min | Max | Obs — no panel/lettered gr
 
 ## M11 — Survey-specific
 
-**Default: None** unless form/heuristics propose 0–5 checks for *this* survey.
+**Default: None.** M11 has no built-in checks — every M11 finding comes from a
+custom check the agent writes for this survey's specific content, described
+by the user at the Additional checks gate.
 
-1. M11 — Survey-specific: None (recommended when empty) / Enable all proposed / (or one proposed check per option if ≤4)
-   Prefer: None / Enable all proposed when several candidates exist; otherwise sequential asks.
-
-Examples of proposed checks: food receipt vs program; enrolment; cognitive outliers.
-
-Custom user-described checks (from the Additional checks gate) are also registered under M11/`custom` and live as `hfc/checks/<name>.R`.
+Custom user-described checks are registered under M11/`custom` and live as
+`hfc/checks/<name>.R`, with an exported `run_<name>(ds, roles)` — see
+`assets/check_templates/custom_check_example.R` for the convention.
 
 ## M12 — Media files (audio + pictures)
 
@@ -174,7 +176,7 @@ Source of truth for how modules appear in `hfc/report/index.html` (mirrored as `
 | M5 | Irregular Timing | Flags interviews conducted at unusual times — weekends or outside normal working hours — using each submission's local time zone. |
 | M6 | Numeric Outliers | Flags unusually high or low values on key numeric questions (e.g. ages, scores) that fall outside the normal range for this survey. |
 | M7 | Missingness | Flags variables and enumerators with unusually high rates of missing or sentinel-coded (e.g. 99, -9999) responses on key survey questions. |
-| M8 | GPS Location | Flags submissions recorded far from where that school/site's other submissions were recorded, which can mean the interview happened somewhere unexpected. |
+| M8 | GPS Location | Flags submissions recorded far from where other submissions at that site were recorded, which can mean the interview happened somewhere unexpected. |
 | M9 | Straightlining | Flags enumerators who gave the same answer on a question in most of their interviews, and submissions where most ordinal/Likert-style questions share one identical value. |
 | M10 | Summary Statistics | A simple reference table of mean, SD, min, max, and observation count for the survey's most important numeric variables. |
 | M11 | Survey-Specific | Flags logic issues specific to this survey's content (for example, a mismatch between a record saying something happened and the respondent's own answer), including any custom checks requested for this project. |

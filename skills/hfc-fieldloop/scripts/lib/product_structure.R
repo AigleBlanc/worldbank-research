@@ -76,7 +76,7 @@ write_product_structure_html <- function(project_root, open = FALSE) {
   <main>
     <h1>FieldLoop product — ', proj_name, '</h1>
     <p class="lede">Built artifacts for this survey live under <code>hfc/</code>. Raw microdata stays in <code>data/raw/</code>; the skill stays in <code>hfc-fieldloop/</code>.</p>
-    <p class="note"><strong>Review in browser, then Continue.</strong> Confirm this layout via AskUserQuestion before the full build writes checks, report, and feedback twins.</p>
+    <p class="note"><strong>Review in browser, then Continue.</strong> Confirm this layout via AskUserQuestion before the full build writes checks, the report, and the shared issue tracking file.</p>
     <div class="tree" aria-label="Product folder tree">
       <ul class="tree-root">
         <li class="dir"><span class="name">', proj_name, '/</span>
@@ -93,10 +93,15 @@ write_product_structure_html <- function(project_root, open = FALSE) {
                     <li>onedrive.json · module_cards.txt</li>
                   </ul>
                 </li>
-                <li class="dir"><span class="name">checks/</span><span class="meta">M1–M13 + custom (e.g. fed.R)</span></li>
+                <li class="dir"><span class="name">checks/</span><span class="meta">M1–M13 + custom (e.g. example_check.R)</span></li>
                 <li class="dir"><span class="name">code/</span><span class="meta">main.R</span></li>
-                <li class="dir"><span class="name">registry/</span><span class="meta">findings.csv · feedback.csv</span></li>
-                <li class="dir"><span class="name">output/</span><span class="meta">tracking.xlsx · feedback_sheet.xlsx</span></li>
+                <li class="dir"><span class="name">registry/</span><span class="meta">findings.csv · issue_tracking.csv</span></li>
+                <li class="dir"><span class="name">output/</span><span class="meta">issue_tracking.xlsx (or OneDrive, once configured)</span>
+                  <ul>
+                    <li class="dir"><span class="name">intermediate/</span><span class="meta">&lt;date&gt;_issue_tracking.xlsx — one snapshot per build</span></li>
+                    <li class="dir"><span class="name">resolutions/</span><span class="meta">&lt;date&gt;_issues_resolution.xlsx — working clone during feedback</span></li>
+                  </ul>
+                </li>
                 <li class="dir"><span class="name">report/</span><span class="meta">index.html</span></li>
                 <li class="dir"><span class="name">fixes/</span><span class="meta">post-feedback</span></li>
                 <li class="dir"><span class="name">instrument/</span><span class="meta">optional form copy</span></li>

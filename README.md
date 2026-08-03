@@ -1,6 +1,6 @@
 # Claude Code FieldLoop staging
 
-Drop-in skill for **VS Code + Claude Code**. Same product as repo-root [`hfc-fieldloop/`](../hfc-fieldloop/) (Cursor); this copy uses AskUserQuestion instead of AskQuestion.
+Drop-in skill for **VS Code + Claude Code**, staged here for testing before being copied into a survey project.
 
 ## Test in a survey project
 

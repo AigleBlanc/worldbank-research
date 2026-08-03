@@ -18,7 +18,7 @@ Same gates and semantics as the Cursor FieldLoop product; only the tool name and
 9. Do **not** dump numbered menus in plain chat when AskUserQuestion is available.
 10. **Fallback** (AskUserQuestion unavailable): same options as a short numbered list; user replies with a single number/letter — still not long free-form module strings.
 11. Max ~8–12 cards for module setup; never one free-text question per column.
-12. **Required-fields gate** is mandatory after data confirm, before any module cards — three sequential sub-gates: unique identifier(s) (single or composite; shortlist ≤3/≤4 candidates, Other automatic; do not proceed without a choice, F20), country(ies) + timezone (always show the resolved timezone back for confirmation, F24), and last date of data collection (F25).
+12. **Required-fields gate** is mandatory after data confirm, before any module cards — four sequential sub-gates: Entity ID (single or composite; shortlist ≤3/≤4 candidates, Other automatic; do not proceed without a choice, F20), duplicate-check key (auto-skip only when Entity ID is already unique; otherwise offer Entity ID alone / detected round-wave-like candidates, F27), country(ies) + timezone (always show the resolved timezone back for confirmation, F24), and last date of data collection (F25).
 13. Some gates are genuinely sequential — a later question's options or wording depend on an earlier answer (e.g. M7 Missingness: sentinel-code question must name the variables just confirmed). Author the dependent question after the prior answer resolves; do not pre-write it as a static card.
 14. Agent note: AskUserQuestion is unavailable inside Agent-tool subagents — run these confirms in the main chat.
 
@@ -28,8 +28,9 @@ Same gates and semantics as the Cursor FieldLoop product; only the tool name and
 |---|---|---|
 | Project folder | Workspace has multiple surveys / path unclear | up to 4 candidates |
 | Data files | After discover | Use discovered paths (recommended) / Pick different paths / Wait — I will upload |
-| **Unique identifier(s)** | **Immediately after data confirm** | Single column vs. combine multiple; up to 3 (single) or 4 (composite, `multiSelect`) shortlisted candidates |
-| **Country(ies) + timezone** | **Right after unique ID(s)** | Single country vs. multiple (+ country column if multiple); resolved timezone always shown back for confirmation (F24) |
+| **Entity ID** | **Immediately after data confirm** | Single column vs. combine multiple; up to 3 (single) or 4 (composite, `multiSelect`) shortlisted candidates |
+| **Duplicate-check key** | **Right after Entity ID** | Auto-skipped when Entity ID is already unique; otherwise Entity ID alone / add detected round-wave-like column(s), up to 4 (`multiSelect`) (F27) |
+| **Country(ies) + timezone** | **Right after duplicate-check key** | Single country vs. multiple (+ country column if multiple); resolved timezone always shown back for confirmation (F24) |
 | **Last date of data collection** | **Right after country/timezone** | Use detected max date (recommended) / a different date (F25) |
 | Media folder | Media filename cols found | Use discovered folder (recommended) / Column-only checks (no folder) |
 | Module pace | After profile | Accept all recommended defaults / Review module-by-module |
@@ -41,8 +42,8 @@ Same gates and semantics as the Cursor FieldLoop product; only the tool name and
 | **Additional checks** | After proposed modules reviewed — **always fires, even under Accept-all pace; never skip or auto-answer (F23)** | No additional checks (recommended) |
 | Custom check name | If user requested an extra check | Confirm proposed name + `hfc/checks/<name>.R` |
 | **Product structure** | After modules + extras; before build | Continue with this structure (recommended) |
-| OneDrive | Before build | Use project/skill config (recommended) / I will enable/edit the folder settings / Local twin only |
-| **Feedback columns** | Before writing feedback twin | Keep these feedback columns (recommended) / Modify columns |
+| OneDrive | Before build | Use configured folder (recommended, if enabled) / I will set it up now / Local twin only |
+| **Issue tracking columns** | Before writing the issue tracking twin | Keep the standard columns (recommended) / Modify columns |
 | Map focus | If GPS / M8 on | Country / City / World |
 | Report type | Before build | HTML (recommended) |
 | Project README | After draft | Write this README (recommended) |

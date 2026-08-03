@@ -1,9 +1,13 @@
 # Test folders
 scratch/
 malawi2/
+tests/
 
 # Date files
 data/
 
 # Claude specs
-.claude/ 
+.claude/
+
+# OS junk
+.DS_Store

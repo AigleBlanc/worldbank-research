@@ -5,8 +5,8 @@ description: >-
   Use when the user says "Run HFC FieldLoop", "Start FieldLoop", "Process HFC feedback",
   "Run FieldLoop fixes", or "Apply field feedback", or invokes /hfc-fieldloop. Discovers
   data/form, confirms check modules with AskUserQuestion option cards, builds product
-  under hfc/ (HTML report + tracking + feedback Sheet twin), or runs the post-feedback
-  fix pipeline to write *_resolved files.
+  under hfc/ (HTML report + one shared issue_tracking.xlsx), or runs the
+  post-feedback fix pipeline, writing agent-authored fixes to data/intermediate/.
 ---
 
 # HFC FieldLoop (drop-in project skill — Claude Code)
@@ -27,15 +27,15 @@ Two pipelines — choose by the user's prompt (see `references/prompts.md`):
 | Intent | Trigger examples | What you do |
 |---|---|---|
 | **A. Setup** | "Run HFC FieldLoop" (+ `for <project>` if workspace is a monorepo) | Discover → AskUserQuestion confirms → `hfc/` outline → build → open HTML |
-| **B. Post-feedback** | "Process HFC feedback" (+ `for <project>` when needed) | Read feedback → AskUserQuestion confirms → apply → `*_resolved` + `resolved` column |
+| **B. Post-feedback** | "Process HFC feedback" (+ `for <project>` when needed) | Clone → list Open+RIL-Comment rows → per row: read + write fix code → apply (single pass) → merge back → confirm → commit |
 
 Authority (read; do not invent standards):
 
 - `references/interaction.md` — **AskUserQuestion** UX (required for all gates; multiple-choice, not typed mega-strings)
 - `references/check_modules.md` — M1–M13 option-card specs + required-fields gate + nested skip-logic
-- `references/feedback_schema.md` — required feedback columns including `status` / `resolved`
+- `references/issue_tracking_schema.md` — the issue-tracking file's schema, including the `Status` lifecycle
 - `references/checklist.md` — package completeness
-- `references/flags.md` — failure modes (incl. F19–F25)
+- `references/flags.md` — failure modes (incl. F19–F28)
 - `references/prompts.md` — exact trigger phrases
 - `references/ai_use.md` — no PII to commercial AI
 
@@ -43,9 +43,11 @@ Helpers (prefer `Rscript` rather than reimplementing):
 
 - `scripts/lib/discover.R` — find/create `data/raw`, classify data vs form
 - `scripts/run_setup_build.R` — build after modules confirmed (project root as arg); writes under `hfc/`
-- `scripts/apply_feedback.R` — post-feedback pipeline
-- `scripts/sync_feedback.R` — export/import local Sheet twin
-- `assets/feedback_template.csv` — schema template
+- `scripts/apply_feedback.R` — post-feedback CLI (`clone` / `list-open` / `apply` / `needs-review`); fix logic is agent-authored, see `scripts/lib/apply_feedback_helpers.R`
+- `scripts/merge_issues.R` / `scripts/merge_resolutions.R` — fold a dated snapshot / resolutions clone back into `issue_tracking.xlsx`, producing a `merged_*.xlsx` for the agent to review
+- `scripts/commit_merged_issue_tracking.R` — the only script that ever overwrites the live `issue_tracking.xlsx`, run only after explicit AskUserQuestion confirmation
+- `scripts/sync_feedback.R` — pull/push the single `issue_tracking.xlsx` ↔ OneDrive (or local fallback)
+- `assets/issue_tracking_template.csv` — schema template
 - `assets/README_template.md` / `assets/README_example.md` — draft project README on setup
 - `assets/check_templates/` — M1–M13 skeletons (live logic: `scripts/lib/run_checks.R`, `scripts/lib/media.R`)
 - `scripts/lib/media.R` — detect media cols, media folder, M12 file checks
@@ -65,16 +67,16 @@ Helpers (prefer `Rscript` rather than reimplementing):
 ## Operating principles
 
 1. Phases that write files wait for explicit AskUserQuestion confirmation (no silent proceed).
-2. Never mutate original microdata in `data/raw/` except by writing a **new** `*_resolved.*` sibling.
+2. Never mutate original microdata in `data/raw/` — agent-authored fixes write to `data/intermediate/<stem>.<ext>` instead (one evolving file, sibling of `data/raw/`).
 3. Confirm via **option cards**, not free-text module strings. Max ~8–12 cards after data confirm — never 100 per-column questions.
-4. Feedback: **two OneDrive Excel files** when configured — `main_file` (field) + `audit_file` (code), in a folder inside the runner's own individual OneDrive for Business (no SharePoint site or Team needed) — plus local `hfc/output/feedback_sheet.xlsx`. Folder location lives in project `hfc/config/onedrive.json` (copy from `assets/lib/onedrive.example.json`). Skill `assets/lib/onedrive.json` ships `"enabled": false`. Auth is delegated one-time interactive sign-in (`scripts/onedrive_auth_setup.R`, run once by the user outside Claude Code) — no secrets stored in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI. If OneDrive missing/not yet signed in, succeed with **local twin only**.
+4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). Once `assets/lib/onedrive.json` has `"enabled": true`, that file's folder in the runner's own individual OneDrive for Business (no SharePoint site or Team needed) becomes the **sole source of truth** — there is no permanent local copy that persists as "the real file"; every read fetches current state, every write commits back. If OneDrive isn't configured, or a call fails, local `hfc/output/issue_tracking.xlsx` becomes the sole store instead — exactly one location either way, never a persistent dual copy. Two dated-snapshot subfolders live alongside it: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/onedrive.json` — the only file that matters, edited directly, no per-project override. Auth is delegated one-time interactive sign-in (`setup_onedrive_auth.R`, run once by the user outside Claude Code) — no secrets stored in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
 5. After HTML build, auto-open with `utils::browseURL()` (or OS `open`).
 6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **selected** options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed (step 8 below).
-7. Default M11 (Survey-Specific) to **off / empty** unless form or heuristics find candidates; list 0–5 survey-specific options from *this* data only (split across asks if more than 4 choices).
+7. M11 (Survey-Specific) has no built-in checks and defaults to **off / empty** — every M11 finding comes from a custom check the agent writes for this survey's specific content, driven entirely by what the user describes at the Additional-checks gate (step 8).
 8. **Additional-checks gate is mandatory, every run (F23):** immediately after module cards/Accept-all, always run the "Additional checks?" AskUserQuestion (`No additional checks` recommended / Other automatic). Never infer "no" silently, never fold it into the pace question, never skip it because Accept-all was chosen. If Other, also write the custom check's ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (see step A2.7).
 9. Draft project-root `README.md` from `assets/README_template.md`; confirm with AskUserQuestion once. Point to `references/ai_use.md`.
 10. **M12 media:** if audio/image filename columns exist, propose M12 ON. AskUserQuestion for media folder if not discovered. Proceed with column-only checks if folder missing. Never put filename cols under M13.
-11. **Required-fields hard gate:** after data confirm, and before any module cards, confirm THREE fields in sequence — (a) unique identifier(s) (single column, or a confirmed multi-column composite key; shortlist ≤3/≤4 candidates, F20), (b) country/countries of data collection + resolved timezone, always shown back for confirmation, never trusted silently (F24), and (c) last date of data collection, used for report-wide bold-highlighting and the Last Day tab (F25). Persist all three to `hfc/config/role_map.yaml`.
+11. **Required-fields hard gate:** after data confirm, and before any module cards, confirm FIVE fields in sequence — (a) Entity ID (single column, or a confirmed multi-column composite key; shortlist ≤3/≤4 candidates, F20) — the analysis-unit identifier, not necessarily row-unique, (b) Entity Label — what to call it in the HTML report (e.g. "Student ID"), display-only, (c) the duplicate-check key (Entity ID alone, auto-resolved when already unique, or Entity ID + confirmed extra column(s) like round/wave, F27), (d) country/countries of data collection + resolved timezone, always shown back for confirmation, never trusted silently (F24), and (e) last date of data collection, used for report-wide bold-highlighting and the Last Day tab (F25). Persist all five to `hfc/config/role_map.yaml`.
 12. **Nested questions:** when form `relevant` says a child item is skipped, do not flag blanks as missing (F22).
 13. All product code/artifacts under **`hfc/`** (F21).
 14. **Report-wide sort & highlight:** every table sorts by enumerator, then unique ID, then date (most recent first); every finding matching the confirmed last date renders bold, and appears in the dedicated Last Day tab.
@@ -97,6 +99,14 @@ Never run discover/build against the monorepo root when a nested survey project 
 
 If packages may be missing: `Rscript <project_root>/.claude/skills/hfc-fieldloop/install.R` (or `Rscript "${CLAUDE_SKILL_DIR}/install.R"`).
 
+### A0b. Config-reuse gate
+
+Immediately after project root is resolved, check whether `hfc/config/role_map.yaml` **and** `hfc/config/modules.yaml` already exist (a prior run). If neither exists, skip straight to A1 — nothing to reuse yet. If they exist, **AskUserQuestion** before touching anything else:
+
+- **Reuse existing configuration and rebuild** (recommended) — proceed straight to A4 build with the saved configs; skip A1's required-fields gate and A2's module cards (the existing reload logic in `run_setup_build.R` already handles this — no new code needed).
+- **Start fresh** — delete `hfc/config/role_map.yaml` and `hfc/config/modules.yaml` (only those two files), then run A1–A4 normally as a first-ever setup.
+- **Open the config files for me to edit, then continue** — tell the user the paths (`hfc/config/role_map.yaml`, `hfc/config/modules.yaml`), wait for them to confirm they're done editing, then proceed straight to A4 build; the existing reload logic picks up their hand-edited values automatically.
+
 ### A1. Discover data + survey
 
 1. Run discovery under `project_root` (not workspace root unless they are the same).
@@ -107,11 +117,13 @@ If packages may be missing: `Rscript <project_root>/.claude/skills/hfc-fieldloop
    - Wait — I will upload / drop files
 4. **If not found / Wait:** create `data/raw/` if missing; tell user to drop files; AskUserQuestion again after they continue. Do not proceed without data.
 5. Form optional: proceed data-only; note M11 / M3 / nested logic weaker.
-6. **Required-fields gate (mandatory, immediately after data confirm, before any module cards) — three sequential AskUserQuestion sub-gates, in this order:**
-   1. **Unique identifier(s):** ask single column vs. combine multiple columns (e.g. household_id + member_id). If single: shortlist ≤3 candidates (name/label/uniqueness rationale via `shortlist_submission_ids()`). If composite: `multiSelect: true` over ≤4 candidates from `shortlist_composite_id_candidates()`; after selection, report joint uniqueness inline in chat (not another gate — M2 Duplicates is the safety net for imperfect uniqueness). Do not proceed without a choice (F20).
-   2. **Country(ies) + timezone:** ask single vs. multiple countries. If multiple, shortlist a country-indicator column (`shortlist_country_columns()`), resolve each value's timezone (`resolve_country_timezone_column()` in `scripts/lib/geo_timezone.R`), and **always show the resolved timezone back for confirmation/override** — never treat an unconfirmed lookup as live (F24). If single, confirm one country → one global timezone.
-   3. **Last date of data collection:** offer the detected max date from the data (recommended) vs. a different date (Other). Do not skip this gate (F25) — it drives report-wide bold-highlighting and the Last Day tab.
-   Persist all three to `hfc/config/role_map.yaml` (`id`, `id_sep`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`).
+6. **Required-fields gate (mandatory, immediately after data confirm, before any module cards) — five sequential AskUserQuestion sub-gates, in this order:**
+   1. **Entity ID:** the analysis-unit identifier (person/household/school/whatever level the user wants) — ask single column vs. combine multiple columns (e.g. household_id + member_id). If single: shortlist ≤3 candidates (name/label/uniqueness rationale via `shortlist_entity_ids()`). If composite: `multiSelect: true` over ≤4 candidates from `shortlist_composite_entity_ids()`; after selection, report joint uniqueness inline in chat. Note: Entity ID is **not** necessarily row-unique (e.g. a household surveyed across multiple rounds keeps the same Entity ID) — that's what the next sub-gate is for. Do not proceed without a choice (F20).
+   2. **Entity Label:** ask what to call the Entity ID in the HTML report (e.g. "Student ID", "Household ID") — offer "Entity ID" (generic, recommended) vs. Other (free text). Display-only: the xlsx/csv exports always keep the fixed generic "Entity ID" header regardless of this answer.
+   3. **Duplicate-check key:** check whether Entity ID (as just confirmed) is already 100% unique per row in the raw data. If yes, auto-resolve to "Entity ID alone" and say so inline in chat — do **not** fire an AskUserQuestion for this common case. If Entity ID repeats, ask: *"Entity ID repeats in your data — does that reflect real duplicates, or do you need extra columns (e.g. round/wave) to check for true duplicates?"* — options: Entity ID alone / add detected candidate column(s) (`detect_duplicate_key_candidates()`, `multiSelect: true`, ≤4) / Other. Do not skip when Entity ID repeats (F27).
+   4. **Country(ies) + timezone:** ask single vs. multiple countries. If multiple, shortlist a country-indicator column (`shortlist_country_columns()`), resolve each value's timezone (`resolve_country_timezone_column()` in `scripts/lib/geo_timezone.R`), and **always show the resolved timezone back for confirmation/override** — never treat an unconfirmed lookup as live (F24). If single, confirm one country → one global timezone.
+   5. **Last date of data collection:** offer the detected max date from the data (recommended) vs. a different date (Other). Do not skip this gate (F25) — it drives report-wide bold-highlighting and the Last Day tab.
+   Persist all five to `hfc/config/role_map.yaml` (`entity_id`, `entity_id_sep`, `entity_label`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`).
 7. If media filename columns exist: **AskUserQuestion** for media folder (use discovered / column-only; Other automatic).
 
 ### A2. Audit + module confirmation
@@ -135,38 +147,63 @@ If packages may be missing: `Rscript <project_root>/.claude/skills/hfc-fieldloop
 
 ### A4. Build
 
-1. **AskUserQuestion — OneDrive:** show the configured folder from `hfc/config/onedrive.json` if present and `enabled: true`, else note it's not yet set up in `assets/lib/onedrive.json` — Use project / skill config when live (recommended) / I will set it up (enable + folder name) / Local twin only. Never treat `enabled: false` as live. If edit: write `"enabled": true` plus the desired `folder_path`/file names to `hfc/config/onedrive.json` (from `onedrive.example.json`) or paste via Other. Note: the very first sign-in is an interactive browser/device-code flow the user must complete themselves (`scripts/onedrive_auth_setup.R`, run outside Claude Code) — it cannot be completed from inside a non-interactive `Rscript` call, and it connects to the user's own OneDrive, not a shared site.
-2. **AskUserQuestion — Feedback columns:** Keep these feedback columns (recommended) / Modify columns. Schema: no `check_module`; `status` (default Open); `resolved` (default No).
+1. **AskUserQuestion — OneDrive:** read `assets/lib/onedrive.json` (the skill's own file, no per-project override) — if `enabled: true`, show the configured folder and offer Use it (recommended) / Local file only. If `enabled: false` or missing, note it's not yet set up and offer I will set it up now (enable + folder name) / Local file only. Never treat `enabled: false` as live. If the user sets it up: write `"enabled": true` plus the desired `folder_path`/`main_file` directly to `assets/lib/onedrive.json` (this is skill-level config, so it applies to every project using this skill copy — say so). Note: the very first sign-in is an interactive browser/device-code flow the user must complete themselves (`setup_onedrive_auth.R`, run outside Claude Code) — it cannot be completed from inside a non-interactive `Rscript` call, and it connects to the user's own OneDrive, not a shared site.
+2. **AskUserQuestion — Issue tracking columns:** Keep the standard columns (recommended) / Modify columns. Schema: `Status` (Open default; any Open row with a non-empty RIL Comment is eligible for the agent to interpret and resolve in Pipeline B — Accepted/Revise are advisory triage values the field/RA can still set, not a hard gate; Resolved/Needs Review are set by the agent, always in the resolutions clone first, never written straight to the live file — see `references/issue_tracking_schema.md`).
 3. **AskUserQuestion — Map focus** (if GPS on): Country / City / World. Store in `hfc/config/report.yaml`.
 4. **AskUserQuestion — Report:** HTML (recommended).
 5. Write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from confirmed options.
 6. Run builder:
    ```bash
    Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>" --open
-   # or local twin only:
+   # or local file only:
    Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>" --no-onedrive --open
    # equivalently:
    Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" "<project_root>" --open
    ```
+   On a rebuild (an `issue_tracking.xlsx` already exists), the builder does **not** overwrite it — it writes `merged_issue_tracking.xlsx` and prints `MERGE_PENDING`. Show the user what changed (preserved rows unchanged, genuinely-new findings appended, nothing dropped), **AskUserQuestion** to confirm, then run:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_tracking.xlsx
+   ```
+   Warn the user first that this replaces the live shared file — this is the only script that ever does so.
 7. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
-8. Auto-open `hfc/report/index.html`. Tell user: the **main** feedback file and the report itself now live in the shared OneDrive folder (access already granted via the one-time manual folder share) — surface the report's OneDrive link from the run summary. Later: **Process HFC feedback** (+ project path if monorepo).
+8. Auto-open `hfc/report/index.html`. Tell user: `issue_tracking.xlsx` and the report itself now live in the shared OneDrive folder (access already granted via the one-time manual folder share) — surface the report's OneDrive link from the run summary. Later: **Process HFC feedback** (+ project path if monorepo).
 
 ---
 
 ## Pipeline B — Post-feedback
 
-1. Confirm feedback exists: pull **main** file from OneDrive or local twin `hfc/output/feedback_sheet.xlsx`; required columns include **`resolved`** and **`status`** (map legacy `ra_status` if present).
-2. Summarize by `status`; propose fix actions for accepted rows.
-3. **AskUserQuestion:** Proceed with accepted rows (recommended).
-4. Propose `hfc/fixes/` layout; **AskUserQuestion:** Confirm fix plan (recommended).
-5. Run:
+There is no built-in fix-classification engine. **You (the agent) read and interpret each eligible row yourself and write the fix code** — same philosophy as M11 custom checks: no fixed catalog of fix types, decide per row. Trigger: any row with `Status == Open` **and** a non-empty RIL Comment is eligible — there is no separate Accepted gate. Everything in this pipeline operates on today's `resolutions/<date>_issues_resolution.xlsx` clone, never on `issue_tracking.xlsx` directly — the live shared file is only ever updated by the explicit merge-and-commit step at the end.
+
+1. Create (or reuse) today's resolutions clone:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R "<project_root>"
-   # or: Rscript "${CLAUDE_SKILL_DIR}/scripts/apply_feedback.R" "<project_root>"
+   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R clone "<project_root>"
    ```
-6. Write `data/raw/<stem>_resolved.<ext>` (same directory as source). Raw unchanged.
-7. Update feedback `resolved`; push to **audit_file** when OneDrive configured.
-8. Tell user to review the resolved file (no need to type a long reply).
+   Copies the current `issue_tracking.xlsx` to `resolutions/<YYYYMMDD>_issues_resolution.xlsx`. A same-day second pass reuses the existing clone rather than discarding in-progress work.
+2. List eligible rows:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R list-open "<project_root>"
+   ```
+   Writes `hfc/registry/fix_candidates.csv` — one row per `Status=Open` + non-empty RIL Comment finding in today's clone, with full context (Issue, RIL Comment, Entity ID, Variable, Value, Issue Category, Issue ID).
+3. **AskUserQuestion:** Proceed with these N rows (recommended).
+4. For **each** eligible row, in turn, in a single pass — interpret the RIL Comment, propose Corrections, apply the fix, and set Status, all at once:
+   a. Read its `Issue`, `RIL Comment`, and other fields; decide the concrete technical fix the RIL Comment is asking for (e.g. drop the row, cap a value, recode a field), and draft the Corrections text describing what you did.
+   b. Write `hfc/fixes/<Issue ID, sanitized>.R` defining `fix(ds) -> ds` that implements it.
+   c. Apply it:
+      ```bash
+      Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R apply "<project_root>" --finding-id "<Issue ID>" --corrections "<what you did>"
+      ```
+      This loads `data/intermediate/<stem>.<ext>` if a prior fix already exists (else the original `data/raw/` file — never mutated), applies your `fix(ds)`, saves the result back to `data/intermediate/<stem>.<ext>` (one evolving file, so fixes accumulate), and writes the Corrections text + `Status = Resolved` into today's resolutions clone **only** — `issue_tracking.xlsx` is never touched by this step.
+   d. If you can't confidently resolve a row, run `apply_feedback.R needs-review "<project_root>" --finding-id "<Issue ID>"` instead — sets `Status = Needs Review` in the clone.
+5. Once all rows are handled, fold the clone back into the live file:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/merge_resolutions.R "<project_root>"
+   ```
+   Writes `merged_issue_resolutions.xlsx` next to `issue_tracking.xlsx` — for matched Issue IDs, Status/Corrections/Correction Author come from today's clone, every other column (in case the field/RA edited something concurrently) comes from the live file untouched; unmatched live rows pass through unchanged.
+6. Show the user a summary of what changed (which rows go Resolved/Needs Review), **AskUserQuestion** to confirm, warning that this replaces the live shared file, then commit:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_resolutions.xlsx
+   ```
+7. Tell the user which rows were Resolved vs. Needs Review, and that `data/intermediate/<stem>.<ext>` now holds the latest fixed data (raw unchanged).
 
 ---
 
@@ -175,7 +212,7 @@ If packages may be missing: `Rscript <project_root>/.claude/skills/hfc-fieldloop
 - Do not overwrite the original microdata file.
 - Do not start Pipeline A when the user clearly asked for post-feedback (and vice versa).
 - Do not invent access dates, exhibit IDs, or column names that are not in the data.
-- Do not attempt an interactive OneDrive sign-in from a Claude-Code-driven run; use the local Excel twin if the token isn't already cached (the user must run `scripts/onedrive_auth_setup.R` themselves first).
+- Do not attempt an interactive OneDrive sign-in from a Claude-Code-driven run; fall back to the local `issue_tracking.xlsx` if the token isn't already cached (the user must run `setup_onedrive_auth.R` themselves first).
 - Do not require monorepo gold data, `eval/`, `verify_all`, or SimUser for product runs.
 - Do not use typed mega-replies (`M1=Y M2=…`) as the primary confirmation UX when AskUserQuestion is available (F19).
 - Do not skip the unique-ID AskUserQuestion gate (F20).

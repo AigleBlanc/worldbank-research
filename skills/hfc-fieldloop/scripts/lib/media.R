@@ -157,24 +157,28 @@ run_m12_media_checks <- function(ds, roles, modules) {
   id_display <- if (".hfc_id_display" %in% names(ds)) {
     ds$.hfc_id_display
   } else {
-    composite_id_string(ds, roles$id, roles$id_sep %||% " / ")
+    composite_id_string(ds, roles$entity_id, roles$entity_id_sep %||% " / ")
   }
 
   # Informational: on-disk checks skipped
   if (!disk_ok) {
     out$skip <- tibble(
-      finding_id = "media_no_folder-000001",
+      finding_id = "m12:no_folder",
       check_id = "media_no_folder",
       check_module = "M12",
       category = "media_folder_missing",
       issue = "Media folder not found — on-disk file checks skipped; empty-cell and extension checks still run",
       submission_id = "",
-      school_id = "",
+      group_id = "",
       enumerator = "",
       start_date = "",
       end_date = "",
       key = "",
-      value = ""
+      value = "",
+      variable = "",
+      entity_name = "",
+      group_name = "",
+      enumerator_name = ""
     )
   }
 
@@ -342,13 +346,7 @@ run_m12_media_checks <- function(ds, roles, modules) {
     }
   }
 
-  # Cap per-check explosion: bind and dedupe by finding_id prefix + submission
   findings <- dplyr::bind_rows(out)
   if (is.null(findings) || nrow(findings) == 0) return(empty_findings())
-  # Re-number finding_ids that share check_id for stability after bind
-  findings <- findings %>%
-    group_by(check_id) %>%
-    mutate(finding_id = sprintf("%s-%06d", check_id[[1]], row_number())) %>%
-    ungroup()
   findings
 }

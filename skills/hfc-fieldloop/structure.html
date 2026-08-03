@@ -131,6 +131,7 @@
             <li><span class="name">SKILL.md</span><span class="meta">agent contract</span></li>
             <li><span class="name">README.md</span><span class="meta">product docs</span></li>
             <li><span class="name">install.R</span><span class="meta">CRAN deps</span></li>
+            <li><span class="name">setup_onedrive_auth.R</span><span class="meta">one-time interactive sign-in, run by the user</span></li>
             <li><span class="name">structure.html</span><span class="meta">this map</span></li>
             <li><span class="name">.gitignore</span></li>
             <li class="dir"><span class="name">references/</span>
@@ -138,7 +139,7 @@
                 <li>prompts.md</li>
                 <li>interaction.md</li>
                 <li>check_modules.md</li>
-                <li>feedback_schema.md</li>
+                <li>issue_tracking_schema.md</li>
                 <li>checklist.md</li>
                 <li>flags.md</li>
                 <li>ai_use.md</li>
@@ -149,36 +150,45 @@
                 <li>main.R</li>
                 <li>README_template.md</li>
                 <li>README_example.md</li>
-                <li>feedback_template.csv</li>
-                <li>FEEDBACK_SHEET.md</li>
+                <li>issue_tracking_template.csv</li>
                 <li class="dir"><span class="name">check_templates/</span>
                   <ul>
                     <li>README.md</li>
-                    <li>M1_duplicates.R … M9_media.R</li>
+                    <li>M1_completion.R … M13_consent.R</li>
+                    <li>custom_check_example.R <span class="meta">M11 template</span></li>
                   </ul>
                 </li>
                 <li class="dir"><span class="name">lib/</span>
                   <ul>
-                    <li>google_drive.json <span class="meta">placeholders</span></li>
-                    <li>google_drive.example.json</li>
-                    <li>google_sa.json <span class="meta">gitignored</span></li>
+                    <li>onedrive.json <span class="meta">the only OneDrive config that matters — edit directly</span></li>
                   </ul>
                 </li>
               </ul>
             </li>
             <li class="dir"><span class="name">scripts/</span>
               <ul>
-                <li>run_setup_build.R</li>
-                <li>apply_feedback.R</li>
-                <li>sync_feedback.R</li>
+                <li>run_setup_build.R <span class="meta">Pipeline A build</span></li>
+                <li>apply_feedback.R <span class="meta">Pipeline B: clone / list-open / apply / needs-review</span></li>
+                <li>merge_issues.R <span class="meta">rebuild-time merge → merged_issue_tracking.xlsx</span></li>
+                <li>merge_resolutions.R <span class="meta">post-feedback merge → merged_issue_resolutions.xlsx</span></li>
+                <li>commit_merged_issue_tracking.R <span class="meta">only script that overwrites the live file</span></li>
+                <li>sync_feedback.R <span class="meta">pull/push issue_tracking.xlsx</span></li>
                 <li class="dir"><span class="name">lib/</span>
                   <ul>
                     <li>utils.R, discover.R, media.R, profile_roles.R</li>
-                    <li>form_logic.R, product_structure.R, confirm_modules.R</li>
-                    <li>run_checks.R, build_outputs.R, feedback_drive.R</li>
+                    <li>form_logic.R, product_structure.R, geo_timezone.R</li>
+                    <li>run_checks.R, build_outputs.R</li>
+                    <li>onedrive_drive.R, issue_store.R, apply_feedback_helpers.R</li>
                   </ul>
                 </li>
               </ul>
+            </li>
+            <li class="dir"><span class="name">tests/</span>
+              <ul>
+                <li>README.md, fixture_data.R</li>
+                <li>test_run_checks.R, test_build_outputs.R, test_issue_tracking.R</li>
+              </ul>
+              <span class="meta">local only — gitignored, not part of the pushed package</span>
             </li>
           </ul>
         </li>
@@ -187,7 +197,7 @@
 
     <details>
       <summary>After drop-in (project root)</summary>
-      <p>The survey project gains an <code>hfc/</code> product tree: <code>checks/</code>, <code>code/</code>, <code>config/</code>, <code>registry/</code>, <code>output/</code>, <code>report/</code>, <code>fixes/</code>, <code>structure.html</code>, and <code>project.yaml</code>. Raw data stays under <code>data/raw/</code>; accepted fixes write <code>*_resolved</code> siblings. Open <code>hfc/structure.html</code> in a browser and confirm Continue before the full build. Gone from the skill: <code>eval/</code>, verify/demo harness, SimUser.</p>
+      <p>The survey project gains an <code>hfc/</code> product tree: <code>checks/</code>, <code>code/</code>, <code>config/</code>, <code>registry/</code>, <code>output/</code> (plus <code>output/intermediate/</code> and <code>output/resolutions/</code> — dated tracking snapshots and post-feedback clones), <code>report/</code>, <code>fixes/</code>, <code>structure.html</code>, and <code>project.yaml</code>. Raw data stays under <code>data/raw/</code>; agent-authored fixes write to <code>data/intermediate/</code> instead. Open <code>hfc/structure.html</code> in a browser and confirm Continue before the full build. <code>issue_tracking.xlsx</code> is the single shared tracking file — OneDrive-hosted once configured, local otherwise — see <code>references/issue_tracking_schema.md</code>.</p>
     </details>
 
     <footer>HFC FieldLoop · structure map · update when layout changes</footer>

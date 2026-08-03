@@ -10,15 +10,13 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | Instrument / form | optional (preferred for M11 / M3 / nested skip-logic) |
 | Media folder (`data/raw/media/` or discovered) | optional (M12 on-disk checks; column checks still run) |
 | `hfc/structure.html` reviewed + Continue confirmed | yes |
-| Required-fields gate: unique identifier(s), country(ies)/timezone, last date | yes (F20, F24, F25) |
+| Required-fields gate: Entity ID, duplicate-check key, country(ies)/timezone, last date | yes (F20, F27, F24, F25) |
 | `hfc/project.yaml` | yes |
 | `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` | yes (agent writes from confirmed options before build) |
 | `hfc/code/main.R` (one path global) | yes |
 | `hfc/checks/` modules (stubs, templates, custom) | yes |
-| `hfc/registry/findings.csv` with stable `finding_id` | yes |
-| `hfc/registry/feedback.csv` with `status` + `resolved` | yes (defaults Open / No; no `check_module`) |
-| `hfc/output/tracking.xlsx` | yes |
-| `hfc/output/feedback_sheet.xlsx` | yes |
+| `hfc/registry/findings.csv` with stable, content-derived `finding_id` (Issue ID) | yes |
+| `hfc/registry/issue_tracking.csv` (local audit copy) + live `issue_tracking.xlsx` (OneDrive or `hfc/output/`) with `Status` | yes (defaults Open; the one shared file — agent, RA, and field team all edit it) |
 | `hfc/report/index.html` | yes (navigable; searchable tables) |
 | Project `README.md` drafted from `assets/README_template.md` | yes (confirm once with user) |
 
@@ -26,19 +24,19 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 | Item | Notes |
 |---|---|
-| `hfc/config/onedrive.json` with `"enabled": true` + `folder_path` | Prefer over skill default (`enabled: false`) |
-| Local twin only if OneDrive missing / `--no-onedrive` | Builder must still succeed |
-| One-time interactive sign-in via `scripts/onedrive_auth_setup.R`, run by the user outside Claude Code | Token then cached and auto-refreshed; no secrets stored in this package |
+| `assets/lib/onedrive.json` with `"enabled": true` + `folder_path` | Skill-level config, no per-project override |
+| Local `issue_tracking.xlsx` only if OneDrive missing / `--no-onedrive` | Builder must still succeed |
+| One-time interactive sign-in via `setup_onedrive_auth.R`, run by the user outside Claude Code | Token then cached and auto-refreshed; no secrets stored in this package |
 | Folder shared with collaborators via OneDrive's own "Specific people" UI (once, by hand) | Code never mints its own share links |
 
 ## After post-feedback
 
 | Item | Required |
 |---|---|
-| `hfc/fixes/` as used | yes |
-| `data/raw/*_resolved.*` sibling (raw unchanged) | yes |
-| Feedback `resolved` updated (`yes` / `partial` / `No`) | yes |
-| Audit file updated when OneDrive configured | yes |
+| `hfc/fixes/<Issue ID>.R` per resolved/reviewed finding, defining `fix(ds)` | yes |
+| `data/intermediate/<stem>.<ext>` updated (raw unchanged) | yes |
+| Today's `resolutions/<date>_issues_resolution.xlsx` clone has `Status` updated (`Resolved` / `Needs Review`) + `Corrections` — live `issue_tracking.xlsx` untouched until merge+commit | yes |
+| `merge_resolutions.R` run, merged file reviewed with the user (AskUserQuestion), then `commit_merged_issue_tracking.R` run to update the live file | yes |
 
 ## Smoke
 
@@ -46,7 +44,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 - [ ] Report tables searchable; GPS map present when M8 on; flagged points render in a distinct color from non-flagged points
 - [ ] Last Day tab present and populated when a last date was confirmed; matching findings bolded in their own module tables
 - [ ] Every table sorted by enumerator, then unique ID, then date (most recent first)
-- [ ] Main feedback file (and report link) reachable from the shared OneDrive folder (or twin path documented)
+- [ ] `issue_tracking.xlsx`, plus the report link, reachable from the shared OneDrive folder (or local `hfc/output/` path documented)
 - [ ] Grep: no hardcoded user home paths outside `hfc/code/main.R`
 - [ ] If survey has pictures/audio: M12 on; filename cols not mis-filed under M13
 - [ ] Nested skip-logic blanks not flagged as missing when form available

@@ -1,15 +1,16 @@
-# Feedback Sheet + report-link helpers: OneDrive for Business via Microsoft365R.
+# OneDrive for Business primitives via Microsoft365R, plus report-link upload.
 #
-#   main_file  — shared with field (they edit field_comment / proposed_fix)
-#   audit_file — working copy the code updates mid-process (status, resolved, …)
-#
-# Local twin: hfc/output/feedback_sheet.xlsx + hfc/registry/feedback.csv
+# One file matters: main_file (issue_tracking.xlsx) — shared with the field
+# team, edited collaboratively by the agent, RA, and field team. Once OneDrive
+# is configured it is the sole source of truth (see scripts/lib/issue_store.R,
+# which builds the actual fetch/commit logic on top of the primitives here).
+# Local fallback (OneDrive not configured): hfc/output/issue_tracking.xlsx.
 #
 # Auth model: delegated, one-time interactive sign-in (browser or device code).
 # Microsoft365R/AzureAuth caches the token locally and refreshes it silently
 # afterward — nothing secret is stored in this skill package. The first-ever
 # sign-in must be done by a human in an interactive R session (see
-# scripts/onedrive_auth_setup.R); it cannot be completed from a non-interactive
+# setup_onedrive_auth.R); it cannot be completed from a non-interactive
 # Rscript invocation (e.g. one launched by Claude Code via the Bash tool).
 #
 # Target: whoever runs the pipeline connects it to their OWN individual
@@ -18,11 +19,6 @@
 # collaborators (edit access) via OneDrive's normal "Specific people" sharing
 # UI — this code never mints its own share links, it just uploads into
 # whatever folder access has already been configured by hand.
-
-source_feedback_libs <- function(lib_dir) {
-  source(file.path(lib_dir, "utils.R"), local = FALSE)
-  source(file.path(lib_dir, "build_outputs.R"), local = FALSE)
-}
 
 # Resolve skill root for config lookup
 skill_dir_guess <- function(project_root = NULL) {
@@ -40,55 +36,43 @@ skill_dir_guess <- function(project_root = NULL) {
 }
 
 #' Load folder_path/file names from onedrive.json
-#' Preference: hfc/config/onedrive.json → legacy config/ → assets/lib/onedrive.json.
-#' Unlike the old google_drive.json, this file holds no secrets — delegated
-#' auth needs no stored credential, just where to look. There's no site/tenant
-#' URL to configure either — `get_business_onedrive()` connects to whichever
-#' account is signed in, so the only signal for "is this actually set up" is
-#' the explicit `enabled` flag (the skill ships `enabled: false`).
+#' One rule: the only file that matters is assets/lib/onedrive.json, inside
+#' the skill itself. Every user edits that one file with their own
+#' folder/file names — there is no per-project override and no legacy path
+#' to fall back to. Unlike the old google_drive.json, this file holds no
+#' secrets — delegated auth needs no stored credential, just where to look.
+#' There's no site/tenant URL to configure either — `get_business_onedrive()`
+#' connects to whichever account is signed in, so the only signal for "is
+#' this actually set up" is the explicit `enabled` flag (the skill ships
+#' `enabled: false`).
 load_onedrive_config <- function(project_root, skill_dir = NULL) {
   if (is.null(skill_dir) || is.na(skill_dir)) skill_dir <- skill_dir_guess(project_root)
   empty <- function(path = NA_character_, reason = NULL) {
     list(
       found = FALSE, path = path,
       folder_path = NA_character_,
-      main_file = NA_character_, audit_file = NA_character_,
+      main_file = NA_character_,
       reason = reason
     )
   }
-  paths <- c(
-    if (exists("hfc_path", mode = "function")) {
-      hfc_path(project_root, "config", "onedrive.json")
-    } else {
-      file.path(project_root, "hfc", "config", "onedrive.json")
-    },
-    file.path(project_root, "config", "onedrive.json"), # legacy
-    if (!is.null(skill_dir) && !is.na(skill_dir)) {
-      file.path(skill_dir, "assets", "lib", "onedrive.json")
-    } else NA_character_
-  )
-  paths <- unique(paths[!is.na(paths) & file.exists(paths)])
-  if (!length(paths)) return(empty(reason = "missing_onedrive_json"))
+  if (is.null(skill_dir) || is.na(skill_dir)) return(empty(reason = "missing_onedrive_json"))
+  cfg_path <- file.path(skill_dir, "assets", "lib", "onedrive.json")
+  if (!file.exists(cfg_path)) return(empty(reason = "missing_onedrive_json"))
 
-  for (cfg_path in paths) {
-    raw <- tryCatch(jsonlite::fromJSON(cfg_path), error = function(e) NULL)
-    if (is.null(raw)) next
-    if (!isTRUE(raw$enabled)) next # not yet set up; try the next path in the preference order
-    return(list(
-      found = TRUE,
-      path = normalizePath(cfg_path),
-      folder_path = if (!is.null(raw$folder_path) && nzchar(as.character(raw$folder_path))) {
-        as.character(raw$folder_path)
-      } else "HFC Reports",
-      main_file = if (!is.null(raw$main_file) && nzchar(as.character(raw$main_file))) {
-        as.character(raw$main_file)
-      } else "feedback_main.xlsx",
-      audit_file = if (!is.null(raw$audit_file) && nzchar(as.character(raw$audit_file))) {
-        as.character(raw$audit_file)
-      } else "feedback_audit.xlsx"
-    ))
-  }
-  empty(path = normalizePath(paths[[1]]), reason = "not_enabled_in_onedrive_json")
+  raw <- tryCatch(jsonlite::fromJSON(cfg_path), error = function(e) NULL)
+  if (is.null(raw)) return(empty(path = normalizePath(cfg_path), reason = "invalid_onedrive_json"))
+  if (!isTRUE(raw$enabled)) return(empty(path = normalizePath(cfg_path), reason = "not_enabled_in_onedrive_json"))
+
+  list(
+    found = TRUE,
+    path = normalizePath(cfg_path),
+    folder_path = if (!is.null(raw$folder_path) && nzchar(as.character(raw$folder_path))) {
+      as.character(raw$folder_path)
+    } else "HFC Reports",
+    main_file = if (!is.null(raw$main_file) && nzchar(as.character(raw$main_file))) {
+      as.character(raw$main_file)
+    } else "issue_tracking.xlsx"
+  )
 }
 
 # Cache the ms_drive object within one R session, so a single
@@ -121,132 +105,21 @@ ensure_onedrive_folder <- function(drive, folder_path) {
   item
 }
 
-#' Write a data frame to a temp .xlsx (sheet "Feedback") and upload it into
-#' the configured OneDrive folder under `dest_name`. Returns the uploaded
-#' item's properties (id, webUrl) or NULL on failure.
+#' Write a findings/issue-tracking data frame (internal snake_case columns)
+#' to a temp .xlsx (sheet "Tracking", display header labels — same sheet name
+#' local write_issue_tracking() uses, so read paths don't need to care whether
+#' a file came from OneDrive or local disk) and upload it into the given
+#' OneDrive folder under `dest_name`. Returns the uploaded item's properties
+#' (id, webUrl). Generic over `dest_name` — used for the live issue_tracking
+#' file, dated snapshots, and merged_*.xlsx alike; see scripts/lib/issue_store.R
+#' for the higher-level fetch/commit wrappers built on this.
 upload_feedback_xlsx <- function(drive, folder_item, df, dest_name) {
   suppressPackageStartupMessages({ library(openxlsx) })
   tmp <- tempfile(fileext = ".xlsx")
   on.exit(unlink(tmp), add = TRUE)
-  openxlsx::write.xlsx(df, tmp, sheetName = "Feedback", overwrite = TRUE)
+  openxlsx::write.xlsx(rename_to_issue_tracking_headers(df), tmp, sheetName = "Tracking", overwrite = TRUE)
   item <- folder_item$upload(tmp, dest = dest_name)
   item$properties
-}
-
-#' Push feedback to main (field) + audit (code) files from onedrive.json
-#' @param target "both" | "main" | "audit"
-sync_drive_feedback_best_effort <- function(project_root, project_id, feedback_df,
-                                            skill_dir = NULL, target = "both") {
-  out <- list(
-    status = "skipped",
-    reason = "no_config",
-    main_url = NA_character_, audit_url = NA_character_,
-    main_id = NA_character_, audit_id = NA_character_,
-    # backwards-compat aliases (main = field-facing)
-    url = NA_character_, id = NA_character_
-  )
-  if (is.null(skill_dir) || is.na(skill_dir)) skill_dir <- skill_dir_guess(project_root)
-  cfg <- load_onedrive_config(project_root, skill_dir)
-  if (!isTRUE(cfg$found)) {
-    out$reason <- cfg$reason %||% "missing_onedrive_json"
-    return(out)
-  }
-  if (!requireNamespace("Microsoft365R", quietly = TRUE)) {
-    out$reason <- "packages_missing"
-    return(out)
-  }
-
-  tryCatch({
-    drive <- get_onedrive_drive(cfg)
-    folder_item <- ensure_onedrive_folder(drive, cfg$folder_path)
-    wrote <- character()
-    if (target %in% c("both", "main")) {
-      props <- upload_feedback_xlsx(drive, folder_item, feedback_df, cfg$main_file)
-      out$main_url <- props$webUrl %||% NA_character_
-      out$url <- out$main_url
-      wrote <- c(wrote, "main")
-    }
-    if (target %in% c("both", "audit")) {
-      props <- upload_feedback_xlsx(drive, folder_item, feedback_df, cfg$audit_file)
-      out$audit_url <- props$webUrl %||% NA_character_
-      wrote <- c(wrote, "audit")
-    }
-    out$status <- "ok"
-    out$reason <- paste0("synced:", paste(wrote, collapse = "+"))
-  }, error = function(e) {
-    out$status <<- "skipped"
-    out$reason <<- conditionMessage(e)
-  })
-  out
-}
-
-# Backwards-compatible name used by older callers
-create_drive_sheet_best_effort <- function(project_root, project_id, feedback_df,
-                                           skill_dir = NULL) {
-  sync_drive_feedback_best_effort(project_root, project_id, feedback_df,
-                                  skill_dir = skill_dir, target = "both")
-}
-
-#' Pull field edits from main_file; fall back to audit then local
-pull_feedback_from_drive <- function(project_root, skill_dir = NULL, prefer = c("main", "audit")) {
-  if (is.null(skill_dir) || is.na(skill_dir)) skill_dir <- skill_dir_guess(project_root)
-  cfg <- load_onedrive_config(project_root, skill_dir)
-  out <- list(ok = FALSE, source = NA_character_, data = NULL, reason = NULL)
-  if (!isTRUE(cfg$found)) {
-    out$reason <- cfg$reason %||% "missing_onedrive_json"
-    return(out)
-  }
-  if (!requireNamespace("Microsoft365R", quietly = TRUE)) {
-    out$reason <- "packages_missing"
-    return(out)
-  }
-  tryCatch({
-    drive <- get_onedrive_drive(cfg)
-    folder_item <- ensure_onedrive_folder(drive, cfg$folder_path)
-    for (which in prefer) {
-      fname <- if (identical(which, "main")) cfg$main_file else cfg$audit_file
-      item <- tryCatch(folder_item$get_item(fname), error = function(e) NULL)
-      if (is.null(item)) next
-      tmp <- tempfile(fileext = ".xlsx")
-      on.exit(unlink(tmp), add = TRUE)
-      item$download(dest = tmp, overwrite = TRUE)
-      df <- as.data.frame(openxlsx::read.xlsx(tmp, sheet = "Feedback"), stringsAsFactors = FALSE)
-      out$ok <- TRUE
-      out$source <- which
-      out$data <- ensure_resolved_column(df)
-      out$reason <- paste0("read_", which)
-      return(out)
-    }
-    out$reason <- "no_readable_file"
-  }, error = function(e) {
-    out$reason <<- conditionMessage(e)
-  })
-  out
-}
-
-#' After code updates (resolved / ra_status), push to audit_file (and optionally main)
-push_feedback_midprocess <- function(project_root, feedback_df, skill_dir = NULL,
-                                     target = "audit") {
-  sync_drive_feedback_best_effort(
-    project_root, basename(project_root), feedback_df,
-    skill_dir = skill_dir, target = target
-  )
-}
-
-ensure_resolved_column <- function(fb) {
-  fb <- as.data.frame(fb, stringsAsFactors = FALSE)
-  if ("ra_status" %in% names(fb) && !"status" %in% names(fb)) {
-    fb$status <- fb$ra_status
-    fb$ra_status <- NULL
-  }
-  if (!"status" %in% names(fb)) fb$status <- "Open"
-  fb$status[is.na(fb$status) | !nzchar(as.character(fb$status))] <- "Open"
-  fb$status[tolower(as.character(fb$status)) == "open"] <- "Open"
-  if (!"resolved" %in% names(fb)) fb$resolved <- "No"
-  fb$resolved[is.na(fb$resolved) | !nzchar(as.character(fb$resolved))] <- "No"
-  fb$resolved[tolower(as.character(fb$resolved)) == "no"] <- "No"
-  fb$check_module <- NULL
-  fb
 }
 
 #' Upload the built HTML report into the configured OneDrive folder and

@@ -1,11 +1,12 @@
-# M11 — Survey-specific (only enable checks detected for THIS survey)
-# Examples: food_receipt, enrolment, cognitive — propose from form/data; default none.
-# Custom checks (from the Additional-checks gate) also register here as
+# M11 — Survey-specific: fully custom, authored per project (default none).
+# There are no built-in M11 checks — every M11 finding comes from a custom
+# check the AI writes for this survey's specific content.
+# Custom checks (from the Additional-checks gate) register here as
 # hfc/checks/<name>.R with an exported run_<name>(ds, roles) — see
-# custom_fed_example.R and references/check_modules.md.
+# custom_check_example.R and references/check_modules.md.
 
-check_m11_survey_specific <- function(ds, roles, enabled = character()) {
-  if (!length(enabled)) return(empty_findings())
+check_m11_survey_specific <- function(ds, roles, custom = character()) {
+  if (!length(custom)) return(empty_findings())
   # See scripts/lib/run_checks.R M11 for full implementation
   empty_findings()
 }
@@ -32,7 +33,7 @@ check_m11_survey_specific <- function(ds, roles, enabled = character()) {
 #     finding_id = sprintf("enumerator_volume-%06d", seq_len(nrow(hot))),
 #     check_id = "enumerator_volume", check_module = "M11", category = "enumerator_volume",
 #     issue = sprintf("Enumerator daily volume outlier (n=%s)", hot$n),
-#     submission_id = "", school_id = "", enumerator = as.character(hot$.enum),
+#     submission_id = "", group_id = "", enumerator = as.character(hot$.enum),
 #     start_date = as.character(hot$.day), end_date = "", key = "",
 #     value = as.character(hot$n)
 #   )

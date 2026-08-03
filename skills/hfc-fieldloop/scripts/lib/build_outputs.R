@@ -1,444 +1,589 @@
-# Build tracking workbook, HTML report, feedback twin, project scaffold under hfc/.
+# Build the issue-tracking workbook (tracking + feedback in one), HTML report,
+# project scaffold under hfc/. Single output replaces the old separate
+# tracking.xlsx + feedback twin.
 
-feedback_required_cols <- function() {
-  c("finding_id", "submission_id", "issue",
-    "field_comment", "proposed_fix", "status", "resolved",
-    "initials", "date_updated", "school_id", "enumerator", "key", "value", "notes")
-}
-
-findings_to_feedback <- function(findings) {
-  suppressPackageStartupMessages({ library(dplyr); library(tibble) })
-  if (nrow(findings) == 0) {
-    return(as_tibble(setNames(rep(list(character()), length(feedback_required_cols())),
-                              feedback_required_cols())))
-  }
-  findings %>%
-    transmute(
-      finding_id,
-      submission_id = submission_id,
-      issue,
-      field_comment = "",
-      proposed_fix = "",
-      status = "Open",
-      resolved = "No",
-      initials = "",
-      date_updated = "",
-      school_id = school_id %||% "",
-      enumerator = enumerator %||% "",
-      key = key %||% "",
-      value = value %||% "",
-      notes = ""
+# Single source of truth for the issue-tracking schema: internal snake_case
+# name (used everywhere in R) -> assets/issue_tracking_template.csv header
+# label (used only at the file read/write boundary). Column order here is
+# the column order in every written file. `finding_id` (displayed as "Issue
+# ID") isn't part of the literal template — it's a stable, content-derived
+# tracking key (<module>:<entity>[:<variable>][:N]; see mk_findings() /
+# dedupe_finding_ids() in utils.R), needed because one submission can
+# produce several findings, so `unique_submission_id` alone can't key rows.
+issue_tracking_header_map <- function() {
+    c(
+        today_date            = "Today's Date",
+        entity_id             = "Entity ID",
+        entity                = "Entity",
+        group_id              = "Group ID",
+        group                 = "Group",
+        enumerator_id         = "Enumerator ID",
+        enumerator            = "Enumerator",
+        startdate             = "Startdate",
+        enddate               = "Enddate",
+        issue                 = "Issue",
+        value                 = "Value",
+        ril_comment           = "RIL Comment",
+        corrections           = "Corrections",
+        correction_author     = "Correction Author",
+        status                = "Status",
+        issue_category        = "Issue Category",
+        variable              = "Variable (DIME use)",
+        unique_submission_id  = "Unique Submission ID",
+        finding_id            = "Issue ID"
     )
 }
 
-#' Normalize legacy ra_status → status; ensure Open/No defaults.
-normalize_feedback_status <- function(fb) {
-  fb <- as.data.frame(fb, stringsAsFactors = FALSE)
-  if ("ra_status" %in% names(fb) && !"status" %in% names(fb)) {
-    fb$status <- fb$ra_status
-    fb$ra_status <- NULL
-  }
-  if (!"status" %in% names(fb)) fb$status <- "Open"
-  fb$status[is.na(fb$status) | !nzchar(as.character(fb$status))] <- "Open"
-  # Title-case Open if lowercase open
-  fb$status[tolower(as.character(fb$status)) == "open"] <- "Open"
-  if (!"resolved" %in% names(fb)) fb$resolved <- "No"
-  fb$resolved[is.na(fb$resolved) | !nzchar(as.character(fb$resolved))] <- "No"
-  fb$resolved[tolower(as.character(fb$resolved)) == "no"] <- "No"
-  # Drop check_module from feedback twin if present
-  fb$check_module <- NULL
-  fb
+# Rename internal snake_case columns to their display header labels, for
+# writing to disk / uploading to OneDrive. Columns not in the map pass
+# through unchanged.
+rename_to_issue_tracking_headers <- function(tbl) {
+    tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
+    hmap <- issue_tracking_header_map()
+    present <- intersect(names(hmap), names(tbl))
+    names(tbl)[match(present, names(tbl))] <- hmap[present]
+    tbl
 }
 
-write_tracking_xlsx <- function(findings, path) {
-  suppressPackageStartupMessages({ library(openxlsx); library(dplyr) })
-  dir.create(dirname(path), recursive = TRUE, showWarnings = FALSE)
-  wb <- createWorkbook()
-  addWorksheet(wb, "Tracking Sheet")
-  track <- findings %>%
-    transmute(
-      `Today's Date` = as.character(Sys.Date()),
-      `Submission ID` = submission_id,
-      `School ID` = school_id,
-      enumerator = enumerator,
-      startdate = start_date,
-      enddate = end_date,
-      Issue = issue,
-      finding_id, check_id, check_module, category, key, value
-    )
-  writeData(wb, "Tracking Sheet", track)
-
-  tab_map <- list(
-    "Schools_LowCompletion" = "low_completion",
-    "Child assent audit" = "assent",
-    "Parental consent audit" = "consent",
-    "Student enrolment" = "enrolment",
-    "GPS distance" = "gps_distance",
-    "Cognitive outliers" = "cognitive_outlier",
-    "Irregular timing" = "irregular_time",
-    "Straightlining (enumerator)" = "straightlining_enum",
-    "Straightlining (survey)" = "straightlining_survey",
-    "High missingness" = "high_missingness",
-    "Form version mismatch" = "form_version_mismatch"
-  )
-  for (nm in names(tab_map)) {
-    addWorksheet(wb, nm)
-    writeData(wb, nm, findings %>% filter(category == tab_map[[nm]]))
-  }
-  saveWorkbook(wb, path, overwrite = TRUE)
+# Inverse of rename_to_issue_tracking_headers() — for reading from disk /
+# OneDrive back into internal snake_case names.
+rename_from_issue_tracking_headers <- function(tbl) {
+    tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
+    hmap <- issue_tracking_header_map()
+    inv <- setNames(names(hmap), hmap)
+    present <- intersect(names(inv), names(tbl))
+    names(tbl)[match(present, names(tbl))] <- inv[present]
+    tbl
 }
 
-write_feedback_twin <- function(feedback, findings, xlsx_path, csv_path) {
-  suppressPackageStartupMessages({ library(openxlsx); library(readr) })
-  feedback <- normalize_feedback_status(feedback)
-  # Ensure column order
-  cols <- feedback_required_cols()
-  for (c in cols) if (!c %in% names(feedback)) feedback[[c]] <- ""
-  feedback <- feedback[, intersect(cols, names(feedback)), drop = FALSE]
-
-  dir.create(dirname(csv_path), recursive = TRUE, showWarnings = FALSE)
-  dir.create(dirname(xlsx_path), recursive = TRUE, showWarnings = FALSE)
-  write_csv(feedback, csv_path)
-  wb <- createWorkbook()
-  addWorksheet(wb, "Feedback")
-  writeData(wb, "Feedback", feedback)
-  if (!is.null(findings) && nrow(findings) > 0) {
-    addWorksheet(wb, "Findings")
-    writeData(wb, "Findings", findings)
-  }
-  addWorksheet(wb, "Instructions")
-  writeData(wb, "Instructions", data.frame(
-    step = 1:5,
-    action = c(
-      "Field: fill field_comment and proposed_fix",
-      "RA: set status to accepted | revise | Open",
-      "RA: set initials and date_updated",
-      "Leave resolved=No until post-feedback pipeline runs",
-      "When ready in chat: Process HFC feedback"
-    )
-  ))
-  saveWorkbook(wb, xlsx_path, overwrite = TRUE)
+# Findings -> the issue-tracking shape (internal snake_case names), ready to
+# write or push. Entity/Group/Enumerator "ID" columns come from findings'
+# existing id/group_id/enumerator fields; the plain-name columns come from
+# the newly-detected *_name fields (empty string when no name column exists
+# in the survey — never falls back to duplicating the ID).
+findings_to_issue_tracking <- function(findings) {
+    suppressPackageStartupMessages({ library(dplyr); library(tibble) })
+    cols <- names(issue_tracking_header_map())
+    if (nrow(findings) == 0) {
+        return(as_tibble(setNames(rep(list(character()), length(cols)), cols)))
+    }
+    findings %>%
+        transmute(
+            today_date = format(Sys.time(), "%Y%m%d%H%M"),
+            entity_id = submission_id,
+            entity = entity_name,
+            group_id = group_id,
+            group = group_name,
+            enumerator_id = enumerator,
+            enumerator = enumerator_name,
+            startdate = start_date,
+            enddate = end_date,
+            issue,
+            value,
+            ril_comment = "",
+            corrections = "",
+            correction_author = "",
+            status = "Open",
+            issue_category = category,
+            variable,
+            unique_submission_id = key,
+            finding_id
+        )
 }
 
-#' Module code -> plain-English label + <=3-sentence description.
-#' Keep in sync with references/check_modules.md ("Report display labels & descriptions").
+# The single shared Status normalizer (internal snake_case `status` column).
+# Migrates the old status(Open/accepted/revise)+resolved(No/yes/partial)
+# pair into the current 5-value vocabulary (Open/Accepted/Revise/Resolved/
+# Needs Review), then canonicalizes casing for known values. Unrecognized
+# non-blank Status values pass through unchanged.
+normalize_issue_tracking_status <- function(tbl) {
+    suppressPackageStartupMessages({ library(dplyr) })
+    tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
+    n <- nrow(tbl)
+    if (!"status" %in% names(tbl) && "ra_status" %in% names(tbl)) {
+        tbl$status <- tbl$ra_status
+    }
+    if (!"status" %in% names(tbl)) tbl$status <- rep("Open", n)
+    tbl$status[is.na(tbl$status) | !nzchar(as.character(tbl$status))] <- "Open"
+
+    if ("resolved" %in% names(tbl)) {
+        st <- tolower(as.character(tbl$status))
+        rs <- tolower(as.character(tbl$resolved))
+        rs[is.na(rs) | !nzchar(rs)] <- "no"
+        tbl$status <- dplyr::case_when(
+        st == "accepted" & rs == "yes" ~ "Resolved",
+        st == "accepted" & rs == "partial" ~ "Needs Review",
+        st == "accepted" ~ "Accepted",
+        st == "revise" ~ "Revise",
+        TRUE ~ "Open"
+        )
+        tbl$resolved <- NULL
+    } else {
+        known <- c("Open", "Accepted", "Revise", "Resolved", "Needs Review")
+        hit <- match(tolower(as.character(tbl$status)), tolower(known))
+        tbl$status[!is.na(hit)] <- known[hit[!is.na(hit)]]
+    }
+    tbl$ra_status <- NULL
+    tbl$check_module <- NULL
+    tbl
+}
+
+# Normalize Status, fill/reorder to the canonical column set, and rename to
+# display header labels — the one shared prep step every writer (local xlsx,
+# local csv, OneDrive upload) must apply identically so the live file is
+# never inconsistent depending on which backend wrote it.
+prepare_tracking_display <- function(tbl) {
+    tbl <- normalize_issue_tracking_status(tbl)
+    cols <- names(issue_tracking_header_map())
+    for (c in cols) if (!c %in% names(tbl)) tbl[[c]] <- ""
+    tbl <- tbl[, cols, drop = FALSE]
+    rename_to_issue_tracking_headers(tbl)
+}
+
+# Write the issue-tracking csv + xlsx (Tracking/Findings/Instructions tabs).
+write_issue_tracking <- function(tbl, findings, xlsx_path, csv_path) {
+    suppressPackageStartupMessages({ library(openxlsx); library(readr) })
+    display <- prepare_tracking_display(tbl)
+
+    dir.create(dirname(csv_path), recursive = TRUE, showWarnings = FALSE)
+    dir.create(dirname(xlsx_path), recursive = TRUE, showWarnings = FALSE)
+    write_csv(display, csv_path)
+
+    wb <- createWorkbook()
+    addWorksheet(wb, "Tracking")
+    writeData(wb, "Tracking", display)
+    if (!is.null(findings) && nrow(findings) > 0) {
+        addWorksheet(wb, "Findings")
+        writeData(wb, "Findings", findings)
+    }
+    addWorksheet(wb, "Instructions")
+    writeData(wb, "Instructions", data.frame(
+        step = 1:4,
+        action = c(
+        "Field: fill RIL Comment and Corrections",
+        "RA: set Status to Accepted | Revise | leave Open",
+        "RA: set Correction Author",
+        "When ready in chat: Process HFC feedback"
+        )
+    ))
+    saveWorkbook(wb, xlsx_path, overwrite = TRUE)
+}
+
+# Read a raw xlsx sheet with header cells taken verbatim (no `.`-for-space
+# mangling). `openxlsx::read.xlsx(colNames = TRUE)` silently replaces spaces
+# in header cells regardless of its `check.names`/`sep.names` args, which
+# breaks label-based matching against issue_tracking_header_map() — reading
+# with colNames = FALSE and setting names from row 1 ourselves sidesteps it.
+read_xlsx_verbatim_headers <- function(path, sheet) {
+    raw <- openxlsx::readWorkbook(path, sheet = sheet, colNames = FALSE)
+    if (nrow(raw) < 1) return(as.data.frame(raw, stringsAsFactors = FALSE))
+    hdr <- as.character(unlist(raw[1, ]))
+    body <- raw[-1, , drop = FALSE]
+    names(body) <- hdr
+    as.data.frame(body, stringsAsFactors = FALSE, check.names = FALSE)
+    }
+
+# Blank cells come back as NA from readr (default na = c("", "NA")) but as ""
+# from the xlsx path — normalize both to "" so downstream `nzchar()`/`%||%`
+# checks behave the same regardless of source (nzchar(NA) is TRUE in R, so
+# leaving blanks as NA would make blank-ID rows look non-blank).
+blank_na_to_empty <- function(tbl) {
+    as.data.frame(lapply(tbl, function(col) {
+        if (!is.character(col)) col <- as.character(col)
+        col[is.na(col)] <- ""
+        col
+    }), stringsAsFactors = FALSE, check.names = FALSE)
+}
+
+# Read the issue-tracking csv/xlsx back into internal snake_case columns.
+read_issue_tracking <- function(path, sheet = "Tracking") {
+    suppressPackageStartupMessages({ library(readr); library(openxlsx) })
+    ext <- tolower(tools::file_ext(path))
+    raw <- if (ext == "csv") {
+        as.data.frame(read_csv(path, show_col_types = FALSE), stringsAsFactors = FALSE)
+    } else {
+        read_xlsx_verbatim_headers(path, sheet)
+    }
+    normalize_issue_tracking_status(blank_na_to_empty(rename_from_issue_tracking_headers(raw)))
+}
+
+# Incrementally merge a freshly-computed snapshot (e.g. today's
+# intermediate/<date>_issue_tracking.xlsx) into the live issue_tracking.xlsx
+# (`current`), preserving field/RA work rather than refreshing it:
+#   - Issue ID in both -> `current`'s row is kept EXACTLY as-is, every
+#     column, no refresh from the snapshot.
+#   - Issue ID only in the snapshot -> genuinely new finding, appended as-is.
+#   - Issue ID only in `current` -> kept (never dropped), even if the
+#     underlying check no longer reproduces it this run — its resolution
+#     trail lives in hfc/fixes/ and data/intermediate/, but the row itself
+#     stays visible in the tracking file until a human clears it.
+# `current` may be NULL (first-ever run — nothing to merge against).
+merge_preserve_existing <- function(current, new_snapshot) {
+    if (is.null(current) || !nrow(current)) return(new_snapshot)
+    new_only <- new_snapshot[!new_snapshot$finding_id %in% current$finding_id, , drop = FALSE]
+    dplyr::bind_rows(current, new_only)
+}
+
+# Merge a resolutions/<date>_issues_resolution.xlsx working clone (Status/
+# Corrections/Correction Author edits from a "Process HFC feedback" pass)
+# back into whatever issue_tracking.xlsx currently contains (`current`) —
+# in case field/RA edited something else concurrently while the agent worked:
+#   - Issue ID in both -> take the CLONE's status/corrections/correction_author,
+#     keep every other column from `current`.
+#   - Issue ID only in `current` -> untouched by this pass, kept as-is.
+#   - Issue ID only in the clone -> shouldn't normally happen (the clone is a
+#     copy of a past `current`), but appended defensively rather than lost.
+merge_resolution_updates <- function(current, resolution_clone) {
+    if (is.null(current) || !nrow(current)) return(resolution_clone)
+    update_cols <- c("status", "corrections", "correction_author")
+    idx <- match(current$finding_id, resolution_clone$finding_id)
+    matched <- !is.na(idx)
+    merged <- current
+    for (col in update_cols) {
+        if (col %in% names(resolution_clone)) {
+        merged[[col]][matched] <- resolution_clone[[col]][idx[matched]]
+        }
+    }
+    clone_only <- resolution_clone[!resolution_clone$finding_id %in% current$finding_id, , drop = FALSE]
+    dplyr::bind_rows(merged, clone_only)
+}
+
+# Module code -> plain-English label + <=3-sentence description.
+# Keep in sync with references/check_modules.md ("Report display labels & descriptions").
 MODULE_ORDER <- paste0("M", 1:13)
 
 MODULE_META <- list(
-  M1 = list(label = "Completion",
-            desc = "Reports how many submissions are complete overall, and by group, enumerator, and date, so gaps in fieldwork show up early. Can also flag sites whose completion falls far below the survey median."),
-  M2 = list(label = "Duplicates",
-            desc = "Flags submissions that share the same unique ID or survey key, which usually means the same interview was uploaded or entered more than once."),
-  M3 = list(label = "Form Version",
-            desc = "Tracks which version of the survey instrument was in use on each date, and flags any submission whose recorded version doesn't match the expected window for its date."),
-  M4 = list(label = "Survey Duration",
-            desc = "Reports how long interviews took overall and by enumerator, and flags individual interviews that were unusually long or short."),
-  M5 = list(label = "Irregular Timing",
-            desc = "Flags interviews conducted at unusual times — weekends or outside normal working hours — using each submission's local time zone."),
-  M6 = list(label = "Numeric Outliers",
-            desc = "Flags unusually high or low values on key numeric questions (e.g. ages, scores) that fall outside the normal range for this survey."),
-  M7 = list(label = "Missingness",
-            desc = "Flags variables and enumerators with unusually high rates of missing or sentinel-coded (e.g. 99, -9999) responses on key survey questions."),
-  M8 = list(label = "GPS Location",
-            desc = "Flags submissions recorded far from where that school/site's other submissions were recorded, which can mean the interview happened somewhere unexpected."),
-  M9 = list(label = "Straightlining",
-            desc = "Flags enumerators who gave the same answer on a question in most of their interviews, and submissions where most ordinal/Likert-style questions share one identical value."),
-  M10 = list(label = "Summary Statistics",
-            desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important numeric variables."),
-  M11 = list(label = "Survey-Specific",
-            desc = "Flags logic issues specific to this survey's content (for example, a mismatch between a record saying something happened and the respondent's own answer), including any custom checks requested for this project."),
-  M12 = list(label = "Media Files",
-            desc = "Flags problems with recorded audio/photo files: missing files, empty filename cells, unexpectedly small files, wrong file types, or duplicates."),
-  M13 = list(label = "Consent & Assent",
-            desc = "Flags cases missing a required consent (guardian agreement) or assent (the child's own agreement) flag, which the survey should always capture before proceeding.")
+    M1 = list(label = "Completion",
+                desc = "Reports how many submissions are complete overall, and by group, enumerator, and date, so gaps in fieldwork show up early. Can also flag sites whose completion falls far below the survey median."),
+    M2 = list(label = "Duplicates",
+                desc = "Flags submissions that share the same unique ID or survey key, which usually means the same interview was uploaded or entered more than once."),
+    M3 = list(label = "Form Version",
+                desc = "Tracks which version of the survey instrument was in use on each date, and flags any submission whose recorded version doesn't match the expected window for its date."),
+    M4 = list(label = "Survey Duration",
+                desc = "Reports how long interviews took overall and by enumerator, and flags individual interviews that were unusually long or short."),
+    M5 = list(label = "Irregular Timing",
+                desc = "Flags interviews conducted at unusual times — weekends or outside normal working hours — using each submission's local time zone."),
+    M6 = list(label = "Numeric Outliers",
+                desc = "Flags unusually high or low values on key numeric questions (e.g. ages, scores) that fall outside the normal range for this survey."),
+    M7 = list(label = "Missingness",
+                desc = "Flags variables and enumerators with unusually high rates of missing or sentinel-coded (e.g. 99, -9999) responses on key survey questions."),
+    M8 = list(label = "GPS Location",
+                desc = "Flags submissions recorded far from where other submissions at that site were recorded, which can mean the interview happened somewhere unexpected."),
+    M9 = list(label = "Straightlining",
+                desc = "Flags enumerators who gave the same answer on a question in most of their interviews, and submissions where most ordinal/Likert-style questions share one identical value."),
+    M10 = list(label = "Summary Statistics",
+                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important numeric variables."),
+    M11 = list(label = "Survey-Specific",
+                desc = "Flags logic issues specific to this survey's content (for example, a mismatch between a record saying something happened and the respondent's own answer), including any custom checks requested for this project."),
+    M12 = list(label = "Media Files",
+                desc = "Flags problems with recorded audio/photo files: missing files, empty filename cells, unexpectedly small files, wrong file types, or duplicates."),
+    M13 = list(label = "Consent & Assent",
+                desc = "Flags cases missing a required consent (guardian agreement) or assent (the child's own agreement) flag, which the survey should always capture before proceeding.")
 )
 
 module_label <- function(code) {
-  code <- as.character(code)
-  vapply(code, function(x) {
-    m <- MODULE_META[[x]]
-    if (is.null(m)) x else m$label
-  }, character(1), USE.NAMES = FALSE)
+    code <- as.character(code)
+    vapply(code, function(x) {
+        m <- MODULE_META[[x]]
+        if (is.null(m)) x else m$label
+    }, character(1), USE.NAMES = FALSE)
 }
 
 module_desc <- function(code) {
-  m <- MODULE_META[[as.character(code)]]
-  if (is.null(m)) "" else m$desc
+    m <- MODULE_META[[as.character(code)]]
+    if (is.null(m)) "" else m$desc
 }
 
-#' Order findings by enumerator, then submission_id, then date (most recent
-#' first), for display. Blank/NA values in enumerator/submission_id are
-#' grouped last (they mean "not applicable to this check") so individually
-#' traceable rows surface first instead of interleaving with N/A rows.
+# Order findings by enumerator, then submission_id, then date (most recent
+# first), for display. Blank/NA values in enumerator/submission_id are
+# grouped last (they mean "not applicable to this check") so individually
+# traceable rows surface first instead of interleaving with N/A rows.
 sort_findings_for_display <- function(df) {
-  if (is.null(df) || nrow(df) == 0) return(df)
-  enum <- if ("enumerator" %in% names(df)) as.character(df$enumerator) else rep("", nrow(df))
-  sid  <- if ("submission_id" %in% names(df)) as.character(df$submission_id) else rep("", nrow(df))
-  enum[is.na(enum)] <- ""
-  sid[is.na(sid)] <- ""
-  raw_date <- if ("start_date" %in% names(df) || "end_date" %in% names(df)) {
-    sd <- if ("start_date" %in% names(df)) as.character(df$start_date) else rep("", nrow(df))
-    ed <- if ("end_date" %in% names(df)) as.character(df$end_date) else rep("", nrow(df))
-    ifelse(!is.na(sd) & nzchar(sd), sd, ed)
-  } else rep(NA_character_, nrow(df))
-  date_key <- suppressWarnings(as.numeric(as.Date(raw_date)))
-  date_key[is.na(date_key)] <- -Inf
-  ord <- order(enum == "", enum, sid == "", sid, -date_key)
-  df[ord, , drop = FALSE]
+    if (is.null(df) || nrow(df) == 0) return(df)
+    enum <- if ("enumerator" %in% names(df)) as.character(df$enumerator) else rep("", nrow(df))
+    sid  <- if ("submission_id" %in% names(df)) as.character(df$submission_id) else rep("", nrow(df))
+    enum[is.na(enum)] <- ""
+    sid[is.na(sid)] <- ""
+    raw_date <- if ("start_date" %in% names(df) || "end_date" %in% names(df)) {
+        sd <- if ("start_date" %in% names(df)) as.character(df$start_date) else rep("", nrow(df))
+        ed <- if ("end_date" %in% names(df)) as.character(df$end_date) else rep("", nrow(df))
+        ifelse(!is.na(sd) & nzchar(sd), sd, ed)
+    } else rep(NA_character_, nrow(df))
+    date_key <- suppressWarnings(as.numeric(as.Date(raw_date)))
+    date_key[is.na(date_key)] <- -Inf
+    ord <- order(enum == "", enum, sid == "", sid, -date_key)
+    df[ord, , drop = FALSE]
 }
 
-#' Searchable HTML table: all rows in DOM; first `show_n` visible until search.
-#' Tables with fewer than TRUNCATE_THRESHOLD rows always render in full (no
-#' toggle). Larger tables default to `show_n` rows + a "Show all" button that
-#' toggles to "Show top 15" (collapsing back to a 15-row view, not `show_n`).
+# Searchable HTML table: all rows in DOM; first `show_n` visible until search.
+# Tables with fewer than TRUNCATE_THRESHOLD rows always render in full (no
+# toggle). Larger tables default to `show_n` rows + a "Show all" button that
+# toggles to "Show top 15" (collapsing back to a 15-row view, not `show_n`).
 TRUNCATE_THRESHOLD <- 15L
 
-html_searchable_table <- function(df, cols, table_id, show_n = 10L, bold_date = NA_character_) {
-  esc <- function(x) {
-    x <- as.character(x)
-    x[is.na(x)] <- ""
-    x <- gsub("&", "&amp;", x, fixed = TRUE)
-    x <- gsub("<", "&lt;", x, fixed = TRUE)
-    x <- gsub(">", "&gt;", x, fixed = TRUE)
-    x
-  }
-  if (is.null(df) || nrow(df) == 0) {
-    return(paste0(
-      "<div class='table-wrap' id='", table_id, "-wrap'>",
-      "<p class='meta'>No rows</p></div>"
-    ))
-  }
-  cols <- intersect(cols, names(df))
-  if (!length(cols)) cols <- names(df)
-  truncate <- nrow(df) >= TRUNCATE_THRESHOLD
-  initial_shown <- if (truncate) min(show_n, nrow(df)) else nrow(df)
-  head_cells <- paste0("<th>", esc(cols), "</th>", collapse = "")
-  has_bold_date <- !is.na(bold_date) && nzchar(bold_date) &&
-    any(c("start_date", "end_date") %in% names(df))
-  sd_col <- if ("start_date" %in% names(df)) as.character(df$start_date) else rep(NA_character_, nrow(df))
-  ed_col <- if ("end_date" %in% names(df)) as.character(df$end_date) else rep(NA_character_, nrow(df))
-  rows <- vapply(seq_len(nrow(df)), function(i) {
-    is_bold <- has_bold_date && (identical(sd_col[i], bold_date) || identical(ed_col[i], bold_date))
-    cls_parts <- c(if (truncate && i > show_n) "row-hidden", if (is_bold) "row-bold")
-    cls <- if (length(cls_parts)) paste0(" class='", paste(cls_parts, collapse = " "), "'") else ""
-    cells <- paste0(
-      vapply(cols, function(cn) paste0("<td>", esc(df[[cn]][i]), "</td>"), character(1)),
-      collapse = ""
-    )
-    paste0("<tr", cls, ">", cells, "</tr>")
-  }, character(1))
-  toggle_html <- if (truncate) {
+html_searchable_table <- function(df, cols, table_id, show_n = 10L, bold_date = NA_character_,
+                                   col_labels = NULL) {
+    esc <- function(x) {
+        x <- as.character(x)
+        x[is.na(x)] <- ""
+        x <- gsub("&", "&amp;", x, fixed = TRUE)
+        x <- gsub("<", "&lt;", x, fixed = TRUE)
+        x <- gsub(">", "&gt;", x, fixed = TRUE)
+        x
+    }
+    if (is.null(df) || nrow(df) == 0) {
+        return(paste0(
+        "<div class='table-wrap' id='", table_id, "-wrap'>",
+        "<p class='meta'>No rows</p></div>"
+        ))
+    }
+    cols <- intersect(cols, names(df))
+    if (!length(cols)) cols <- names(df)
+    truncate <- nrow(df) >= TRUNCATE_THRESHOLD
+    initial_shown <- if (truncate) min(show_n, nrow(df)) else nrow(df)
+    labels <- if (!is.null(col_labels)) {
+        vapply(cols, function(cn) col_labels[[cn]] %||% cn, character(1))
+    } else cols
+    head_cells <- paste0("<th>", esc(labels), "</th>", collapse = "")
+    has_bold_date <- !is.na(bold_date) && nzchar(bold_date) &&
+        any(c("start_date", "end_date") %in% names(df))
+    sd_col <- if ("start_date" %in% names(df)) as.character(df$start_date) else rep(NA_character_, nrow(df))
+    ed_col <- if ("end_date" %in% names(df)) as.character(df$end_date) else rep(NA_character_, nrow(df))
+    rows <- vapply(seq_len(nrow(df)), function(i) {
+        is_bold <- has_bold_date && (identical(sd_col[i], bold_date) || identical(ed_col[i], bold_date))
+        cls_parts <- c(if (truncate && i > show_n) "row-hidden", if (is_bold) "row-bold")
+        cls <- if (length(cls_parts)) paste0(" class='", paste(cls_parts, collapse = " "), "'") else ""
+        cells <- paste0(
+        vapply(cols, function(cn) paste0("<td>", esc(df[[cn]][i]), "</td>"), character(1)),
+        collapse = ""
+        )
+        paste0("<tr", cls, ">", cells, "</tr>")
+    }, character(1))
+    toggle_html <- if (truncate) {
+        paste0(
+        "<button type='button' class='table-toggle' data-table='", table_id,
+        "' data-expanded='false'>Show all</button>"
+        )
+    } else ""
     paste0(
-      "<button type='button' class='table-toggle' data-table='", table_id,
-      "' data-expanded='false'>Show all</button>"
+        "<div class='table-wrap' data-collapsed-n='", show_n, "' id='", table_id, "-wrap'>",
+        "<div class='table-toolbar'>",
+        "<input type='search' class='table-search' placeholder='Search all ", nrow(df),
+        " rows…' aria-label='Search table' data-table='", table_id, "' />",
+        toggle_html,
+        "<span class='table-count' data-for='", table_id, "'>",
+        initial_shown, " of ", nrow(df), " shown</span></div>",
+        "<table class='searchable' id='", table_id, "'><thead><tr>", head_cells,
+        "</tr></thead><tbody>", paste(rows, collapse = "\n"),
+        "</tbody></table></div>"
     )
-  } else ""
-  paste0(
-    "<div class='table-wrap' data-collapsed-n='", show_n, "' id='", table_id, "-wrap'>",
-    "<div class='table-toolbar'>",
-    "<input type='search' class='table-search' placeholder='Search all ", nrow(df),
-    " rows…' aria-label='Search table' data-table='", table_id, "' />",
-    toggle_html,
-    "<span class='table-count' data-for='", table_id, "'>",
-    initial_shown, " of ", nrow(df), " shown</span></div>",
-    "<table class='searchable' id='", table_id, "'><thead><tr>", head_cells,
-    "</tr></thead><tbody>", paste(rows, collapse = "\n"),
-    "</tbody></table></div>"
-  )
 }
 
-#' Render a module's descriptive stats (a single data.frame, or a named list
-#' of data.frames e.g. M1's overall/by_group/by_enumerator/by_date) as one or
-#' more small labeled searchable tables. Used for M1/M3/M4/M7/M10, which
-#' report summary statistics rather than (only) row-level findings.
+# Render a module's descriptive stats (a single data.frame, or a named list
+# of data.frames e.g. M1's overall/by_group/by_enumerator/by_date) as one or
+# more small labeled searchable tables. Used for M1/M3/M4/M7/M10, which
+# report summary statistics rather than (only) row-level findings.
 render_stats_block <- function(mod_stats, prefix) {
-  if (is.null(mod_stats)) return("")
-  esc <- function(x) {
-    x <- as.character(x)
-    x[is.na(x)] <- ""
-    x <- gsub("&", "&amp;", x, fixed = TRUE)
-    x <- gsub("<", "&lt;", x, fixed = TRUE)
-    x <- gsub(">", "&gt;", x, fixed = TRUE)
-    x
-  }
-  if (is.data.frame(mod_stats)) mod_stats <- list(Summary = mod_stats)
-  blocks <- character()
-  for (nm in names(mod_stats)) {
-    df <- mod_stats[[nm]]
-    if (is.null(df) || !is.data.frame(df) || !nrow(df)) next
-    tid <- paste0("tbl-", prefix, "-", tolower(gsub("[^A-Za-z0-9]+", "-", nm)))
-    label <- gsub("_", " ", nm)
-    label <- paste0(toupper(substr(label, 1, 1)), substr(label, 2, nchar(label)))
-    blocks <- c(blocks, paste0(
-      "<h4>", esc(label), "</h4>",
-      html_searchable_table(df, names(df), tid, 10L)
-    ))
-  }
-  paste(blocks, collapse = "")
+    if (is.null(mod_stats)) return("")
+    esc <- function(x) {
+        x <- as.character(x)
+        x[is.na(x)] <- ""
+        x <- gsub("&", "&amp;", x, fixed = TRUE)
+        x <- gsub("<", "&lt;", x, fixed = TRUE)
+        x <- gsub(">", "&gt;", x, fixed = TRUE)
+        x
+    }
+    if (is.data.frame(mod_stats)) mod_stats <- list(Summary = mod_stats)
+    blocks <- character()
+    for (nm in names(mod_stats)) {
+        df <- mod_stats[[nm]]
+        if (is.null(df) || !is.data.frame(df) || !nrow(df)) next
+        tid <- paste0("tbl-", prefix, "-", tolower(gsub("[^A-Za-z0-9]+", "-", nm)))
+        label <- gsub("_", " ", nm)
+        label <- paste0(toupper(substr(label, 1, 1)), substr(label, 2, nchar(label)))
+        blocks <- c(blocks, paste0(
+        "<h4>", esc(label), "</h4>",
+        html_searchable_table(df, names(df), tid, 10L)
+        ))
+    }
+    paste(blocks, collapse = "")
 }
 
 write_html_report <- function(findings, project_root, project_id, open = FALSE,
-                              roles = NULL, ds = NULL, report_cfg = NULL,
-                              module_notes = NULL, stats = NULL) {
-  suppressPackageStartupMessages({ library(dplyr) })
-  report_dir <- hfc_path(project_root, "report")
-  dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
-  html_path <- file.path(report_dir, "index.html")
+                                roles = NULL, ds = NULL, report_cfg = NULL,
+                                module_notes = NULL, stats = NULL) {
+    suppressPackageStartupMessages({ library(dplyr) })
+    report_dir <- hfc_path(project_root, "report")
+    dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
+    html_path <- file.path(report_dir, "index.html")
 
-  esc <- function(x) {
-    x <- as.character(x)
-    x[is.na(x)] <- ""
-    x <- gsub("&", "&amp;", x, fixed = TRUE)
-    x <- gsub("<", "&lt;", x, fixed = TRUE)
-    x <- gsub(">", "&gt;", x, fixed = TRUE)
-    x
-  }
-
-  # Recomputed independently here (not inherited from run_check_modules(),
-  # since R data frames are copy-on-modify) so the GPS map and any other
-  # ds-derived rendering can show the composite ID consistently.
-  if (!is.null(ds) && !is.null(roles)) {
-    ds$.hfc_id_display <- composite_id_string(ds, roles$id, roles$id_sep %||% " / ")
-  }
-
-  stats <- stats %||% list()
-  last_date <- roles$last_date %||% NA_character_
-  if (!is.null(last_date) && (is.na(last_date) || !nzchar(last_date))) last_date <- NA_character_
-
-  # Display order only — sorted by enumerator, then submission ID, then date
-  # (most recent first) wherever available; the on-disk findings.csv /
-  # tracking workbook keep natural order.
-  findings <- sort_findings_for_display(findings)
-
-  by_cat <- if (nrow(findings)) findings %>% count(category, sort = TRUE) else
-    tibble(category = character(), n = integer())
-  by_mod <- if (nrow(findings) && "check_module" %in% names(findings)) {
-    findings %>% count(check_module, sort = TRUE)
-  } else tibble(check_module = character(), n = integer())
-
-  summary_cards <- if (nrow(by_mod)) {
-    paste0(
-      "<div class='cards'>",
-      paste0("<div class='stat'><div class='stat-n'>", by_mod$n,
-             "</div><div class='stat-l'>", esc(module_label(by_mod$check_module)), "</div></div>",
-             collapse = ""),
-      "</div>"
-    )
-  } else ""
-
-  cat_table <- html_searchable_table(by_cat, c("category", "n"), "tbl-cats", 10L)
-
-  # Per-module sections. A module appears if it produced row-level findings
-  # OR non-empty descriptive stats (M10 Summary Statistics never produces
-  # findings rows at all; M1/M3/M4/M7 can have stats with zero findings).
-  present_from_findings <- if (nrow(findings) && "check_module" %in% names(findings)) {
-    unique(findings$check_module)
-  } else character()
-  stats_nonempty <- function(s) {
-    if (is.null(s)) return(FALSE)
-    if (is.data.frame(s)) return(nrow(s) > 0)
-    if (is.list(s)) return(any(vapply(s, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))))
-    FALSE
-  }
-  present_from_stats <- names(stats)[vapply(stats, stats_nonempty, logical(1))]
-  modules_present <- intersect(MODULE_ORDER, union(present_from_findings, present_from_stats))
-
-  mod_sections <- character()
-  nav_links <- c('<a href="#about">About</a>', '<a href="#summary">Summary</a>')
-  if (!is.na(last_date)) nav_links <- c(nav_links, '<a href="#lastday">Last Day</a>')
-
-  for (mod in modules_present) {
-    sub <- findings %>% filter(check_module == mod)
-    aid <- paste0("mod-", tolower(mod))
-    nav_links <- c(nav_links, sprintf(
-      '<a href="#%s">%s <sup class="mod-code">%s</sup></a>', aid, esc(module_label(mod)), esc(mod)
-    ))
-    desc_override <- module_notes$overrides[[mod]]
-    desc_text <- if (!is.null(desc_override) && nzchar(desc_override)) desc_override else module_desc(mod)
-    desc_html <- if (nzchar(desc_text)) paste0("<p class='mod-desc'>", esc(desc_text), "</p>") else ""
-    custom_html <- ""
-    if (identical(mod, "M11") && length(module_notes$custom)) {
-      items <- vapply(names(module_notes$custom), function(nm) {
-        entry <- module_notes$custom[[nm]]
-        lbl <- entry$label %||% nm
-        d <- entry$description %||% ""
-        paste0("<li><strong>", esc(lbl), "</strong> — ", esc(d), "</li>")
-      }, character(1))
-      custom_html <- paste0(
-        "<div class='custom-checks'><h3>Custom checks for this survey</h3><ul>",
-        paste(items, collapse = ""), "</ul></div>"
-      )
+    esc <- function(x) {
+        x <- as.character(x)
+        x[is.na(x)] <- ""
+        x <- gsub("&", "&amp;", x, fixed = TRUE)
+        x <- gsub("<", "&lt;", x, fixed = TRUE)
+        x <- gsub(">", "&gt;", x, fixed = TRUE)
+        x
     }
-    stats_html <- render_stats_block(stats[[mod]], tolower(mod))
-    # M10 Summary Statistics never has findings rows — skip the (always-empty,
-    # otherwise-misleading) findings table and "N findings" count for it.
-    is_stats_only <- identical(mod, "M10")
-    heading_suffix <- if (is_stats_only) "" else paste0(" · ", nrow(sub), " findings")
-    tbl <- if (is_stats_only) "" else html_searchable_table(
-      sub,
-      c("finding_id", "category", "issue", "submission_id", "enumerator", "school_id", "value"),
-      paste0("tbl-", aid),
-      10L,
-      bold_date = last_date
-    )
-    mod_sections <- c(mod_sections, paste0(
-      "<section id='", aid, "' class='card'><h2>", esc(module_label(mod)),
-      " <span class='mod-code'>", esc(mod), "</span>", heading_suffix,
-      "</h2>", desc_html, custom_html, stats_html, tbl, "</section>"
-    ))
-  }
 
-  # GPS map
-  map_html <- ""
-  map_focus <- tolower(as.character(report_cfg$map_focus %||% "country"))
-  has_gps <- !is.null(roles) && isTRUE(roles$has_gps) && !is.null(ds) &&
-    !is.na(roles$x) && !is.na(roles$y) &&
-    roles$x %in% names(ds) && roles$y %in% names(ds)
-  if (has_gps) {
-    nav_links <- c(nav_links, '<a href="#map">Map</a>')
-    xx <- safe_num(ds[[roles$x]])
-    yy <- safe_num(ds[[roles$y]])
-    ok <- is.finite(xx) & is.finite(yy)
-    # Cap points for browser performance
-    idx <- which(ok)
-    if (length(idx) > 2000) idx <- sample(idx, 2000)
-    ids <- if (".hfc_id_display" %in% names(ds)) {
-      ds$.hfc_id_display[idx]
-    } else rep("", length(idx))
-    ids[is.na(ids)] <- ""
-    flagged_ids <- unique(findings$submission_id[findings$check_module == "M8"])
-    flagged <- ids %in% flagged_ids & nzchar(ids)
-    pts_json <- as.character(jsonlite::toJSON(
-      data.frame(lat = yy[idx], lon = xx[idx], id = ids, flagged = flagged, stringsAsFactors = FALSE),
-      dataframe = "rows", auto_unbox = TRUE
-    ))
-    pts_json <- gsub("</script", "<\\/script", pts_json, fixed = TRUE)
-    # Focus zoom defaults
-    zoom <- switch(map_focus, world = 2, city = 11, country = 6, 6)
-    center_lat <- if (length(idx)) median(yy[idx], na.rm = TRUE) else 0
-    center_lon <- if (length(idx)) median(xx[idx], na.rm = TRUE) else 0
-    map_html <- paste0(
-      "<section id='map' class='card'><h2>GPS map</h2>",
-      "<p class='meta'>Focus: ", esc(map_focus), " · ", length(idx),
-      " points (sampled if &gt;2000). Coordinates from ", esc(roles$x), " / ",
-      esc(roles$y), ". All points are shown; points flagged by GPS Location ",
-      "(M8) are red. Click a point to see its unique ID.</p>",
-      "<div id='gps-map' style='height:420px;border-radius:8px;'></div>",
-      "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>",
-      "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>",
-      "<script>(function(){",
-      "var map=L.map('gps-map').setView([", center_lat, ",", center_lon, "],", zoom, ");",
-      "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{",
-      "attribution:'&copy; OpenStreetMap'}).addTo(map);",
-      "var pts=", pts_json, ";",
-      "var latlngs=pts.map(function(p){return [p.lat,p.lon];});",
-      "pts.forEach(function(p){",
-      "L.circleMarker([p.lat,p.lon],{radius:3,color:p.flagged?'#c0392b':'#2a6f5e',fillOpacity:0.7})",
-      ".bindPopup('ID: '+(p.id||'(none)')).addTo(map);",
-      "});",
-      "if(latlngs.length){map.fitBounds(latlngs,{padding:[20,20]});}",
-      "})();</script></section>"
+    # Recomputed independently here (not inherited from run_check_modules(),
+    # since R data frames are copy-on-modify) so the GPS map and any other
+    # ds-derived rendering can show the composite ID consistently.
+    if (!is.null(ds) && !is.null(roles)) {
+        ds$.hfc_id_display <- composite_id_string(ds, roles$entity_id, roles$entity_id_sep %||% " / ")
+    }
+
+    stats <- stats %||% list()
+    last_date <- roles$last_date %||% NA_character_
+    if (!is.null(last_date) && (is.na(last_date) || !nzchar(last_date))) last_date <- NA_character_
+
+    # Findings tables show only the columns a field team member needs to act
+    # on a flagged row — Issue ID/category/check_module stay in the xlsx/csv
+    # exports but are dropped from the HTML display. Entity ID's header is
+    # survey-specific (e.g. "Student ID"); Group ID only appears when the
+    # survey actually has a group/unit role.
+    entity_label <- roles$entity_label %||% "Entity ID"
+    findings_cols <- c("submission_id", if (isTRUE(roles$has_unit)) "group_id", "enumerator", "issue", "value")
+    findings_col_labels <- list(
+        submission_id = entity_label, group_id = "Group ID",
+        enumerator = "Enumerator ID", issue = "Issue", value = "Value"
     )
+
+    # Display order only — sorted by enumerator, then submission ID, then date
+    # (most recent first) wherever available; the on-disk findings.csv /
+    # tracking workbook keep natural order.
+    findings <- sort_findings_for_display(findings)
+
+    by_cat <- if (nrow(findings)) findings %>% count(category, sort = TRUE) else
+        tibble(category = character(), n = integer())
+    by_mod <- if (nrow(findings) && "check_module" %in% names(findings)) {
+        findings %>% count(check_module, sort = TRUE)
+    } else tibble(check_module = character(), n = integer())
+
+    summary_cards <- if (nrow(by_mod)) {
+        paste0(
+        "<div class='cards'>",
+        paste0("<div class='stat'><div class='stat-n'>", by_mod$n,
+                "</div><div class='stat-l'>", esc(module_label(by_mod$check_module)), "</div></div>",
+                collapse = ""),
+        "</div>"
+        )
+    } else ""
+
+    cat_table <- html_searchable_table(by_cat, c("category", "n"), "tbl-cats", 10L)
+
+    # Per-module sections. A module appears if it produced row-level findings
+    # OR non-empty descriptive stats (M10 Summary Statistics never produces
+    # findings rows at all; M1/M3/M4/M7 can have stats with zero findings).
+    present_from_findings <- if (nrow(findings) && "check_module" %in% names(findings)) {
+        unique(findings$check_module)
+    } else character()
+    stats_nonempty <- function(s) {
+        if (is.null(s)) return(FALSE)
+        if (is.data.frame(s)) return(nrow(s) > 0)
+        if (is.list(s)) return(any(vapply(s, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))))
+        FALSE
+    }
+    present_from_stats <- names(stats)[vapply(stats, stats_nonempty, logical(1))]
+    modules_present <- intersect(MODULE_ORDER, union(present_from_findings, present_from_stats))
+
+    mod_sections <- character()
+    nav_links <- c('<a href="#about">About</a>', '<a href="#summary">Summary</a>')
+    if (!is.na(last_date)) nav_links <- c(nav_links, '<a href="#lastday">Last Day</a>')
+
+    for (mod in modules_present) {
+        sub <- findings %>% filter(check_module == mod)
+        aid <- paste0("mod-", tolower(mod))
+        nav_links <- c(nav_links, sprintf(
+        '<a href="#%s">%s <sup class="mod-code">%s</sup></a>', aid, esc(module_label(mod)), esc(mod)
+        ))
+        desc_override <- module_notes$overrides[[mod]]
+        desc_text <- if (!is.null(desc_override) && nzchar(desc_override)) desc_override else module_desc(mod)
+        desc_html <- if (nzchar(desc_text)) paste0("<p class='mod-desc'>", esc(desc_text), "</p>") else ""
+        custom_html <- ""
+        if (identical(mod, "M11") && length(module_notes$custom)) {
+        items <- vapply(names(module_notes$custom), function(nm) {
+            entry <- module_notes$custom[[nm]]
+            lbl <- entry$label %||% nm
+            d <- entry$description %||% ""
+            paste0("<li><strong>", esc(lbl), "</strong> — ", esc(d), "</li>")
+        }, character(1))
+        custom_html <- paste0(
+            "<div class='custom-checks'><h3>Custom checks for this survey</h3><ul>",
+            paste(items, collapse = ""), "</ul></div>"
+        )
+        }
+        stats_html <- render_stats_block(stats[[mod]], tolower(mod))
+        # M10 Summary Statistics never has findings rows — skip the (always-empty,
+        # otherwise-misleading) findings table and "N findings" count for it.
+        is_stats_only <- identical(mod, "M10")
+        heading_suffix <- if (is_stats_only) "" else paste0(" · ", nrow(sub), " findings")
+        tbl <- if (is_stats_only) "" else html_searchable_table(
+        sub,
+        findings_cols,
+        paste0("tbl-", aid),
+        10L,
+        bold_date = last_date,
+        col_labels = findings_col_labels
+        )
+        mod_sections <- c(mod_sections, paste0(
+        "<section id='", aid, "' class='card'><h2>", esc(module_label(mod)),
+        " <span class='mod-code'>", esc(mod), "</span>", heading_suffix,
+        "</h2>", desc_html, custom_html, stats_html, tbl, "</section>"
+        ))
+    }
+
+    # GPS map
+    map_html <- ""
+    map_focus <- tolower(as.character(report_cfg$map_focus %||% "country"))
+    has_gps <- !is.null(roles) && isTRUE(roles$has_gps) && !is.null(ds) &&
+        !is.na(roles$x) && !is.na(roles$y) &&
+        roles$x %in% names(ds) && roles$y %in% names(ds)
+    if (has_gps) {
+        nav_links <- c(nav_links, '<a href="#map">Map</a>')
+        xx <- safe_num(ds[[roles$x]])
+        yy <- safe_num(ds[[roles$y]])
+        ok <- is.finite(xx) & is.finite(yy)
+        # Cap points for browser performance
+        idx <- which(ok)
+        if (length(idx) > 2000) idx <- sample(idx, 2000)
+        ids <- if (".hfc_id_display" %in% names(ds)) {
+        ds$.hfc_id_display[idx]
+        } else rep("", length(idx))
+        ids[is.na(ids)] <- ""
+        flagged_ids <- unique(findings$submission_id[findings$check_module == "M8"])
+        flagged <- ids %in% flagged_ids & nzchar(ids)
+        pts_json <- as.character(jsonlite::toJSON(
+        data.frame(lat = yy[idx], lon = xx[idx], id = ids, flagged = flagged, stringsAsFactors = FALSE),
+        dataframe = "rows", auto_unbox = TRUE
+        ))
+        pts_json <- gsub("</script", "<\\/script", pts_json, fixed = TRUE)
+        # Focus zoom defaults
+        zoom <- switch(map_focus, world = 2, city = 11, country = 6, 6)
+        center_lat <- if (length(idx)) median(yy[idx], na.rm = TRUE) else 0
+        center_lon <- if (length(idx)) median(xx[idx], na.rm = TRUE) else 0
+        map_html <- paste0(
+        "<section id='map' class='card'><h2>GPS map</h2>",
+        "<p class='meta'>Focus: ", esc(map_focus), " · ", length(idx),
+        " points (sampled if &gt;2000). Coordinates from ", esc(roles$x), " / ",
+        esc(roles$y), ". All points are shown; points flagged by GPS Location ",
+        "(M8) are red. Click a point to see its unique ID.</p>",
+        "<div id='gps-map' style='height:420px;border-radius:8px;'></div>",
+        "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>",
+        "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>",
+        "<script>(function(){",
+        "var map=L.map('gps-map').setView([", center_lat, ",", center_lon, "],", zoom, ");",
+        "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{",
+        "attribution:'&copy; OpenStreetMap'}).addTo(map);",
+        "var pts=", pts_json, ";",
+        "var latlngs=pts.map(function(p){return [p.lat,p.lon];});",
+        "pts.forEach(function(p){",
+        "L.circleMarker([p.lat,p.lon],{radius:3,color:p.flagged?'#c0392b':'#2a6f5e',fillOpacity:0.7})",
+        ".bindPopup('ID: '+(p.id||'(none)')).addTo(map);",
+        "});",
+        "if(latlngs.length){map.fitBounds(latlngs,{padding:[20,20]});}",
+        "})();</script></section>"
+        )
   }
 
   # Last Day tab — every finding from the most recent day of data collection,
@@ -455,8 +600,9 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
       "a quick way to see what's most urgent. These same rows are also bolded within their own module's table.</p>",
       html_searchable_table(
         last_day_f,
-        c("finding_id", "check_module", "category", "issue", "submission_id", "enumerator", "school_id", "value"),
-        "tbl-lastday", 15L
+        findings_cols,
+        "tbl-lastday", 15L,
+        col_labels = findings_col_labels
       ),
       "</section>"
     )
@@ -465,9 +611,10 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
   nav_links <- c(nav_links, '<a href="#all">All findings</a>')
   all_tbl <- html_searchable_table(
     findings,
-    c("finding_id", "check_module", "category", "issue", "submission_id", "enumerator", "school_id", "value"),
+    findings_cols,
     "tbl-all", 10L,
-    bold_date = last_date
+    bold_date = last_date,
+    col_labels = findings_col_labels
   )
 
   # "About this dashboard" — orientation + glossary, always first
@@ -582,8 +729,8 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     map_html,
     "<section id='all' class='card'><h2>All findings</h2>", all_tbl, "</section>",
     "<p class='note footer'>Field edits go in the <strong>main</strong> feedback file in the ",
-    "shared OneDrive folder (see <code>hfc/config/onedrive.json</code>). Local twin: ",
-    "<code>hfc/output/feedback_sheet.xlsx</code>. When ready, say ",
+    "shared OneDrive folder (see <code>hfc-fieldloop/assets/lib/onedrive.json</code>). Local twin: ",
+    "<code>hfc/output/issue_tracking.xlsx</code>. When ready, say ",
     "<strong>Process HFC feedback</strong>.</p>",
     "</main>",
     "<script>
@@ -649,65 +796,79 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
 }
 
 ensure_project_dirs <- function(project_root) {
-  # Raw data at project root; everything else under hfc/
-  dir.create(file.path(project_root, "data", "raw"), recursive = TRUE, showWarnings = FALSE)
-  hfc <- hfc_root(project_root)
-  for (d in c("checks", "code", "fixes", "registry", "output", "report", "config", "instrument")) {
-    dir.create(file.path(hfc, d), recursive = TRUE, showWarnings = FALSE)
-  }
+    # Raw data at project root; everything else under hfc/
+    dir.create(file.path(project_root, "data", "raw"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(project_root, "data", "intermediate"), recursive = TRUE, showWarnings = FALSE)
+    hfc <- hfc_root(project_root)
+    for (d in c("checks", "code", "fixes", "registry", "output", "report", "config", "instrument")) {
+        dir.create(file.path(hfc, d), recursive = TRUE, showWarnings = FALSE)
+    }
 }
 
 write_check_stubs <- function(project_root, findings, skill_dir = NULL) {
-  checks_dir <- hfc_path(project_root, "checks")
-  dir.create(checks_dir, showWarnings = FALSE, recursive = TRUE)
-  # Do not wipe custom user checks (non-template names)
-  if (!is.null(skill_dir) && !is.na(skill_dir)) {
-    tmpl_dir <- file.path(skill_dir, "assets", "check_templates")
-    if (dir.exists(tmpl_dir)) {
-      for (f in list.files(tmpl_dir, pattern = "\\.R$", full.names = TRUE)) {
-        bn <- basename(f)
-        if (grepl("^custom_|example", bn, ignore.case = TRUE)) next
-        file.copy(f, file.path(checks_dir, bn), overwrite = TRUE)
-      }
+    checks_dir <- hfc_path(project_root, "checks")
+    dir.create(checks_dir, showWarnings = FALSE, recursive = TRUE)
+    # Do not wipe custom user checks (non-template names)
+    if (!is.null(skill_dir) && !is.na(skill_dir)) {
+        tmpl_dir <- file.path(skill_dir, "assets", "check_templates")
+        if (dir.exists(tmpl_dir)) {
+        for (f in list.files(tmpl_dir, pattern = "\\.R$", full.names = TRUE)) {
+            bn <- basename(f)
+            if (grepl("^custom_|example", bn, ignore.case = TRUE)) next
+            file.copy(f, file.path(checks_dir, bn), overwrite = TRUE)
+        }
+        }
     }
-  }
-  check_ids <- unique(findings$check_id)
-  if (!length(check_ids)) check_ids <- "duplicates_id"
-  for (cid in check_ids) {
-    dest <- file.path(checks_dir, paste0(cid, ".R"))
-    if (file.exists(dest)) next
-    writeLines(c(
-      sprintf("# Check: %s", cid),
-      "# Re-run: Rscript hfc-fieldloop/scripts/run_setup_build.R <project_root>",
-      "# Full logic: hfc-fieldloop/scripts/lib/run_checks.R"
-    ), dest)
-  }
+    check_ids <- unique(findings$check_id)
+    if (!length(check_ids)) check_ids <- "duplicates_id"
+
+    # Wipe stale per-check-id stub files (identified by their auto-generated
+    # "# Check: " first-line marker, not filename alone, so a file the user
+    # renamed/repurposed into something custom is never touched) whose
+    # check_id no longer appears in this run's findings.
+    for (f in list.files(checks_dir, pattern = "\\.R$", full.names = TRUE)) {
+        first_line <- tryCatch(readLines(f, n = 1, warn = FALSE), error = function(e) "")
+        if (length(first_line) && startsWith(first_line, "# Check: ")) {
+            cid_in_file <- sub("^# Check: ", "", first_line)
+            if (!cid_in_file %in% check_ids) file.remove(f)
+        }
+    }
+
+    for (cid in check_ids) {
+        dest <- file.path(checks_dir, paste0(cid, ".R"))
+        if (file.exists(dest)) next
+        writeLines(c(
+        sprintf("# Check: %s", cid),
+        "# Re-run: Rscript hfc-fieldloop/scripts/run_setup_build.R <project_root>",
+        "# Full logic: hfc-fieldloop/scripts/lib/run_checks.R"
+        ), dest)
+    }
 }
 
 write_main_r <- function(project_root, skill_dir = NULL) {
-  dir.create(hfc_path(project_root, "code"), showWarnings = FALSE, recursive = TRUE)
-  dest <- hfc_path(project_root, "code", "main.R")
-  if (is.null(skill_dir) || is.na(skill_dir)) {
-    skill_dir <- file.path(project_root, "hfc-fieldloop")
-  }
-  tmpl <- file.path(skill_dir, "assets", "main.R")
-  if (file.exists(tmpl)) {
-    lines <- readLines(tmpl, warn = FALSE)
-    lines <- sub(
-      'path <- "your/path/to/survey_project/"',
-      sprintf('path <- "%s"', normalizePath(project_root)),
-      lines,
-      fixed = TRUE
-    )
-    writeLines(lines, dest)
-  } else {
-    writeLines(c(
-      "# HFC FieldLoop — one path global",
-      sprintf('path <- "%s"', normalizePath(project_root)),
-      'skill <- file.path(path, "hfc-fieldloop")',
-      'hfc <- file.path(path, "hfc")',
-      "# Rscript file.path(skill, \"scripts\", \"run_setup_build.R\") path --open",
-      "# Rscript file.path(skill, \"scripts\", \"apply_feedback.R\") path"
-    ), dest)
-  }
+    dir.create(hfc_path(project_root, "code"), showWarnings = FALSE, recursive = TRUE)
+    dest <- hfc_path(project_root, "code", "main.R")
+    if (is.null(skill_dir) || is.na(skill_dir)) {
+        skill_dir <- file.path(project_root, "hfc-fieldloop")
+    }
+    tmpl <- file.path(skill_dir, "assets", "main.R")
+    if (file.exists(tmpl)) {
+        lines <- readLines(tmpl, warn = FALSE)
+        lines <- sub(
+        'path <- "your/path/to/survey_project/"',
+        sprintf('path <- "%s"', normalizePath(project_root)),
+        lines,
+        fixed = TRUE
+        )
+        writeLines(lines, dest)
+    } else {
+        writeLines(c(
+        "# HFC FieldLoop — one path global",
+        sprintf('path <- "%s"', normalizePath(project_root)),
+        'skill <- file.path(path, "hfc-fieldloop")',
+        'hfc <- file.path(path, "hfc")',
+        "# Rscript file.path(skill, \"scripts\", \"run_setup_build.R\") path --open",
+        "# Rscript file.path(skill, \"scripts\", \"apply_feedback.R\") path"
+        ), dest)
+    }
 }

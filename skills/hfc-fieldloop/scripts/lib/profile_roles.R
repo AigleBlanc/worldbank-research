@@ -17,6 +17,7 @@ col_label <- function(x) {
 
 # Shared regex vocabulary for ID-like columns, reused by both the single-column
 # and composite-ID shortlist functions so they don't drift apart.
+# The following should never be candidates for unique ID
 ID_NOISE_PATTERN <- paste0(
     "duration|light|sound|movement|latitude|longitude|^lat$|^lon$|",
     "coord|gps|audio|photo|picture|image|consent_pic|track_|",
@@ -26,10 +27,12 @@ ID_NAME_PATTERN <- "studentid|hhid|household|respondent|farmerid|^id$|uuid|submi
 ID_LABEL_PATTERN <- "student|household|respondent|submission|unique|interview|case id|id number"
 COMPOSITE_ID_NAME_PATTERN <- "roster|member|line|index|child|hh_member|person|individual"
 
-#' Score columns as unique submission ID candidates (higher = better).
-#' Uses name patterns, haven labels, uniqueness ratio, missingness.
-#' Excludes high-cardinality noise (duration, sensors, GPS, media filenames).
-shortlist_submission_ids <- function(ds, n = 3L) {
+# Score columns as Entity ID candidates (higher = better) — the analysis-
+# unit identifier (person/household/school/...), not necessarily row-unique
+# (see roles$dup_key_extra for the separate duplicate-check key).
+# Uses name patterns, haven labels, uniqueness ratio, missingness.
+# Excludes high-cardinality noise (duration, sensors, GPS, media filenames).
+shortlist_entity_ids <- function(ds, n = 3L) {
     nms <- names(ds)
     n_row <- nrow(ds)
     noise <- grepl(ID_NOISE_PATTERN, nms, ignore.case = TRUE)
@@ -45,8 +48,8 @@ shortlist_submission_ids <- function(ds, n = 3L) {
         non_na <- x[!is.na(x) & as.character(x) != ""]
         n_obs <- length(non_na)
         if (n_obs < max(10, 0.5 * n_row)) return(-Inf)
-        n_u <- length(unique(as.character(non_na)))
-        uniq <- n_u / max(1, n_obs)
+        n_unique <- length(unique(as.character(non_na)))
+        uniq <- n_unique / max(1, n_obs)
         miss <- 1 - n_obs / max(1, n_row)
         s <- 0
         if (id_name_pat[match(col, nms)]) s <- s + 5
@@ -76,20 +79,20 @@ shortlist_submission_ids <- function(ds, n = 3L) {
     rationale <- vapply(cands, function(col) {
         x <- ds[[col]]
         non_na <- x[!is.na(x) & as.character(x) != ""]
-        n_u <- length(unique(as.character(non_na)))
+        n_unique <- length(unique(as.character(non_na)))
         lab <- col_label(x)
         lab_bit <- if (!is.na(lab)) sprintf(" label=\"%s\"", substr(lab, 1, 60)) else ""
-        sprintf("%s: %s unique / %s rows%s", col, n_u, n_row, lab_bit)
+        sprintf("%s: %s unique / %s rows%s", col, n_unique, n_row, lab_bit)
     }, character(1))
 
-    list(id_options = cands, id_rationale = unname(rationale), id = cands[[1]] %||% NA_character_)
+    list(entity_id_options = cands, entity_id_rationale = unname(rationale), entity_id = cands[[1]] %||% NA_character_)
 }
 
-#' Candidates for a COMPOSITE unique key (e.g. household_id + member_id).
-#' Pools moderate-uniqueness columns plus roster/member-like columns, since
-#' those typically combine with a household/site id to form a compound key.
-#' Returns the same shape as shortlist_submission_ids() for card symmetry.
-shortlist_composite_id_candidates <- function(ds, n = 4L) {
+# Candidates for a COMPOSITE Entity ID (e.g. household_id + member_id).
+# Pools moderate-uniqueness columns plus roster/member-like columns, since
+# those typically combine with a household/site id to form a compound key.
+# Returns the same shape as shortlist_entity_ids() for card symmetry.
+shortlist_composite_entity_ids <- function(ds, n = 4L) {
     nms <- names(ds)
     n_row <- nrow(ds)
     noise <- grepl(ID_NOISE_PATTERN, nms, ignore.case = TRUE)
@@ -101,8 +104,8 @@ shortlist_composite_id_candidates <- function(ds, n = 4L) {
         non_na <- x[!is.na(x) & as.character(x) != ""]
         n_obs <- length(non_na)
         if (n_obs < max(10, 0.3 * n_row)) return(-Inf)
-        n_u <- length(unique(as.character(non_na)))
-        uniq <- n_u / max(1, n_obs)
+        n_unique <- length(unique(as.character(non_na)))
+        uniq <- n_unique / max(1, n_obs)
         s <- 0
         if (id_name_pat[match(col, nms)]) s <- s + 4
         if (roster_pat[match(col, nms)]) s <- s + 5
@@ -126,11 +129,11 @@ shortlist_composite_id_candidates <- function(ds, n = 4L) {
     rationale <- vapply(cands, function(col) {
         x <- ds[[col]]
         non_na <- x[!is.na(x) & as.character(x) != ""]
-        n_u <- length(unique(as.character(non_na)))
-        sprintf("%s: %s distinct values / %s rows", col, n_u, n_row)
+        n_unique <- length(unique(as.character(non_na)))
+        sprintf("%s: %s distinct values / %s rows", col, n_unique, n_row)
     }, character(1))
 
-    list(composite_options = cands, composite_rationale = unname(rationale))
+    list(composite_entity_id_options = cands, composite_entity_id_rationale = unname(rationale))
 }
 
 #' Shortlist candidate country-indicator columns for multi-country surveys.
@@ -148,9 +151,9 @@ shortlist_country_columns <- function(ds, n = 3L) {
         x <- as.character(ds[[col]])
         non_na <- x[!is.na(x) & nzchar(x)]
         if (!length(non_na)) return(-Inf)
-        n_u <- length(unique(non_na))
+        n_unique <- length(unique(non_na))
         s <- 0
-        if (n_u <= 20) s <- s + 3 else s <- s - 5
+        if (n_unique <= 20) s <- s + 3 else s <- s - 5
         s
     }
     cols <- nms[cand_idx]
@@ -177,6 +180,22 @@ detect_completion_candidates <- function(ds, n = 3L) {
 detect_grouping_vars <- function(ds, n = 4L) {
     nms <- names(ds)
     hit <- grep("treat|arm|group|state|region|district|stratum", nms, ignore.case = TRUE, value = TRUE)
+    hit <- hit[vapply(hit, function(col) {
+        x <- as.character(ds[[col]])
+        nu <- length(unique(x[!is.na(x) & nzchar(x)]))
+        nu >= 2 && nu <= 30
+    }, logical(1))]
+    utils::head(hit, n)
+}
+
+#' Candidate disambiguating columns for the M2 duplicate-check key
+#' (round/wave/time-like) — only relevant once Entity ID is confirmed AND
+#' found to repeat (e.g. a household surveyed across multiple rounds).
+#' Excludes the Entity ID column(s) themselves.
+DUP_KEY_NAME_PATTERN <- "round|wave|phase|period|visit|time|endline|baseline|midline|survey_round"
+detect_duplicate_key_candidates <- function(ds, entity_id_cols, n = 4L) {
+    nms <- setdiff(names(ds), entity_id_cols)
+    hit <- grep(DUP_KEY_NAME_PATTERN, nms, ignore.case = TRUE, value = TRUE)
     hit <- hit[vapply(hit, function(col) {
         x <- as.character(ds[[col]])
         nu <- length(unique(x[!is.na(x) & nzchar(x)]))
@@ -245,13 +264,38 @@ detect_ordinal_vars <- function(ds, exclude = character(), n = 20L) {
     utils::head(hit, n)
 }
 
-#' Profile roles. Optional media_folder from discover_media_folder().
+#' Detect the Unique Submission ID column (SurveyCTO/ODK KEY/uuid/instanceID)
+#' — the machine-generated, guaranteed-unique-per-row identifier, distinct
+#' from Entity ID (which is chosen by the user and may legitimately repeat).
+#' Tries the usual name pattern first, but only accepts it if it's actually
+#' 100% unique + non-missing; otherwise scans remaining columns for one that
+#' is. Fully automatic — no user confirmation (contrast with the Entity ID /
+#' duplicate-check-key gates, which are explicit AskUserQuestion steps).
+detect_unique_key_column <- function(ds, exclude = character()) {
+    nms <- setdiff(names(ds), exclude)
+    is_fully_unique <- function(col) {
+        x <- ds[[col]]
+        x_chr <- as.character(x)
+        if (any(is.na(x) | !nzchar(x_chr))) return(FALSE)
+        length(unique(x_chr)) == nrow(ds)
+    }
+    name_cand <- pick_first(nms, c("^key$", "uuid", "instanceid"))
+    if (!is.na(name_cand) && is_fully_unique(name_cand)) return(name_cand)
+
+    candidates <- nms[vapply(nms, is_fully_unique, logical(1))]
+    if (!length(candidates)) return(NA_character_)
+    pref <- candidates[grepl(ID_NAME_PATTERN, candidates, ignore.case = TRUE)]
+    if (length(pref)) return(pref[[1]])
+    candidates[[1]]
+}
+
+# Profile roles. Optional media_folder from discover_media_folder().
 profile_roles <- function(ds, media_folder = NA_character_) {
     nms <- names(ds)
 
-    id_info <- shortlist_submission_ids(ds, n = 3L)
-    id_cands <- id_info$id_options
-    composite_info <- shortlist_composite_id_candidates(ds, n = 4L)
+    id_info <- shortlist_entity_ids(ds, n = 3L)
+    id_cands <- id_info$entity_id_options
+    composite_info <- shortlist_composite_entity_ids(ds, n = 4L)
     country_col_info <- shortlist_country_columns(ds, n = 3L)
 
     media <- if (exists("detect_media_vars", mode = "function")) {
@@ -268,21 +312,24 @@ profile_roles <- function(ds, media_folder = NA_character_) {
     audio_flag <- if (length(audio_flag_cands)) audio_flag_cands[[1]] else NA_character_
 
     roles <- list(
-        id = id_info$id,
-        id_options = id_cands,
-        id_rationale = id_info$id_rationale,
-        id_sep = " / ",
-        composite_id_candidates = composite_info$composite_options,
-        composite_id_rationale = composite_info$composite_rationale,
+        entity_id = id_info$entity_id,
+        entity_id_options = id_cands,
+        entity_id_rationale = id_info$entity_id_rationale,
+        entity_id_sep = " / ",
+        dup_key_extra = character(),
+        composite_entity_id_candidates = composite_info$composite_entity_id_options,
+        composite_entity_id_rationale = composite_info$composite_entity_id_rationale,
         country_mode = "single",
         country_col_candidates = country_col_info$country_col_options,
         country_col_rationale = country_col_info$country_col_rationale,
-        school = pick_first(nms, c("schoolid", "school_id", "cluster", "ea_id", "village")),
+        group = pick_first(nms, c(
+            "group_id", "groupid", "site_id", "siteid", "facility_id", "facilityid",
+            "unit_id", "unitid", "schoolid", "school_id", "cluster", "ea_id", "village"
+        )),
         enum = pick_first(nms, c("enumeratorid", "enumerator", "enum_id", "interviewer")),
         start = pick_first(nms, c("^starttime$", "startdate", "^start$", "SubmissionDate")),
         end = pick_first(nms, c("^endtime$", "enddate", "^end$")),
         duration = pick_first(nms, c("^duration$", "interview_duration")),
-        key = pick_first(nms, c("^key$", "uuid", "instanceid")),
         x = pick_first(nms, c("x_coord", "longitude", "^lon$", "gps.*lon")),
         y = pick_first(nms, c("y_coord", "latitude", "^lat$", "gps.*lat")),
         age = pick_first(nms, c("^age$", "student_age", "respondent_age")),
@@ -298,13 +345,37 @@ profile_roles <- function(ds, media_folder = NA_character_) {
         } else {
         NA_character_
         },
-        food = pick_first(nms, c("receive_food", "food_received")),
-        meal = pick_first(nms, c("schoolmeal", "meal_program", "sbp")),
-        ravens = pick_first(nms, c("ravens_cpm_correct", "ravens", "cognitive")),
         completion_var_candidates = detect_completion_candidates(ds, n = 3L),
         group_var_candidates = detect_grouping_vars(ds, n = 4L),
         form_version_col = detect_form_version_col(ds)
     )
+
+    # Human-readable name fields for the issue-tracking Entity/Group/Enumerator
+    # columns — distinct from their ID/code roles above. NA (blank) when no
+    # name-like column exists; never falls back to duplicating the ID.
+    pick_name_field <- function(patterns, taken) pick_first(setdiff(nms, taken), patterns)
+    roles$entity_name_field <- pick_name_field(
+        c("respondent_name", "student_name", "participant_name", "hh_head_name",
+          "beneficiary_name", "full_name", "^name$"),
+        taken = c(roles$entity_id, roles$group, roles$enum, roles$country_col_candidates)
+    )
+    roles$group_name <- pick_name_field(
+        c("village_name", "site_name", "facility_name", "school_name",
+          "community_name", "group_name", "location_name"),
+        taken = c(roles$entity_id, roles$entity_name_field, roles$group, roles$enum, roles$country_col_candidates)
+    )
+    roles$enum_name <- pick_name_field(
+        c("enumerator_name", "interviewer_name", "surveyor_name", "enum_name", "fieldworker_name"),
+        taken = c(roles$entity_id, roles$entity_name_field, roles$group, roles$group_name, roles$enum, roles$country_col_candidates)
+    )
+
+    # Unique Submission ID: must run after entity_id/group/enum/name fields
+    # are known, so it can exclude them from its uniqueness scan.
+    roles$key <- detect_unique_key_column(ds, exclude = c(
+        roles$entity_id, roles$group, roles$enum, roles$x, roles$y,
+        roles$entity_name_field, roles$group_name, roles$enum_name,
+        audio_file_cols, image_file_cols
+    ))
 
     img <- image_file_cols
     roles$consent_image <- {
@@ -320,10 +391,11 @@ profile_roles <- function(ds, media_folder = NA_character_) {
         v <- safe_num(x)
         sum(is.finite(v)) > 30 && length(unique(v[is.finite(v)])) > 10
     }, logical(1))]
-    exclude <- unique(c(roles$id, roles$school, roles$enum, roles$key, roles$x, roles$y,
+    exclude <- unique(c(roles$entity_id, roles$group, roles$enum, roles$key, roles$x, roles$y,
+                        roles$entity_name_field, roles$group_name, roles$enum_name,
                         grep("id$|_id$|^key$", nms, ignore.case = TRUE, value = TRUE)))
     num_cols <- setdiff(num_cols, exclude)
-    prefer <- intersect(c(roles$age, roles$duration, roles$ravens, "age", "duration"), num_cols)
+    prefer <- intersect(c(roles$age, roles$duration, "age", "duration"), num_cols)
     roles$numeric_shortlist <- unique(c(prefer, num_cols))[seq_len(min(10, length(unique(c(prefer, num_cols)))))]
     roles$sumstats_var_candidates <- utils::head(roles$numeric_shortlist, 10)
     roles$missingness_var_candidates <- unique(c(
@@ -332,15 +404,16 @@ profile_roles <- function(ds, media_folder = NA_character_) {
     ))
     roles$missingness_var_candidates <- utils::head(roles$missingness_var_candidates, 10)
 
-    ordinal_exclude <- unique(c(roles$id, roles$school, roles$enum, roles$key, roles$x, roles$y,
+    ordinal_exclude <- unique(c(roles$entity_id, roles$group, roles$enum, roles$key, roles$x, roles$y,
                                 roles$start, roles$end, roles$duration,
-                                roles$composite_id_candidates,
+                                roles$entity_name_field, roles$group_name, roles$enum_name,
+                                roles$composite_entity_id_candidates,
                                 grep("id$|_id$|^key$|date|time|member|roster|line|index", nms, ignore.case = TRUE, value = TRUE)))
     roles$ordinal_vars <- detect_ordinal_vars(ds, exclude = ordinal_exclude, n = 20L)
 
     roles$has_gps <- !is.na(roles$x) && !is.na(roles$y)
     roles$has_enum <- !is.na(roles$enum)
-    roles$has_unit <- !is.na(roles$school)
+    roles$has_unit <- !is.na(roles$group)
     roles$has_consentish <- !is.na(roles$assent) || !is.na(roles$consent) || !is.na(roles$audio_flag)
     roles$has_media <- length(audio_file_cols) > 0 || length(image_file_cols) > 0
     roles$media_folder_found <- !is.na(roles$media_folder) && nzchar(roles$media_folder) &&
@@ -367,79 +440,75 @@ profile_roles <- function(ds, media_folder = NA_character_) {
 }
 
 default_modules <- function(roles) {
-  m11_enabled <- character()
-  if (!is.na(roles$food) && !is.na(roles$meal)) m11_enabled <- c(m11_enabled, "food_receipt")
-  if (!is.na(roles$ravens)) m11_enabled <- c(m11_enabled, "cognitive")
+    audio_cols <- roles$audio_file_cols %||% character()
+    image_cols <- roles$image_file_cols %||% character()
+    audio_cols <- utils::head(audio_cols, 5)
+    image_cols <- utils::head(image_cols, 5)
 
-  audio_cols <- roles$audio_file_cols %||% character()
-  image_cols <- roles$image_file_cols %||% character()
-  audio_cols <- utils::head(audio_cols, 5)
-  image_cols <- utils::head(image_cols, 5)
-
-  list(
-    M1 = list(
-      on = TRUE,
-      completion_var = if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else NA_character_,
-      group_vars = roles$group_var_candidates %||% character(),
-      by_enum = TRUE,
-      by_date = TRUE,
-      low_completion_on = isTRUE(roles$has_unit),
-      pct_median = 0.5
-    ),
-    M2 = list(on = TRUE, id = roles$id, extra_keys = "none"),
-    M3 = list(
-      on = TRUE,
-      version_col = roles$form_version_col %||% NA_character_,
-      version_map = list()
-    ),
-    M4 = list(
-      on = TRUE,
-      duration = roles$duration,
-      sd_rule = 3,
-      section_map = list(),
-      by_enum = TRUE
-    ),
-    M5 = list(
-      on = TRUE,
-      flag_weekend = TRUE,
-      evening_hour = 19,
-      morning_hour = 7
-    ),
-    M6 = list(on = TRUE, vars = utils::head(roles$numeric_shortlist, 10), sd_rule = 3),
-    M7 = list(
-      on = TRUE,
-      vars = roles$missingness_var_candidates %||% character(),
-      sentinel_codes = character(),
-      by_enum = TRUE
-    ),
-    M8 = list(on = isTRUE(roles$has_gps), x = roles$x, y = roles$y, threshold_m = 300),
-    M9 = list(
-      on = length(roles$ordinal_vars %||% character()) > 0,
-      ordinal_vars = utils::head(roles$ordinal_vars %||% character(), 15),
-      enum_threshold_pct = 0.8,
-      survey_threshold_pct = 0.8
-    ),
-    M10 = list(on = TRUE, vars = roles$sumstats_var_candidates %||% character(), max_n = 10L),
-    M11 = list(on = length(m11_enabled) > 0, enabled = m11_enabled, custom = character()),
-    M12 = list(
-      on = isTRUE(roles$has_media),
-      audio_cols = audio_cols,
-      image_cols = image_cols,
-      media_folder = roles$media_folder %||% NA_character_,
-      min_audio_bytes = 1024L,
-      min_image_bytes = 2048L,
-      min_duration_sec = 5,
-      max_duration_sec = 3600,
-      audio_flag = roles$audio_flag %||% NA_character_,
-      flag_file_col = if (length(audio_cols)) audio_cols[[1]] else NA_character_
-    ),
-    M13 = list(
-      on = isTRUE(roles$has_consentish),
-      assent = roles$assent,
-      consent = roles$consent,
-      audio = roles$audio_flag
+    list(
+        M1 = list(
+        on = TRUE,
+        completion_var = if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else NA_character_,
+        group_vars = roles$group_var_candidates %||% character(),
+        by_enum = TRUE,
+        by_date = TRUE,
+        low_completion_on = isTRUE(roles$has_unit),
+        pct_median = 0.5
+        ),
+        M2 = list(on = TRUE, id = roles$entity_id, extra_keys = roles$dup_key_extra %||% character()),
+        M3 = list(
+        on = TRUE,
+        version_col = roles$form_version_col %||% NA_character_,
+        version_map = list()
+        ),
+        M4 = list(
+        on = TRUE,
+        duration = roles$duration,
+        sd_rule = 3,
+        section_map = list(),
+        by_enum = TRUE
+        ),
+        M5 = list(
+        on = TRUE,
+        flag_weekend = TRUE,
+        evening_hour = 19,
+        morning_hour = 7
+        ),
+        M6 = list(on = TRUE, vars = utils::head(roles$numeric_shortlist, 10), sd_rule = 3),
+        M7 = list(
+        on = TRUE,
+        vars = roles$missingness_var_candidates %||% character(),
+        sentinel_codes = character(),
+        by_enum = TRUE
+        ),
+        M8 = list(on = isTRUE(roles$has_gps), x = roles$x, y = roles$y, threshold_m = 300),
+        M9 = list(
+        on = length(roles$ordinal_vars %||% character()) > 0,
+        ordinal_vars = utils::head(roles$ordinal_vars %||% character(), 15),
+        enum_threshold_pct = 0.8,
+        survey_threshold_pct = 0.8
+        ),
+        M10 = list(on = TRUE, vars = roles$sumstats_var_candidates %||% character(), max_n = 10L),
+        M11 = list(on = FALSE, enabled = character(), custom = character()),
+        M12 = list(
+        on = isTRUE(roles$has_media),
+        audio_cols = audio_cols,
+        image_cols = image_cols,
+        media_folder = roles$media_folder %||% NA_character_,
+        min_audio_bytes = 1024L,
+        min_image_bytes = 2048L,
+        min_duration_sec = 5,
+        max_duration_sec = 3600,
+        audio_flag = roles$audio_flag %||% NA_character_,
+        flag_file_col = if (length(audio_cols)) audio_cols[[1]] else NA_character_
+        ),
+        M13 = list(
+        on = isTRUE(roles$has_consentish),
+        assent = roles$assent,
+        consent = roles$consent,
+        audio = roles$audio_flag
+        )
     )
-  )
 }
 
 format_module_cards <- function(roles) {
@@ -448,14 +517,7 @@ format_module_cards <- function(roles) {
         paste(sprintf("%s%s %s", LETTERS[seq_along(opts)],
                     ifelse(seq_along(opts) == 1, "*", ""), opts), collapse = "  ")
     }
-    m11_bits <- character()
-    if (!is.na(roles$food) && !is.na(roles$meal)) m11_bits <- c(m11_bits, "food_receipt")
-    if (!is.na(roles$ravens)) m11_bits <- c(m11_bits, "cognitive")
-    m11_line <- if (length(m11_bits)) {
-        sprintf("M11 Survey-specific [none* / pick]  proposed: %s", paste(m11_bits, collapse = ", "))
-    } else {
-        "M11 Survey-specific [none*]  (no survey-specific candidates detected — agent may propose 0-5 from form)"
-    }
+    m11_line <- "M11 Survey-specific [none*]  (fully custom — describe any survey-specific checks you want in the Additional checks step)"
 
     audio_f <- roles$audio_file_cols %||% character()
     image_f <- roles$image_file_cols %||% character()
@@ -471,15 +533,20 @@ format_module_cards <- function(roles) {
         "M12 Media files [skip*]  (no audio/image filename columns detected)"
     }
 
-    id_lines <- if (length(roles$id_rationale)) {
-        paste0("ID shortlist: ", paste(roles$id_rationale, collapse = " | "))
+    id_lines <- if (length(roles$entity_id_rationale)) {
+        paste0("Entity ID shortlist: ", paste(roles$entity_id_rationale, collapse = " | "))
     } else {
-        sprintf("ID shortlist: %s", opt_letters(roles$id_options))
+        sprintf("Entity ID shortlist: %s", opt_letters(roles$entity_id_options))
     }
-    composite_lines <- if (length(roles$composite_id_rationale)) {
-        paste0("Composite-ID candidates: ", paste(roles$composite_id_rationale, collapse = " | "))
+    composite_lines <- if (length(roles$composite_entity_id_rationale)) {
+        paste0("Composite Entity ID candidates: ", paste(roles$composite_entity_id_rationale, collapse = " | "))
     } else {
-        "Composite-ID candidates: (none found)"
+        "Composite Entity ID candidates: (none found)"
+    }
+    dup_key_line <- if (length(roles$dup_key_extra)) {
+        sprintf("Duplicate-check key: entity_id + %s", paste(roles$dup_key_extra, collapse = ", "))
+    } else {
+        "Duplicate-check key: Entity ID alone"
     }
     country_lines <- if (length(roles$country_col_rationale)) {
         paste0("Country column candidates: ", paste(roles$country_col_rationale, collapse = " | "))
@@ -491,13 +558,16 @@ format_module_cards <- function(roles) {
     c(
         id_lines,
         composite_lines,
+        dup_key_line,
         country_lines,
         sprintf("Last date of data collection (detected): %s", roles$last_date_candidate %||% "?"),
         sprintf("M1 Completion [Y*]  completion_var=%s  groups=%s  by_enum=Y*  by_date=Y*  low_completion=%s* of median",
                 if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else "(derive)",
                 if (length(roles$group_var_candidates)) paste(roles$group_var_candidates, collapse = ",") else "none",
                 "50%"),
-        sprintf("M2 Duplicates [Y*/N]  ID: %s", opt_letters(roles$id_options)),
+        sprintf("M2 Duplicates [Y*/N]  Entity ID: %s  extra_keys=%s",
+                opt_letters(roles$entity_id_options),
+                if (length(roles$dup_key_extra)) paste(roles$dup_key_extra, collapse = ",") else "none*"),
         sprintf("M3 Form Version [%s]  version_col=%s",
                 if (!is.na(roles$form_version_col)) "Y*" else "best-guess*",
                 roles$form_version_col %||% "(none - will infer)"),
