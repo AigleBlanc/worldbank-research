@@ -32,9 +32,7 @@ Then open `your_project/` in VS Code with Claude Code, and follow [`.claude/skil
 
 
 ---
-**Simplified usage instructions (in case you don't want to read [`.claude/skills/hfc-fieldloop/README.md`]):**
-
-## 2. Two things YOU need to run yourself
+## **Simplified usage instructions (in case you don't want to read [`.claude/skills/hfc-fieldloop/README.md`]):**
 
 **a) Install the R packages** (once, from a terminal in your survey project folder):
 ```bash
@@ -52,7 +50,7 @@ Rscript .claude/skills/hfc-fieldloop/install.R
 
 If you skip OneDrive, everything still works — the tracking file just lives locally at `hfc/output/issue_tracking.xlsx` instead of being shared automatically.
 
-## 3. Run it
+**c) Run it**
 
 In Claude Code, just talk to it in plain language. Two things to say:
 
