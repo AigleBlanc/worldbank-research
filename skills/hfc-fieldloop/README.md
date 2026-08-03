@@ -8,16 +8,23 @@ It never touches your original data file. Every fix is written to a separate cop
 
 ## 1. Install it
 
-Copy this folder into your survey project as `.claude/skills/hfc-fieldloop/`:
+This skill ships as part of a `.claude/` folder — clone the whole thing into your survey project as `.claude/` (not just this subfolder):
 
-```
-your_survey/
-├── .claude/skills/hfc-fieldloop/   ← this skill
-├── data/raw/                       ← your survey export (.csv, .dta, .xlsx)
-└── hfc/                            ← created automatically once you run it
+```bash
+cd /path/to/your_project
+git clone https://github.com/AigleBlanc/worldbank-research.git .claude
 ```
 
-Open `your_survey/` (not a parent folder containing many projects) in VS Code with Claude Code.
+```
+your_project/
+├── .claude/
+│   ├── settings.json                ← pre-approves the permissions below
+│   └── skills/hfc-fieldloop/        ← this skill
+├── data/raw/                        ← your survey export (.csv, .dta, .xlsx)
+└── hfc/                             ← created automatically once you run it
+```
+
+Open `your_project/` (not a parent folder containing many projects) in VS Code with Claude Code. The shipped `settings.json` auto-approves file reads/writes and `Rscript` calls so the agent doesn't interrupt you for routine steps; it still asks before any git/GitHub command that would commit, push, pull, or otherwise change the repo.
 
 ## 2. Two things YOU need to run yourself
 
