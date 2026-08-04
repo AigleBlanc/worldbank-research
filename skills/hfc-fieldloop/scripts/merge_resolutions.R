@@ -18,6 +18,7 @@
   fa <- grep("^--file=", ca, value = TRUE)
   sp <- if (length(fa)) gsub("~+~", " ", sub("^--file=", "", fa[[1]]), fixed = TRUE) else NA_character_
   if (!is.na(sp) && file.exists(sp)) return(normalizePath(file.path(dirname(sp), "..")))
+  if (file.exists(".claude/skills/hfc-fieldloop/scripts/lib/utils.R")) return(normalizePath(".claude/skills/hfc-fieldloop"))
   if (file.exists("hfc-fieldloop/scripts/lib/utils.R")) return(normalizePath("hfc-fieldloop"))
   if (file.exists("scripts/lib/utils.R")) return(normalizePath(".."))
   stop("Cannot locate hfc-fieldloop")

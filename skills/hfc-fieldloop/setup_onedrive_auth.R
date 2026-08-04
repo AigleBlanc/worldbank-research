@@ -26,6 +26,9 @@
 
 # Locate the skill root two ways: from Rscript's own --file= arg (normal case),
 # or by checking known relative paths (in case this is sourced/copied around).
+# NOTE: unlike every script under scripts/ (one level deeper, so they go
+# dirname(sp)/".." to reach the skill root), this file sits directly AT the
+# skill root — dirname(sp) alone is already the skill root, no ".." needed.
 .resolve_skill <- function() {
     sp <- {
         ca <- commandArgs(trailingOnly = FALSE)
@@ -33,12 +36,15 @@
         if (length(fa)) gsub("~+~", " ", sub("^--file=", "", fa[[1]]), fixed = TRUE) else NA_character_
     }
     if (!is.na(sp) && file.exists(sp)) {
-        return(normalizePath(file.path(dirname(sp), "..")))
+        return(normalizePath(dirname(sp)))
+    }
+    if (file.exists(".claude/skills/hfc-fieldloop/scripts/lib/utils.R")) {
+        return(normalizePath(".claude/skills/hfc-fieldloop"))
     }
     if (file.exists("hfc-fieldloop/scripts/lib/utils.R")) {
         return(normalizePath("hfc-fieldloop"))
     }
-    if (file.exists("scripts/lib/utils.R")) return(normalizePath(".."))
+    if (file.exists("scripts/lib/utils.R")) return(normalizePath("."))
     stop("Cannot locate hfc-fieldloop")
 }
 
@@ -53,9 +59,9 @@ cfg <- load_onedrive_config(project_root = NULL, skill_dir = skill)
 if (!isTRUE(cfg$found)) {
     stop(
         "No usable onedrive.json found (", cfg$reason, "). Edit ",
-        "assets/lib/onedrive.json and set \"enabled\": true (plus ",
-        "folder_path/main_file for your own OneDrive) before ",
-        "running this."
+        ".claude/hfc-fieldloop/assets/lib/onedrive.json and", 
+        "set \"enabled\": true (plus folder_path/main_file", 
+        "for your own OneDrive) before running this."
     )
 }
 
@@ -81,5 +87,5 @@ folder_item <- ensure_onedrive_folder(drive, cfg$folder_path)
 items <- tryCatch(folder_item$list_items(info = "name"), error = function(e) character())
 
 message("Signed in and cached. Folder '", cfg$folder_path, "' contains ", length(items), " item(s).")
-message("You can now proceed with the process.")
 message("Remember to share that folder with collaborators (edit access) via OneDrive's own sharing UI.")
+message("You can now proceed!")

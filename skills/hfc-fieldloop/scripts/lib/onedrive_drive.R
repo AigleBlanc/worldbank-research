@@ -82,11 +82,30 @@ load_onedrive_config <- function(project_root, skill_dir = NULL) {
 # `Rscript run_setup_build.R` run doesn't re-authenticate on every call.
 .onedrive_drive_cache <- new.env(parent = emptyenv())
 
+# AzureAuth's sign-in step opens a browser via httr::BROWSE(), which only
+# calls utils::browseURL() when interactive() is TRUE. Rscript sessions are
+# never interactive (even with a human watching the terminal), so BROWSE()
+# instead just prints "Please point your browser to the following url:"
+# followed by the URL as two separate message()s. interactive() itself can't
+# be forced from here, so we intercept those messages and open the URL
+# ourselves; the console text still prints too, as a fallback if browseURL()
+# can't find a browser (e.g. a headless remote session).
+.auto_open_auth_url <- function(cond) {
+    txt <- conditionMessage(cond)
+    url <- regmatches(txt, regexpr("https?://\\S+", txt))
+    if (length(url) == 1 && nzchar(url)) {
+        try(utils::browseURL(url), silent = TRUE)
+    }
+}
+
 get_onedrive_drive <- function(cfg) {
     key <- "business_onedrive"
     cached <- mget(key, envir = .onedrive_drive_cache, ifnotfound = list(NULL))[[1]]
     if (!is.null(cached)) return(cached)
-    drive <- Microsoft365R::get_business_onedrive()
+    drive <- withCallingHandlers(
+        Microsoft365R::get_business_onedrive(),
+        message = .auto_open_auth_url
+    )
     assign(key, drive, envir = .onedrive_drive_cache)
     drive
 }

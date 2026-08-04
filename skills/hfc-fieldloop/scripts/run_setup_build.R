@@ -23,6 +23,9 @@
     if (!is.na(sp) && file.exists(sp)) {
     return(normalizePath(file.path(dirname(sp), "..")))
     }
+    if (file.exists(".claude/skills/hfc-fieldloop/scripts/lib/utils.R")) {
+    return(normalizePath(".claude/skills/hfc-fieldloop"))
+    }
     if (file.exists("hfc-fieldloop/scripts/lib/utils.R")) {
     return(normalizePath("hfc-fieldloop"))
     }
