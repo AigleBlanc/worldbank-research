@@ -1,17 +1,31 @@
-# M7 — Missingness
-# By up to 10 confirmed important variables, and by enumerator. Sentinel
-# "missing" codes (e.g. 99, -9999) are confirmed AFTER the variable list is
-# confirmed, and the confirm question references those specific variable
-# names — a genuine sequential-question dependency, not a static card set.
-# Full implementation: scripts/lib/run_checks.R M7 block.
+# HFC FieldLoop generated check: M7
+# Standalone, runnable script: reproduces this project's M7 (Missingness)
+# findings using the same shared logic the build itself calls. Copied into
+# hfc/code/checks/M7_missingness.R at build time with the path line below
+# substituted for your project's real path — this file, as shipped in the
+# skill's assets/check_templates/, is the copy-source template.
+#
+# Usage: Rscript hfc/code/checks/M7_missingness.R
 
-check_m7_missingness <- function(ds, roles, vars = character(), sentinel_codes = character()) {
-  vars <- vars[!is.na(vars) & vars %in% names(ds)]
-  if (!length(vars)) return(list(by_variable = tibble::tibble(), by_enumerator = tibble::tibble(),
-                                 findings = empty_findings()))
-  # sentinel_codes: either one shared character vector for every var, or a
-  # named list (var -> codes) when the user confirmed per-variable codes.
-  # See scripts/lib/run_checks.R M7 for the missingness-% stats and the
-  # "enumerator far above the survey-wide average" finding.
-  list(by_variable = tibble::tibble(), by_enumerator = tibble::tibble(), findings = empty_findings())
+# Set project path (ONLY place to change for a new machine) ----
+path <- "your/path/to/survey_project/"
+
+skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")
+lib <- file.path(skill, "scripts", "lib")
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R")) {
+  source(file.path(lib, f))
 }
+suppressPackageStartupMessages({ library(dplyr); library(yaml) })
+
+roles <- yaml::read_yaml(hfc_path(path, "config", "role_map.yaml"))
+modules <- yaml::read_yaml(hfc_path(path, "config", "modules.yaml"))
+proj_yaml <- yaml::read_yaml(hfc_path(path, "project.yaml"))
+ds <- load_latest_dataset(path, proj_yaml$data_file)
+ds <- prepare_ds_for_checks(ds, roles, path)
+
+res <- check_m7(ds, roles, modules)
+res$findings <- dedupe_finding_ids(res$findings)
+message("M7 (Missingness): ", nrow(res$findings), " findings")
+print(as.data.frame(res$findings))
+message("--- stats: by_variable / by_enumerator ---")
+print(res$stats)

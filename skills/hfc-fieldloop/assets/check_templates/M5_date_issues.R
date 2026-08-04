@@ -1,15 +1,29 @@
-# M5 — Irregular Timing (was M2's early-start half)
-# Flags interviews conducted at irregular times: weekends and/or outside a
-# confirmed hour window (default 7pm-7am). Timezone-aware: resolves each
-# row's local time using the country/timezone confirmed at setup (single
-# global timezone, or a per-row lookup via a confirmed country column for
-# multi-country surveys) — see scripts/lib/geo_timezone.R and
-# resolve_row_timezone()/local_daypart() in scripts/lib/run_checks.R.
+# HFC FieldLoop generated check: M5
+# Standalone, runnable script: reproduces this project's M5 (Irregular Timing)
+# findings using the same shared logic the build itself calls. Copied into
+# hfc/code/checks/M5_date_issues.R at build time with the path line below
+# substituted for your project's real path — this file, as shipped in the
+# skill's assets/check_templates/, is the copy-source template.
+#
+# Usage: Rscript hfc/code/checks/M5_date_issues.R
 
-check_m5_date_issues <- function(ds, roles, evening_hour = 19, morning_hour = 7, flag_weekend = TRUE) {
-  st <- roles$start
-  if (is.null(st) || is.na(st) || !st %in% names(ds)) return(empty_findings())
-  # Full timezone-aware implementation: scripts/lib/run_checks.R M5 block
-  # (parse_datetime_col(), resolve_row_timezone(), local_daypart()).
-  empty_findings()
+# Set project path (ONLY place to change for a new machine) ----
+path <- "your/path/to/survey_project/"
+
+skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")
+lib <- file.path(skill, "scripts", "lib")
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R")) {
+  source(file.path(lib, f))
 }
+suppressPackageStartupMessages({ library(dplyr); library(yaml) })
+
+roles <- yaml::read_yaml(hfc_path(path, "config", "role_map.yaml"))
+modules <- yaml::read_yaml(hfc_path(path, "config", "modules.yaml"))
+proj_yaml <- yaml::read_yaml(hfc_path(path, "project.yaml"))
+ds <- load_latest_dataset(path, proj_yaml$data_file)
+ds <- prepare_ds_for_checks(ds, roles, path)
+
+res <- check_m5(ds, roles, modules)
+res$findings <- dedupe_finding_ids(res$findings)
+message("M5 (Irregular Timing): ", nrow(res$findings), " findings")
+print(as.data.frame(res$findings))

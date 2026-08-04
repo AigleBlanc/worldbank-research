@@ -215,7 +215,7 @@ read_issue_tracking <- function(path, sheet = "Tracking") {
 #   - Issue ID only in the snapshot -> genuinely new finding, appended as-is.
 #   - Issue ID only in `current` -> kept (never dropped), even if the
 #     underlying check no longer reproduces it this run — its resolution
-#     trail lives in hfc/fixes/ and data/intermediate/, but the row itself
+#     trail lives in hfc/code/resolutions/ and data/intermediate/, but the row itself
 #     stays visible in the tracking file until a human clears it.
 # `current` may be NULL (first-ever run — nothing to merge against).
 merge_preserve_existing <- function(current, new_snapshot) {
@@ -260,7 +260,7 @@ MODULE_META <- list(
     M3 = list(label = "Form Version",
                 desc = "Tracks which version of the survey instrument was in use on each date, and flags any submission whose recorded version doesn't match the expected window for its date."),
     M4 = list(label = "Survey Duration",
-                desc = "Reports how long interviews took overall and by enumerator, and flags individual interviews that were unusually long or short."),
+                desc = "Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews that were unusually long or short."),
     M5 = list(label = "Irregular Timing",
                 desc = "Flags interviews conducted at unusual times — weekends or outside normal working hours — using each submission's local time zone."),
     M6 = list(label = "Numeric Outliers",
@@ -292,6 +292,51 @@ module_label <- function(code) {
 module_desc <- function(code) {
     m <- MODULE_META[[as.character(code)]]
     if (is.null(m)) "" else m$desc
+}
+
+# Human-readable labels for findings$category values, for the "By category"
+# report table only — the underlying `category` field and the xlsx/csv
+# "Issue Category" export always keep the raw machine value (same
+# HTML-display-only pattern as roles$entity_label). M11 custom checks use
+# arbitrary per-project category strings that can't be pre-mapped here; any
+# unmapped value falls back to a Title-Case-from-snake_case transform,
+# mirroring module_label()'s graceful fallback to the raw code.
+CATEGORY_LABELS <- c(
+    low_completion = "Low completion",
+    duplicates = "Duplicate submission",
+    form_version_mismatch = "Form version mismatch",
+    long_duration = "Interview too long",
+    short_duration = "Interview too short",
+    irregular_time = "Irregular interview time",
+    age_outlier = "Age outlier",
+    numeric_outlier = "Numeric outlier",
+    high_missingness = "High missingness",
+    gps_distance = "GPS distance outlier",
+    straightlining_enum = "Straightlining (by enumerator)",
+    straightlining_survey = "Straightlining (within submission)",
+    media_folder_missing = "Media folder missing",
+    media_missing_cell = "Missing media filename",
+    media_bad_ext = "Unexpected media file type",
+    media_file_absent = "Media file not found on disk",
+    media_tiny = "Media file too small",
+    media_duration = "Media duration out of range",
+    media_dup = "Duplicate media file",
+    media_flag_mismatch = "Media consent flag mismatch",
+    assent = "Missing assent",
+    consent = "Missing consent",
+    audio = "Missing audio consent flag"
+)
+
+category_label <- function(category) {
+    category <- as.character(category)
+    vapply(category, function(x) {
+        lbl <- CATEGORY_LABELS[[x]]
+        if (!is.null(lbl)) return(lbl)
+        # Fallback for unmapped (e.g. M11 custom) categories: snake_case -> Title Case.
+        words <- strsplit(gsub("_", " ", x), " ")[[1]]
+        words <- ifelse(nzchar(words), paste0(toupper(substr(words, 1, 1)), substr(words, 2, nchar(words))), words)
+        paste(words, collapse = " ")
+    }, character(1), USE.NAMES = FALSE)
 }
 
 # Order findings by enumerator, then submission_id, then date (most recent
@@ -383,7 +428,39 @@ html_searchable_table <- function(df, cols, table_id, show_n = 10L, bold_date = 
 # of data.frames e.g. M1's overall/by_group/by_enumerator/by_date) as one or
 # more small labeled searchable tables. Used for M1/M3/M4/M7/M10, which
 # report summary statistics rather than (only) row-level findings.
-render_stats_block <- function(mod_stats, prefix) {
+#' Any column named `pct_*` gets rendered as a whole-number percentage
+#' string with a literal "%" suffix (87.3 -> "87%") — module-agnostic (scans
+#' for the naming pattern rather than hardcoding specific modules), so it
+#' automatically covers any future pct_* column. Display-only: operates on
+#' a copy, never the underlying stats data other code might still use.
+format_pct_cols <- function(df) {
+    pct_cols <- grep("^pct_", names(df), value = TRUE)
+    for (cn in pct_cols) {
+        df[[cn]] <- paste0(round(suppressWarnings(as.numeric(df[[cn]]))), "%")
+    }
+    df
+}
+
+# Column header labels for render_stats_block()'s tables, keyed by module —
+# not one flat map, since the same column name means different things in
+# different modules (e.g. `n` is "Target" in M1's completion tables but a
+# plain observation count in M4/M7). Only M1 has user-specified exact
+# labels; the rest get sensible Title-Case-or-better labels for their real
+# columns. M10 is already Title-Case — included for uniformity.
+STATS_COL_LABELS <- list(
+    M1 = c(n = "Target", n_complete = "Completed surveys", pct_complete = "Completion",
+            group = "Group", group_var = "Group variable", value = "Value",
+            enumerator = "Enumerator", date = "Date"),
+    M3 = c(version = "Version", n = "N", date_min = "First seen", date_max = "Last seen",
+            date_start = "Window start", date_end = "Window end"),
+    M4 = c(level = "Section", n = "N", mean = "Mean", median = "Median", sd = "SD",
+            min = "Min", max = "Max", enumerator = "Enumerator"),
+    M7 = c(variable = "Variable", pct_missing = "% Missing", n_missing = "N Missing",
+            n = "N", enumerator = "Enumerator"),
+    M10 = c(Variable = "Variable", Mean = "Mean", SD = "SD", Min = "Min", Max = "Max", Obs = "Obs")
+)
+
+render_stats_block <- function(mod_stats, prefix, col_labels = NULL) {
     if (is.null(mod_stats)) return("")
     esc <- function(x) {
         x <- as.character(x)
@@ -398,12 +475,13 @@ render_stats_block <- function(mod_stats, prefix) {
     for (nm in names(mod_stats)) {
         df <- mod_stats[[nm]]
         if (is.null(df) || !is.data.frame(df) || !nrow(df)) next
+        df <- format_pct_cols(df)
         tid <- paste0("tbl-", prefix, "-", tolower(gsub("[^A-Za-z0-9]+", "-", nm)))
         label <- gsub("_", " ", nm)
         label <- paste0(toupper(substr(label, 1, 1)), substr(label, 2, nchar(label)))
         blocks <- c(blocks, paste0(
         "<h4>", esc(label), "</h4>",
-        html_searchable_table(df, names(df), tid, 10L)
+        html_searchable_table(df, names(df), tid, 10L, col_labels = col_labels)
         ))
     }
     paste(blocks, collapse = "")
@@ -413,9 +491,9 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
                                 roles = NULL, ds = NULL, report_cfg = NULL,
                                 module_notes = NULL, stats = NULL) {
     suppressPackageStartupMessages({ library(dplyr) })
-    report_dir <- hfc_path(project_root, "report")
+    report_dir <- hfc_path(project_root, "outputs")
     dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
-    html_path <- file.path(report_dir, "index.html")
+    html_path <- file.path(report_dir, "report.html")
 
     esc <- function(x) {
         x <- as.character(x)
@@ -470,7 +548,14 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
         )
     } else ""
 
-    cat_table <- html_searchable_table(by_cat, c("category", "n"), "tbl-cats", 10L)
+    # Display-only relabel: by_cat itself (and findings$category / the xlsx
+    # "Issue Category" export) always keep the raw machine value.
+    by_cat_display <- by_cat
+    by_cat_display$category <- category_label(by_cat_display$category)
+    cat_table <- html_searchable_table(
+        by_cat_display, c("category", "n"), "tbl-cats", 10L,
+        col_labels = list(category = "Category", n = "Count")
+    )
 
     # Per-module sections. A module appears if it produced row-level findings
     # OR non-empty descriptive stats (M10 Summary Statistics never produces
@@ -513,7 +598,7 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
             paste(items, collapse = ""), "</ul></div>"
         )
         }
-        stats_html <- render_stats_block(stats[[mod]], tolower(mod))
+        stats_html <- render_stats_block(stats[[mod]], tolower(mod), col_labels = STATS_COL_LABELS[[mod]])
         # M10 Summary Statistics never has findings rows — skip the (always-empty,
         # otherwise-misleading) findings table and "N findings" count for it.
         is_stats_only <- identical(mod, "M10")
@@ -728,9 +813,8 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     paste(mod_sections, collapse = "\n"),
     map_html,
     "<section id='all' class='card'><h2>All findings</h2>", all_tbl, "</section>",
-    "<p class='note footer'>Field edits go in the <strong>main</strong> feedback file in the ",
-    "shared OneDrive folder (see <code>hfc-fieldloop/assets/lib/onedrive.json</code>). Local twin: ",
-    "<code>hfc/output/issue_tracking.xlsx</code>. When ready, say ",
+    "<p class='note footer'>Field edits go in the shared <code>issue_tracking.xlsx</code> in your ",
+    "OneDrive folder (see <code>hfc-fieldloop/assets/lib/onedrive.json</code>). When ready, say ",
     "<strong>Process HFC feedback</strong>.</p>",
     "</main>",
     "<script>
@@ -800,48 +884,63 @@ ensure_project_dirs <- function(project_root) {
     dir.create(file.path(project_root, "data", "raw"), recursive = TRUE, showWarnings = FALSE)
     dir.create(file.path(project_root, "data", "intermediate"), recursive = TRUE, showWarnings = FALSE)
     hfc <- hfc_root(project_root)
-    for (d in c("checks", "code", "fixes", "registry", "output", "report", "config", "instrument")) {
+    for (d in c("config", "instruments", "registry", "outputs", "code")) {
         dir.create(file.path(hfc, d), recursive = TRUE, showWarnings = FALSE)
     }
+    dir.create(file.path(hfc, "code", "checks"), recursive = TRUE, showWarnings = FALSE)
+    dir.create(file.path(hfc, "code", "resolutions"), recursive = TRUE, showWarnings = FALSE)
 }
 
-write_check_stubs <- function(project_root, findings, skill_dir = NULL) {
-    checks_dir <- hfc_path(project_root, "checks")
-    dir.create(checks_dir, showWarnings = FALSE, recursive = TRUE)
-    # Do not wipe custom user checks (non-template names)
-    if (!is.null(skill_dir) && !is.na(skill_dir)) {
-        tmpl_dir <- file.path(skill_dir, "assets", "check_templates")
-        if (dir.exists(tmpl_dir)) {
-        for (f in list.files(tmpl_dir, pattern = "\\.R$", full.names = TRUE)) {
-            bn <- basename(f)
-            if (grepl("^custom_|example", bn, ignore.case = TRUE)) next
-            file.copy(f, file.path(checks_dir, bn), overwrite = TRUE)
-        }
-        }
-    }
-    check_ids <- unique(findings$check_id)
-    if (!length(check_ids)) check_ids <- "duplicates_id"
+# Module code -> its check_templates/ filename (M11 excluded: fully
+# agent-authored per project, nothing to copy).
+CHECK_TEMPLATE_FILES <- c(
+    M1 = "M1_completion.R", M2 = "M2_duplicates.R", M3 = "M3_form_version.R",
+    M4 = "M4_duration.R", M5 = "M5_date_issues.R", M6 = "M6_outliers.R",
+    M7 = "M7_missingness.R", M8 = "M8_gps.R", M9 = "M9_straightlining.R",
+    M10 = "M10_sumstats.R", M12 = "M12_media.R", M13 = "M13_consent.R"
+)
 
-    # Wipe stale per-check-id stub files (identified by their auto-generated
-    # "# Check: " first-line marker, not filename alone, so a file the user
-    # renamed/repurposed into something custom is never touched) whose
-    # check_id no longer appears in this run's findings.
+#' For every confirmed-on module, copy its real, runnable check_templates/
+#' script into hfc/code/checks/<name>.R with the project path substituted —
+#' same copy-and-substitute convention as write_main_r()/assets/main.R.
+#' Running the copied file standalone reproduces that module's findings.
+write_check_scripts <- function(project_root, modules, skill_dir = NULL) {
+    checks_dir <- hfc_path(project_root, "code", "checks")
+    dir.create(checks_dir, showWarnings = FALSE, recursive = TRUE)
+    if (is.null(skill_dir) || is.na(skill_dir)) {
+        skill_dir <- file.path(project_root, ".claude", "skills", "hfc-fieldloop")
+    }
+    tmpl_dir <- file.path(skill_dir, "assets", "check_templates")
+
+    on_codes <- names(CHECK_TEMPLATE_FILES)[
+        vapply(names(CHECK_TEMPLATE_FILES), function(m) isTRUE(modules[[m]]$on), logical(1))
+    ]
+
+    # Wipe stale generated scripts (identified by their auto-generated
+    # "# HFC FieldLoop generated check: " first-line marker, not filename
+    # alone, so a file the user renamed/repurposed into something custom is
+    # never touched) for any module no longer confirmed on. Agent-authored
+    # M11 custom-check files (no marker) are never touched either way.
     for (f in list.files(checks_dir, pattern = "\\.R$", full.names = TRUE)) {
         first_line <- tryCatch(readLines(f, n = 1, warn = FALSE), error = function(e) "")
-        if (length(first_line) && startsWith(first_line, "# Check: ")) {
-            cid_in_file <- sub("^# Check: ", "", first_line)
-            if (!cid_in_file %in% check_ids) file.remove(f)
+        if (length(first_line) && startsWith(first_line, "# HFC FieldLoop generated check: ")) {
+        mod_in_file <- sub("^# HFC FieldLoop generated check: ", "", first_line)
+        if (!mod_in_file %in% on_codes) file.remove(f)
         }
     }
 
-    for (cid in check_ids) {
-        dest <- file.path(checks_dir, paste0(cid, ".R"))
-        if (file.exists(dest)) next
-        writeLines(c(
-        sprintf("# Check: %s", cid),
-        "# Re-run: Rscript hfc-fieldloop/scripts/run_setup_build.R <project_root>",
-        "# Full logic: hfc-fieldloop/scripts/lib/run_checks.R"
-        ), dest)
+    for (m in on_codes) {
+        fname <- CHECK_TEMPLATE_FILES[[m]]
+        tmpl <- file.path(tmpl_dir, fname)
+        if (!file.exists(tmpl)) next
+        lines <- readLines(tmpl, warn = FALSE)
+        lines <- sub(
+        'path <- "your/path/to/survey_project/"',
+        sprintf('path <- "%s"', normalizePath(project_root)),
+        lines,
+        fixed = TRUE
+        )
+        writeLines(lines, file.path(checks_dir, fname))
     }
 }
 
@@ -849,7 +948,7 @@ write_main_r <- function(project_root, skill_dir = NULL) {
     dir.create(hfc_path(project_root, "code"), showWarnings = FALSE, recursive = TRUE)
     dest <- hfc_path(project_root, "code", "main.R")
     if (is.null(skill_dir) || is.na(skill_dir)) {
-        skill_dir <- file.path(project_root, "hfc-fieldloop")
+        skill_dir <- file.path(project_root, ".claude", "skills", "hfc-fieldloop")
     }
     tmpl <- file.path(skill_dir, "assets", "main.R")
     if (file.exists(tmpl)) {
@@ -862,13 +961,15 @@ write_main_r <- function(project_root, skill_dir = NULL) {
         )
         writeLines(lines, dest)
     } else {
+        # Defensive fallback only — assets/main.R should always exist; this
+        # path is effectively unreachable in a normal install.
         writeLines(c(
         "# HFC FieldLoop — one path global",
         sprintf('path <- "%s"', normalizePath(project_root)),
-        'skill <- file.path(path, "hfc-fieldloop")',
+        'skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")',
         'hfc <- file.path(path, "hfc")',
         "# Rscript file.path(skill, \"scripts\", \"run_setup_build.R\") path --open",
-        "# Rscript file.path(skill, \"scripts\", \"apply_feedback.R\") path"
+        "# Rscript file.path(skill, \"scripts\", \"apply_feedback.R\") \"clone\" path"
         ), dest)
     }
 }

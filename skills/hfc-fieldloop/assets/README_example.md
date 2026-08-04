@@ -23,7 +23,7 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 ## Software requirements
 
 > - R ≥ 4.3 (tested with R 4.4 on macOS)
-> - `Rscript .claude/skills/hfc-fieldloop/install.R` installs: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite; plus Microsoft365R, geosphere when using OneDrive/GPS
+> - `Rscript .claude/skills/hfc-fieldloop/install.R` installs: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite, Microsoft365R (OneDrive is required); geosphere is optional (GPS distance)
 
 [Why this works: install entrypoint and package list, not a vague “R packages”.]
 
@@ -31,8 +31,8 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 
 > 1. Confirm `.claude/skills/hfc-fieldloop/` is installed and `data/raw/` is ready.
 > 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
-> 3. In Claude Code (VS Code): **Run HFC FieldLoop** or `/hfc-fieldloop` (add `for <project>` if the workspace is a monorepo). Choose AskUserQuestion option cards for config reuse (if a prior run exists), data, **required fields (Entity ID, Entity Label, duplicate-check key, country/timezone, last date)**, modules, additional checks, `hfc/structure.html` Continue, OneDrive, and feedback columns — use **Other** when needed. Do not type `M1=Y M2=…`.
-> 4. Open `hfc/report/index.html` (builder may auto-open). Field/RA edit `issue_tracking.xlsx` directly in the shared OneDrive folder (access set up once, by hand).
+> 3. In Claude Code (VS Code): **Run HFC FieldLoop** or `/hfc-fieldloop` (add `for <project>` if the workspace is a monorepo). The agent first confirms OneDrive is reachable (required — stops with setup instructions if not), then walks through config reuse (if a prior run exists), data, **required fields (Entity ID, Entity Label, duplicate-check key, country/timezone, last date)**, modules, additional checks, `hfc/structure.html` Continue, and feedback columns — use **Other** when needed. Do not type `M1=Y M2=…`.
+> 4. Open `hfc/outputs/report.html` (builder may auto-open). Field/RA edit `issue_tracking.xlsx` directly in the shared OneDrive folder (access set up once, by hand).
 > 5. Later: **Process HFC feedback** once RIL Comments exist on Open rows in `issue_tracking.xlsx` — the agent reads each row and writes the fix itself, against a working clone, then merges back after confirmation (choose options to proceed).
 >
 > CLI after `hfc/config/modules.yaml` exists:
@@ -47,8 +47,8 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 ## Outputs
 
 > - `hfc/structure.html` — product tree (review before Continue)
-> - `hfc/report/index.html` — findings by module (searchable tables, GPS map)
-> - OneDrive `issue_tracking.xlsx` (or local `hfc/output/issue_tracking.xlsx`) + `hfc/registry/issue_tracking.csv` — the one shared file; agent, RA, and field team all edit it
+> - `hfc/outputs/report.html` — findings by module (searchable tables, GPS map)
+> - OneDrive `issue_tracking.xlsx` (required, no local copy) — the one shared file; agent, RA, and field team all edit it
 > - `.claude/skills/hfc-fieldloop/assets/lib/onedrive.json` — `enabled`/`folder_path`/`main_file`; skill-level, not per-project
 > - `hfc/registry/findings.csv` — stable, content-derived Issue IDs
 
@@ -56,10 +56,10 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 
 > - `data/raw/` — immutable microdata
 > - `data/intermediate/` — agent-fixed data (one evolving file per source, raw untouched)
-> - `hfc/checks/` — module stubs / templates / custom (e.g. `example_check.R`)
-> - `hfc/fixes/` — agent-authored fix code, one `<Issue ID>.R` per resolved finding
+> - `hfc/code/checks/` — real, runnable per-module scripts + custom (e.g. `example_check.R`)
+> - `hfc/code/resolutions/` — agent-authored fix code, one `<Issue ID>.R` per resolved finding
 > - `hfc/code/main.R` — one-path entry
-> - `hfc/registry/`, `hfc/output/`, `hfc/report/`, `hfc/fixes/`, `hfc/config/`
+> - `hfc/registry/`, `hfc/outputs/`, `hfc/instruments/`, `hfc/config/`
 > - `.claude/skills/hfc-fieldloop/` — drop-in skill (do not edit unless upgrading the skill)
 
 ## AI / confidentiality

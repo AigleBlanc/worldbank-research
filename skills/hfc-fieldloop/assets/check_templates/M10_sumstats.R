@@ -1,18 +1,28 @@
-# M10 — Summary Statistics
-# Purely descriptive: a flat table (Variable | Mean | SD | Min | Max | Obs)
-# for up to 10 confirmed important variables (user can raise the cap).
-# No panel/lettered grouping — a clean flat table only. Produces zero
-# findings rows; this is the one module with stats only.
-# Full implementation: scripts/lib/run_checks.R M10 block.
+# HFC FieldLoop generated check: M10
+# Standalone, runnable script: reproduces this project's M10 (Summary Statistics)
+# findings using the same shared logic the build itself calls. Copied into
+# hfc/code/checks/M10_sumstats.R at build time with the path line below
+# substituted for your project's real path — this file, as shipped in the
+# skill's assets/check_templates/, is the copy-source template.
+#
+# Usage: Rscript hfc/code/checks/M10_sumstats.R
 
-check_m10_sumstats <- function(ds, roles, vars = character()) {
-  vars <- vars[!is.na(vars) & vars %in% names(ds)]
-  if (!length(vars)) return(tibble::tibble())
-  rows <- lapply(vars, function(vc) {
-    v <- safe_num(ds[[vc]]); ok <- is.finite(v)
-    tibble::tibble(Variable = vc, Mean = round(mean(v[ok]), 3), SD = round(sd(v[ok]), 3),
-                  Min = round(suppressWarnings(min(v[ok])), 3),
-                  Max = round(suppressWarnings(max(v[ok])), 3), Obs = sum(ok))
-  })
-  dplyr::bind_rows(rows)
+# Set project path (ONLY place to change for a new machine) ----
+path <- "your/path/to/survey_project/"
+
+skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")
+lib <- file.path(skill, "scripts", "lib")
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R")) {
+  source(file.path(lib, f))
 }
+suppressPackageStartupMessages({ library(dplyr); library(yaml) })
+
+roles <- yaml::read_yaml(hfc_path(path, "config", "role_map.yaml"))
+modules <- yaml::read_yaml(hfc_path(path, "config", "modules.yaml"))
+proj_yaml <- yaml::read_yaml(hfc_path(path, "project.yaml"))
+ds <- load_latest_dataset(path, proj_yaml$data_file)
+ds <- prepare_ds_for_checks(ds, roles, path)
+
+res <- check_m10(ds, roles, modules)
+message("M10 (Summary Statistics) — descriptive only, never produces findings rows:")
+print(res$stats)

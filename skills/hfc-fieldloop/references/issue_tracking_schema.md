@@ -1,8 +1,8 @@
 # Issue tracking schema
 
-Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (RIL Comment/Corrections/Status all live together; there is no separate audit twin). Once `assets/lib/onedrive.json` has `"enabled": true`, the OneDrive folder it names (inside the runner's own individual OneDrive for Business — no SharePoint site or Team needed) is the **sole source of truth**: every read fetches current state, every write commits back, and there is no permanent local copy that persists as "the real file." If OneDrive isn't configured, or a call fails, local `hfc/output/issue_tracking.xlsx` becomes the sole store instead — exactly one location either way, never a persistent dual copy. See `scripts/lib/issue_store.R` for the backend-resolution logic.
+Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (RIL Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in OneDrive — **required, no local fallback**: the folder named in `assets/lib/onedrive.json` (inside the runner's own individual OneDrive for Business — no SharePoint site or Team needed) is the sole store. Every read fetches current state, every write commits back, and there is never a local copy of it anywhere under `hfc/`. Every user-facing script calls `require_onedrive_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if OneDrive isn't reachable — see `SKILL.md`'s A0c.
 
-Two dated-snapshot subfolders live alongside the live file, in whichever backend is active:
+Two dated-snapshot subfolders live alongside the live file, inside the same OneDrive folder:
 
 | Subfolder | Filename | Written by | Purpose |
 |---|---|---|---|
@@ -63,7 +63,7 @@ The live `issue_tracking.xlsx` is never overwritten silently — two different m
 **Setup Build side** (`merge_preserve_existing()` in `scripts/lib/build_outputs.R`, driven by `scripts/merge_issues.R`): merges this run's `intermediate/` snapshot against the live file.
 - Every row already in the live file is kept **exactly as-is** — no column refreshed, nothing recomputed, `Today's Date`/`RIL Comment`/`Status`/etc. all untouched.
 - Issue IDs only in the new snapshot → genuinely new findings, appended with `Status = Open`.
-- Issue IDs only in the live file (no longer reproduced by current data) → **never dropped**; their trail also lives on in `hfc/fixes/`/`data/intermediate/` if a fix was ever applied.
+- Issue IDs only in the live file (no longer reproduced by current data) → **never dropped**; their trail also lives on in `hfc/code/resolutions/`/`data/intermediate/` if a fix was ever applied.
 - `run_setup_build.R` runs this automatically on every rebuild once a live file exists; it writes `merged_issue_tracking.xlsx` and stops with a `MERGE_PENDING` message rather than overwriting — the agent reviews it with the user, then runs `commit_merged_issue_tracking.R`.
 
 **Post-feedback side** (`merge_resolution_updates()` in `scripts/lib/build_outputs.R`, driven by `scripts/merge_resolutions.R`): merges today's `resolutions/` clone against the live file.
@@ -75,7 +75,7 @@ The live `issue_tracking.xlsx` is never overwritten silently — two different m
 
 ## Config
 
-One file, one rule: `hfc-fieldloop/assets/lib/onedrive.json` — the only config that matters, edited directly. No per-project override; every project using this skill copy shares it. Starts `"enabled": false` until set up:
+One file, one rule: `hfc-fieldloop/assets/lib/onedrive.json` — the only config that matters, edited directly. No per-project override; every project using this skill copy shares it. Ships `"enabled": false` by default — must be turned on before first use:
 ```json
 {
   "enabled": true,
@@ -83,13 +83,15 @@ One file, one rule: `hfc-fieldloop/assets/lib/onedrive.json` — the only config
   "main_file": "issue_tracking.xlsx"
 }
 ```
-`"enabled": false` (or the file missing) → local `issue_tracking.xlsx` only / `--no-onedrive`. There's no site/tenant URL to configure — `Microsoft365R::get_business_onedrive()` connects to whichever account signs in.
+`"enabled": false` (or the file missing) → every user-facing script's `require_onedrive_ready()` pre-flight `stop()`s with setup instructions rather than proceeding. There's no site/tenant URL to configure — `Microsoft365R::get_business_onedrive()` connects to whichever account signs in.
 
 **Auth:** delegated, one-time interactive sign-in — no secrets stored in this package. Run `Rscript setup_onedrive_auth.R` **once, yourself, in a normal interactive R/RStudio session** — this cannot be done from inside a non-interactive Claude-Code-driven run. `Microsoft365R`/`AzureAuth` then cache the token locally and refresh it silently on every later run. This connects to the runner's own OneDrive — no SharePoint site or Team needs to exist.
 
 Share the OneDrive **folder** (not the individual file) with collaborators via the normal OneDrive "Specific people" sharing UI, once, before relying on this — the code never mints its own share links, it just uploads into whatever folder access has already been configured.
 
-`hfc/project.yaml` stores `issue_tracking_backend` (`onedrive`/`local`) and `issue_tracking_merge_pending` (whether a rebuild is waiting on a merge confirm) plus `report_onedrive_url` (the report's own URL). Local `issue_tracking.xlsx` remains the fallback store if OneDrive isn't configured or auth is missing.
+`hfc/project.yaml` stores `issue_tracking_backend` (always `onedrive` in normal use) and `issue_tracking_merge_pending` (whether a rebuild is waiting on a merge confirm) plus `report_onedrive_url` (the report's own URL).
+
+**Internal-only local backend:** `scripts/lib/issue_store.R` still contains a `"local"` code path, but it is never reachable from any CLI flag, AskUserQuestion, or documented workflow — it exists purely so this skill's own test suite can exercise the tracking/merge logic without a live OneDrive connection. See the file's header comment.
 
 **Migrating from the old dual-twin design:** if a project still has `issue_resolution.xlsx`/`.csv` from a prior version of this skill, there's no automated migration — those files simply stop being written; manually fold anything still relevant into `issue_tracking.xlsx` and delete them.
 
@@ -99,16 +101,6 @@ There's no built-in fix-classification engine — the agent reads each eligible 
 
 1. `apply_feedback.R clone` — creates (or reuses, if already run today) today's resolutions clone from the current live file.
 2. `apply_feedback.R list-open` — filters today's clone to `Status = Open` + non-empty RIL Comment, writes `hfc/registry/fix_candidates.csv` with full row context.
-3. Per row, in a single pass: the agent interprets the RIL Comment, writes `hfc/fixes/<Issue ID, sanitized>.R` defining `fix(ds) -> ds`, then calls `apply_feedback.R apply --finding-id <id> --corrections "<what it did>"` — loads `data/intermediate/<stem>.<ext>` if it exists (else `data/raw/`), applies `fix(ds)`, writes back to `data/intermediate/` (one evolving file), and sets `Corrections` + `Status = Resolved` in the clone only.
+3. Per row, in a single pass: the agent interprets the RIL Comment, writes `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds`, then calls `apply_feedback.R apply --finding-id <id> --corrections "<what it did>"` — loads `data/intermediate/<stem>.<ext>` if it exists (else `data/raw/`), applies `fix(ds)`, writes back to `data/intermediate/` (one evolving file), and sets `Corrections` + `Status = Resolved` in the clone only.
 4. `apply_feedback.R needs-review --finding-id <id>` — sets `Status = Needs Review` in the clone for rows the agent can't confidently handle.
 5. `merge_resolutions.R` folds the clone back into a `merged_issue_resolutions.xlsx`; after AskUserQuestion confirmation, `commit_merged_issue_tracking.R` applies it to the live file.
-
-## Sync commands
-
-```bash
-# Refresh the local registry copy from whichever backend is live
-Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R <project> pull
-
-# Push the local hfc/registry/issue_tracking.csv up as the live file
-Rscript .claude/skills/hfc-fieldloop/scripts/sync_feedback.R <project> push
-```

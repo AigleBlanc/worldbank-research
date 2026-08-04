@@ -1,18 +1,18 @@
 # Post-feedback pipeline — thin CLI over scripts/lib/apply_feedback_helpers.R.
-# The fix logic itself is agent-authored per finding (hfc/fixes/<id>.R,
+# The fix logic itself is agent-authored per finding (hfc/code/resolutions/<id>.R,
 # defining fix(ds) -> ds) — there is no built-in fix-classification engine.
 # Trigger: any row with Status=Open and a non-empty RIL Comment is eligible
 # (no separate Accepted gate). The agent reads each such row, decides the
-# fix, writes hfc/fixes/<id>.R, then calls `apply` with the Corrections text
+# fix, writes hfc/code/resolutions/<id>.R, then calls `apply` with the Corrections text
 # — all against today's resolutions/ clone, never issue_tracking.xlsx
 # directly (see scripts/merge_resolutions.R for how the clone gets folded
 # back into the live file, after AskUserQuestion confirmation).
 #
-# Usage:
-#   Rscript apply_feedback.R clone <project_root> [--no-onedrive]
-#   Rscript apply_feedback.R list-open <project_root> [--no-onedrive]
-#   Rscript apply_feedback.R apply <project_root> --finding-id <id> --corrections "<text>" [--no-onedrive]
-#   Rscript apply_feedback.R needs-review <project_root> --finding-id <id> [--no-onedrive]
+# Usage (OneDrive must already be configured and signed in — no local mode):
+#   Rscript apply_feedback.R clone <project_root>
+#   Rscript apply_feedback.R list-open <project_root>
+#   Rscript apply_feedback.R apply <project_root> --finding-id <id> --corrections "<text>"
+#   Rscript apply_feedback.R needs-review <project_root> --finding-id <id>
 
 `%||%` <- function(a, b) {
   if (is.null(a) || length(a) == 0) return(b)
@@ -60,14 +60,16 @@ opt_val <- function(flag) {
 }
 finding_id <- opt_val("--finding-id")
 corrections_text <- opt_val("--corrections")
-no_onedrive <- "--no-onedrive" %in% rest
+
+# Step 2b: OneDrive is required — no local fallback.
+require_onedrive_ready(project_root, skill)
 
 # Step 3: dispatch.
 if (mode == "clone") {
-  res <- clone_for_resolution_pass(project_root, skill_dir = skill, force_local = no_onedrive)
+  res <- clone_for_resolution_pass(project_root, skill_dir = skill)
   message("Resolutions clone ", res$status, " (", res$n, " rows).")
 } else if (mode == "list-open") {
-  open_rows <- list_open_commented_rows(project_root, skill_dir = skill, force_local = no_onedrive)
+  open_rows <- list_open_commented_rows(project_root, skill_dir = skill)
   out_path <- hfc_path(project_root, "registry", "fix_candidates.csv")
   write_csv(open_rows, out_path)
   message("Open + commented rows: ", nrow(open_rows))
@@ -75,12 +77,12 @@ if (mode == "clone") {
 } else if (mode == "apply") {
   if (is.na(finding_id)) stop("apply requires --finding-id <id>")
   if (is.na(corrections_text)) stop("apply requires --corrections \"<text>\"")
-  res <- apply_one_fix(project_root, finding_id, corrections_text, skill_dir = skill, force_local = no_onedrive)
+  res <- apply_one_fix(project_root, finding_id, corrections_text, skill_dir = skill)
   message("Fixed ", finding_id, " -> ", res$intermediate_path)
   message("Status set to Resolved in today's resolutions clone.")
 } else if (mode == "needs-review") {
   if (is.na(finding_id)) stop("needs-review requires --finding-id <id>")
-  mark_needs_review(project_root, finding_id, skill_dir = skill, force_local = no_onedrive)
+  mark_needs_review(project_root, finding_id, skill_dir = skill)
   message("Status set to Needs Review for ", finding_id, " in today's resolutions clone.")
 } else {
   stop("Unknown mode: ", mode, " (expected clone | list-open | apply | needs-review)")

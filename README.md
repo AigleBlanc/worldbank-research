@@ -39,7 +39,7 @@ Then open `your_project/` in VS Code with Claude Code, and follow [`.claude/skil
 Rscript .claude/skills/hfc-fieldloop/install.R
 ```
 
-**b) Set up OneDrive** 
+**b) Set up OneDrive (required — `issue_tracking.xlsx` has no local fallback)**
 1. Open `.claude/skills/hfc-fieldloop/assets/lib/onedrive.json` and set `"enabled": true`. Pick a `folder_path` (e.g. `"HFC Reports"`) — this is where things will be stored in your OneDrive.
 2. Sign in once, yourself, outside of Claude Code, in a normal R or RStudio session:
    ```bash
@@ -48,7 +48,7 @@ Rscript .claude/skills/hfc-fieldloop/install.R
    This opens a browser login. After this one time, the agent can read/write that OneDrive folder automatically — no further sign-ins needed.
 3. Share that OneDrive folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
 
-If you skip OneDrive, everything still works — the tracking file just lives locally at `hfc/output/issue_tracking.xlsx` instead of being shared automatically.
+If OneDrive isn't set up yet, the agent will tell you and stop before doing any real work — do steps a and b first.
 
 **c) Run it**
 

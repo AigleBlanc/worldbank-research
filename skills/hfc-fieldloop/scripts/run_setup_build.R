@@ -1,5 +1,7 @@
 # Setup build for a drop-in project root.
-# Rscript run_setup_build.R <project_root> [--open] [--sample N] [--no-onedrive]
+# Rscript run_setup_build.R <project_root> [--open] [--sample N]
+# OneDrive must already be configured and signed in (see setup_onedrive_auth.R)
+# — there is no local-only mode.
 #
 # Reads optional hfc/config/modules.yaml; otherwise uses profile defaults.
 # All product artifacts land under <project_root>/hfc/.
@@ -50,7 +52,6 @@ project_root <- if (length(args) && !startsWith(args[[1]], "--")) {
 }
 
 do_open <- "--open" %in% args || "--open" %in% commandArgs(trailingOnly = TRUE)
-no_onedrive <- "--no-onedrive" %in% args || identical(Sys.getenv("FIELDLOOP_NO_ONEDRIVE"), "1")
 sample_n <- NA_integer_
 if ("--sample" %in% args) {
     i <- match("--sample", args)
@@ -61,6 +62,10 @@ suppressPackageStartupMessages({
     library(haven); library(dplyr); library(readr); library(openxlsx)
     library(yaml); library(jsonlite); library(lubridate); library(tibble)
 })
+
+# Step 2b: OneDrive is required — no local fallback. Fail fast, before any
+# other work, with setup instructions rather than silently proceeding.
+require_onedrive_ready(project_root, skill)
 
 # Step 3: scaffold hfc/ and drop the skill-tree browser page.
 message("Project root: ", project_root)
@@ -76,7 +81,7 @@ if (identical(disc$status, "missing_data")) {
 data_path <- disc$data$path
 form_path <- if (!is.null(disc$form)) disc$form$path else NA_character_
 
-# Step 5: symlink/copy the data (+ form) into data/raw/ and hfc/instrument/
+# Step 5: symlink/copy the data (+ form) into data/raw/ and hfc/instruments/
 # if they weren't already there (e.g. discovered elsewhere in the project).
 raw_dest <- file.path(project_root, "data", "raw", basename(data_path))
 if (!file.exists(raw_dest) || !identical(normalizePath(data_path), normalizePath(raw_dest, mustWork = FALSE))) {
@@ -88,7 +93,7 @@ if (!file.exists(raw_dest) || !identical(normalizePath(data_path), normalizePath
     data_path <- raw_dest
 }
 if (!is.na(form_path) && file.exists(form_path)) {
-    form_dest <- hfc_path(project_root, "instrument", "form.xlsx")
+    form_dest <- hfc_path(project_root, "instruments", "form.xlsx")
     if (!identical(normalizePath(form_path, mustWork = FALSE),
                     normalizePath(form_dest, mustWork = FALSE))) {
     file.copy(form_path, form_dest, overwrite = TRUE)
@@ -168,6 +173,9 @@ if (file.exists(role_map_path)) {
     if (!is.null(saved$entity_label) && nzchar(as.character(saved$entity_label))) {
         roles$entity_label <- as.character(saved$entity_label)
     }
+    if (!is.null(saved$map_focus) && nzchar(as.character(saved$map_focus))) {
+        roles$map_focus <- as.character(saved$map_focus)
+    }
     if (!is.null(modules$M2)) {
         modules$M2$id <- roles$entity_id
         modules$M2$extra_keys <- roles$dup_key_extra %||% character()
@@ -180,12 +188,12 @@ writeLines(format_module_cards(roles), hfc_path(project_root, "config", "module_
 
 # Step 12: form relevance for nested skip-logic
 form_map <- parse_form_relevance(if (!is.na(form_path) && file.exists(form_path)) form_path else
-    hfc_path(project_root, "instrument", "form.xlsx"))
+    hfc_path(project_root, "instruments", "form.xlsx"))
 attr(ds, "hfc_form_map") <- form_map
 
-# Step 13: report config (map focus etc.)
-report_cfg_path <- hfc_path(project_root, "config", "report.yaml")
-report_cfg <- if (file.exists(report_cfg_path)) yaml::read_yaml(report_cfg_path) else list(map_focus = "country")
+# Step 13: report config (map focus etc.) — folded into role_map.yaml
+# (roles$map_focus, reloaded above), no separate report.yaml.
+report_cfg <- list(map_focus = roles$map_focus %||% "country")
 
 # Step 14: human-readable notes for custom/M11 checks (and optional per-module
 # description overrides), authored during the Additional-checks confirm step.
@@ -202,16 +210,16 @@ message("Findings: ", nrow(findings))
 
 # Step 16: write registry outputs from the findings.
 readr::write_csv(findings, hfc_path(project_root, "registry", "findings.csv"))
-write_check_stubs(project_root, findings, skill_dir = skill)
+write_check_scripts(project_root, modules, skill_dir = skill)
 write_main_r(project_root, skill_dir = skill)
 
-# Step 17: fetch the live issue_tracking.xlsx (OneDrive main_file if
-# configured, else local hfc/output/ — see scripts/lib/issue_store.R), write
-# this run's fresh findings as today's intermediate/ snapshot, then either
-# commit directly (first-ever run — nothing to merge against) or merge and
-# stop for the agent to confirm (a prior file exists: merging must never
-# silently overwrite field/RA/agent work on the live shared file).
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill, force_local = no_onedrive)
+# Step 17: fetch the live issue_tracking.xlsx from OneDrive (see
+# scripts/lib/issue_store.R), write this run's fresh findings as today's
+# intermediate/ snapshot, then either commit directly (first-ever run —
+# nothing to merge against) or merge and stop for the agent to confirm (a
+# prior file exists: merging must never silently overwrite field/RA/agent
+# work on the live shared file).
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
 fb_new <- findings_to_issue_tracking(findings)
 write_tracking_snapshot(ctx, fb_new)
 
@@ -247,7 +255,7 @@ project_id <- basename(project_root)
 proj_yaml <- list(
     project_id = project_id,
     data_file = file.path("data", "raw", basename(data_path)),
-    instrument = if (!is.na(form_path)) "hfc/instrument/form.xlsx" else NULL,
+    instrument = if (!is.na(form_path)) "hfc/instruments/form.xlsx" else NULL,
     report_type = "html",
     map_focus = report_cfg$map_focus %||% "country",
     shiny_later = TRUE,
@@ -267,30 +275,9 @@ html_path <- write_html_report(
 
 # Step 21: upload the report to OneDrive and get its shareable URL, then
 # finish + persist project.yaml now that the link is known.
-report_link <- if (no_onedrive) {
-    list(status = "skipped", reason = "no-onedrive flag", url = NA)
-} else {
-    upload_report_and_get_link(project_root, project_id, skill_dir = skill, html_path)
-}
+report_link <- upload_report_and_get_link(project_root, project_id, skill_dir = skill, html_path)
 proj_yaml$report_onedrive_url <- report_link$url %||% NA
 yaml::write_yaml(proj_yaml, hfc_path(project_root, "project.yaml"))
-
-# Step 22: log this run for debugging/traceability.
-runs <- hfc_path(project_root, "runs", "setup")
-dir.create(file.path(runs, "turns"), recursive = TRUE, showWarnings = FALSE)
-yaml::write_yaml(list(status = "built", n_findings = nrow(findings), html = html_path),
-                 file.path(runs, "meta.yaml"))
-jsonlite::write_json(list(
-    n_findings = nrow(findings),
-    categories = as.list(table(findings$category)),
-    issue_tracking_status = issue_tracking_status,
-    issue_tracking_backend = ctx$backend,
-    report_link = report_link,
-    html = html_path,
-    entity_id = roles$entity_id,
-    entity_id_options = roles$entity_id_options,
-    dup_key_extra = roles$dup_key_extra
-), file.path(runs, "meta.json"), auto_unbox = TRUE, pretty = TRUE)
 
 message("Done. HTML: ", html_path)
 message("Product root: ", hfc_root(project_root))

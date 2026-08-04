@@ -28,14 +28,14 @@ Open `your_project/` (not a parent folder containing many projects) in VS Code w
 
 ## 2. Two things YOU need to run yourself
 
-Everything else in this skill is run automatically by the AI agent when you talk to it — you never type an `Rscript` command by hand for normal use. Only these two setup steps are on you:
+Everything else in this skill is run automatically by the AI agent when you talk to it — you never type an `Rscript` command by hand for normal use. Only these two setup steps are on you, and **both are required** — there's no working local-only mode, `issue_tracking.xlsx` lives in OneDrive:
 
 **a) Install the R packages** (once, from a terminal in your survey project folder):
 ```bash
 Rscript .claude/skills/hfc-fieldloop/install.R
 ```
 
-**b) Set up OneDrive** (optional, but recommended if more than one person will edit the tracking file). Skip this if you're fine with everything staying local on your own computer.
+**b) Set up OneDrive** (required, so the field team, RA, and agent all share one live `issue_tracking.xlsx`):
 1. Open `.claude/skills/hfc-fieldloop/assets/lib/onedrive.json` and set `"enabled": true`. Pick a `folder_path` (e.g. `"HFC Reports"`) — this is where things will be stored in your OneDrive.
 2. Sign in once, yourself, outside of Claude Code, in a normal R or RStudio session:
    ```bash
@@ -44,7 +44,7 @@ Rscript .claude/skills/hfc-fieldloop/install.R
    This opens a browser login. After this one time, the agent can read/write that OneDrive folder automatically — no further sign-ins needed.
 3. Share that OneDrive folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
 
-If you skip OneDrive, everything still works — the tracking file just lives locally at `hfc/output/issue_tracking.xlsx` instead of being shared automatically.
+If OneDrive isn't set up yet, the agent will tell you and stop before doing any real work — do these steps first.
 
 ## 3. Run it
 
@@ -66,7 +66,7 @@ The agent will ask you questions along the way using clickable option cards (nev
 1. The agent finds your data (and form, if you have one) and confirms it with you.
 2. It asks a few required questions: what column identifies each person/household/unit, what to call that in the report, how to check for duplicates, which country/timezone, and the last day of data collection.
 3. It proposes which checks to run (M1–M13: duplicates, outliers, GPS, timing, missing data, etc.) — accept the defaults or review them one by one.
-4. It builds the report and opens `hfc/report/index.html` in your browser.
+4. It builds the report and opens `hfc/outputs/report.html` in your browser.
 5. It creates (or updates) `issue_tracking.xlsx` — one row per flagged issue.
 
 If `issue_tracking.xlsx` already exists (a second run), the agent doesn't overwrite it blindly — it shows you exactly what changed and asks you to confirm before anything is replaced. Nothing the field team already wrote is ever lost or silently dropped.
@@ -99,8 +99,8 @@ You don't have to set `Accepted` before the agent will act — it picks up any `
 
 | What | Where |
 |---|---|
-| HTML report | `hfc/report/index.html` |
-| Shared tracking file | `issue_tracking.xlsx` — in your OneDrive folder if configured, otherwise `hfc/output/issue_tracking.xlsx` |
+| HTML report | `hfc/outputs/report.html` |
+| Shared tracking file | `issue_tracking.xlsx` — in your OneDrive folder (required, no local copy) |
 | Fixed data (raw is never touched) | `data/intermediate/` |
 | Your original data | `data/raw/` — never modified |
 

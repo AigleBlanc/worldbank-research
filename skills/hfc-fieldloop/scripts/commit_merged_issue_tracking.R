@@ -5,7 +5,8 @@
 # file and gotten explicit AskUserQuestion confirmation, with a warning that
 # this replaces the shared live file.
 #
-# Usage: Rscript commit_merged_issue_tracking.R <project_root> <merged_filename> [--no-onedrive]
+# Usage: Rscript commit_merged_issue_tracking.R <project_root> <merged_filename>
+#   (OneDrive must already be configured)
 #   e.g. Rscript commit_merged_issue_tracking.R . merged_issue_tracking.xlsx
 #        Rscript commit_merged_issue_tracking.R . merged_issue_resolutions.xlsx
 
@@ -32,12 +33,12 @@ source(file.path(lib, "onedrive_drive.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 2) stop("Usage: commit_merged_issue_tracking.R <project_root> <merged_filename> [--no-onedrive]")
+if (length(args) < 2) stop("Usage: commit_merged_issue_tracking.R <project_root> <merged_filename>")
 project_root <- normalizePath(decode_file_arg(args[[1]]))
 merged_filename <- args[[2]]
-no_onedrive <- "--no-onedrive" %in% args
 
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill, force_local = no_onedrive)
+require_onedrive_ready(project_root, skill)
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
 merged <- read_named_tracking_file(ctx, merged_filename)
 if (is.null(merged)) stop("No such merged file found: ", merged_filename)
 

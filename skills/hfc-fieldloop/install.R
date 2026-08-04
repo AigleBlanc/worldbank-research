@@ -4,9 +4,10 @@
 
 core <- c(
     "haven", "readr", "readxl", "dplyr", "tidyr", "tibble", "stringr",
-    "lubridate", "openxlsx", "yaml", "jsonlite"
+    "lubridate", "openxlsx", "yaml", "jsonlite",
+    "Microsoft365R"  # OneDrive is required — issue tracking has no local fallback
 )
-recommended <- c("Microsoft365R", "geosphere")
+recommended <- c("geosphere")
 
 
 pkgs <- c(core, recommended)
@@ -25,7 +26,7 @@ if (length(missing)) {
 }
 message("FieldLoop dependencies OK.")
 message("Core: ", paste(core, collapse = ", "))
-message("Recommended (OneDrive/GPS): ", paste(recommended, collapse = ", "))
+message("Recommended (GPS distance): ", paste(recommended, collapse = ", "))
 
 # Optional: audio duration (skipped cleanly if missing; ffprobe also works)
 # Manual installation if necessary so the script doesn't fail on non-required installations

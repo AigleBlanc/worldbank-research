@@ -53,13 +53,13 @@ list_open_commented_rows <- function(project_root, skill_dir = NULL, date = Sys.
   invisible(clone)
 }
 
-#' Single pass: agent has already written hfc/fixes/<id>.R (fix(ds) -> ds)
+#' Single pass: agent has already written hfc/code/resolutions/<id>.R (fix(ds) -> ds)
 #' after interpreting the row's RIL Comment. This loads the latest dataset,
 #' applies the fix, writes data/intermediate/<stem>.<ext>, and records the
 #' Corrections text + Status = "Resolved" in today's resolutions clone.
 apply_one_fix <- function(project_root, finding_id, corrections_text, skill_dir = NULL, date = Sys.Date(),
                            force_local = FALSE) {
-  fixes_dir <- hfc_path(project_root, "fixes")
+  fixes_dir <- hfc_path(project_root, "code", "resolutions")
   fix_file <- file.path(fixes_dir, paste0(sanitize_finding_id(finding_id), ".R"))
   if (!file.exists(fix_file)) {
     stop("No fix file found: ", fix_file, " — write it first, defining fix(ds) -> ds.")

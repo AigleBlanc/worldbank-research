@@ -4,7 +4,7 @@
 # merged file and confirms via AskUserQuestion, then runs
 # commit_merged_issue_tracking.R to actually replace issue_tracking.xlsx.
 #
-# Usage: Rscript merge_issues.R <project_root> [--no-onedrive]
+# Usage: Rscript merge_issues.R <project_root>   (OneDrive must already be configured)
 
 `%||%` <- function(a, b) {
   if (is.null(a) || length(a) == 0) return(b)
@@ -29,13 +29,13 @@ source(file.path(lib, "onedrive_drive.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
-if (!length(args)) stop("Usage: merge_issues.R <project_root> [--no-onedrive]")
+if (!length(args)) stop("Usage: merge_issues.R <project_root>")
 project_root <- normalizePath(decode_file_arg(args[[1]]))
-no_onedrive <- "--no-onedrive" %in% args
 
 suppressPackageStartupMessages({ library(dplyr) })
 
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill, force_local = no_onedrive)
+require_onedrive_ready(project_root, skill)
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
 current <- ctx$tbl
 
 if (is.null(current)) {

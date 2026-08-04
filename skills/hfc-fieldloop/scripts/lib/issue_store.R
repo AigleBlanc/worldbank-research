@@ -1,20 +1,26 @@
 # Single source of truth for "where does issue_tracking.xlsx live, right now."
-# Once OneDrive is configured (assets/lib/onedrive.json, enabled: true) it is
-# the SOLE store — no permanent local copy is ever treated as authoritative.
-# Every read fetches current state; every write commits back. When OneDrive
-# isn't configured (or a call fails), local hfc/output/ becomes the sole
-# store instead — always exactly one location, never a persistent dual copy.
-# Built entirely on scripts/lib/onedrive_drive.R's primitives (get_onedrive_drive,
-# ensure_onedrive_folder, upload_feedback_xlsx, load_onedrive_config) — no new
-# upload/download mechanism here, just backend selection + local fallback.
+# OneDrive (assets/lib/onedrive.json, enabled: true) is REQUIRED and is the
+# SOLE store — there is no local backup/fallback in the product. Every read
+# fetches current state; every write commits back. Built entirely on
+# scripts/lib/onedrive_drive.R's primitives (get_onedrive_drive,
+# ensure_onedrive_folder, upload_feedback_xlsx, load_onedrive_config) — no
+# new upload/download mechanism here, just OneDrive access.
 #
-# Subfolders alongside the live file, in whichever backend is active:
+# Subfolders alongside the live file, inside the same OneDrive folder:
 #   intermediate/<YYYYMMDD>_issue_tracking.xlsx   — one per setup-build run
 #   resolutions/<YYYYMMDD>_issues_resolution.xlsx — one working clone per
 #                                                    "Process HFC feedback" day
 # NOTE naming collision: this "intermediate/" (tracking snapshots) is
 # unrelated to data/intermediate/ (fixed microdata, see write_intermediate()
 # in utils.R) — always use the qualified path when referring to either.
+#
+# The "local" backend below still exists as a code path, but it is an
+# internal test-only fallback, never exposed via any CLI flag, AskUserQuestion,
+# or documentation — see require_onedrive_ready(), which every user-facing
+# entry point calls before doing any real work. It exists purely so this
+# skill's own test suite can exercise the tracking/merge logic without a
+# live OneDrive connection (by pointing skill_dir at a path with no
+# resolvable onedrive.json) — no product code path can reach it.
 
 # Resolve where the live file lives right now — OneDrive folder item, or a
 # local dir — computed once per script invocation and threaded through the
@@ -34,6 +40,26 @@ resolve_tracking_ctx <- function(project_root, skill_dir = NULL, force_local = F
   list(backend = "local", cfg = cfg, drive = NULL, folder_item = NULL,
        local_dir = hfc_path(project_root, "output"),
        reason = if (force_local) "no-onedrive flag" else (cfg$reason %||% "onedrive_unavailable"))
+}
+
+#' Hard-require that OneDrive is configured and reachable before doing any
+#' real work — the product has no local-only path. Every user-facing entry
+#' point (the CLI scripts under scripts/) calls this immediately after
+#' resolving project_root, before anything else. Returns the resolved ctx
+#' (always backend == "onedrive") on success; stop()s with setup
+#' instructions otherwise.
+require_onedrive_ready <- function(project_root, skill_dir = NULL) {
+  ctx <- resolve_tracking_ctx(project_root, skill_dir)
+  if (!identical(ctx$backend, "onedrive")) {
+    stop(
+      "OneDrive is required before running HFC FieldLoop — issue tracking has no local fallback.\n",
+      "  1. Rscript <skill_dir>/install.R\n",
+      "  2. Edit <skill_dir>/assets/lib/onedrive.json: set \"enabled\": true and a folder_path.\n",
+      "  3. Rscript <skill_dir>/setup_onedrive_auth.R   (one-time interactive sign-in, run yourself, outside Claude Code)\n",
+      "Reason OneDrive wasn't reachable just now: ", ctx$reason %||% "unknown"
+    )
+  }
+  ctx
 }
 
 # Resolve (creating if needed) a named subfolder alongside the live file.
@@ -109,17 +135,13 @@ fetch_issue_tracking <- function(project_root, skill_dir = NULL, force_local = F
   c(ctx, list(tbl = tbl, dest_name = dest_name))
 }
 
-#' Commit tbl as the live issue_tracking.xlsx, always also writing the local
-#' hfc/registry/issue_tracking.csv as a plain-text audit trail (never read
-#' back as authoritative — the live xlsx, wherever it lives, always wins).
+#' Commit tbl as the live issue_tracking.xlsx. No local copy is written —
+#' OneDrive (or, only from this skill's own tests, the local-fallback
+#' backend) is the sole store; see the file header.
 commit_issue_tracking <- function(project_root, tbl, skill_dir = NULL, fetch_ctx = NULL, force_local = FALSE) {
   ctx <- fetch_ctx %||% resolve_tracking_ctx(project_root, skill_dir, force_local = force_local)
   dest_name <- if (identical(ctx$backend, "onedrive")) ctx$cfg$main_file else "issue_tracking.xlsx"
-  res <- write_named_tracking_file(ctx, tbl, dest_name)
-  reg_csv <- hfc_path(project_root, "registry", "issue_tracking.csv")
-  dir.create(dirname(reg_csv), recursive = TRUE, showWarnings = FALSE)
-  readr::write_csv(prepare_tracking_display(tbl), reg_csv)
-  res
+  write_named_tracking_file(ctx, tbl, dest_name)
 }
 
 snapshot_tracking_filename <- function(date = Sys.Date()) paste0(format(date, "%Y%m%d"), "_issue_tracking.xlsx")

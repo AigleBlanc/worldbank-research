@@ -11,3 +11,6 @@ data/
 
 # OS junk
 .DS_Store
+
+# Skill test files
+skills/hfc-fieldloop/tests/

@@ -33,8 +33,8 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 
 - R version tested:
 - Install: `Rscript .claude/skills/hfc-fieldloop/install.R`
-- Core packages: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite
-- Optional: Microsoft365R, geosphere
+- Core packages: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite, Microsoft365R (OneDrive is required — no local fallback)
+- Optional: geosphere (GPS distance)
 
 ## Instructions
 
@@ -43,14 +43,12 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 1. Place `.claude/skills/hfc-fieldloop/` in the survey project; put microdata (+ optional form) in `data/raw/`.
 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 3. In VS Code + Claude Code: **Run HFC FieldLoop** or `/hfc-fieldloop` (add `for <project>` in a monorepo). Choose AskUserQuestion option cards; use **Other** for custom answers — do not type `M1=Y M2=…`.
-4. `issue_tracking.xlsx` lives in a shared OneDrive folder (if using OneDrive) — access to that folder is set up once, by hand, via OneDrive's own sharing UI, and (for a fully unattended pipeline run) someone must have already completed the one-time interactive sign-in via `setup_onedrive_auth.R`.
+4. `issue_tracking.xlsx` lives in a shared OneDrive folder (required — no local fallback) — access to that folder is set up once, by hand, via OneDrive's own sharing UI, and someone must have already completed the one-time interactive sign-in via `setup_onedrive_auth.R` before the first build.
 
 CLI equivalent after modules confirmed:
 
 ```bash
 Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --open
-# Local-only (no OneDrive):
-Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --no-onedrive --open
 ```
 
 ### After field feedback
@@ -72,15 +70,15 @@ Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R . me
 | Artifact | Path | Purpose |
 |---|---|---|
 | Product map | `hfc/structure.html` | Review tree in browser before Continue |
-| HTML report | `hfc/report/index.html` | Navigable findings (searchable tables, GPS map) |
-| Issue tracking | OneDrive `issue_tracking.xlsx` (or local `hfc/output/issue_tracking.xlsx`) / `hfc/registry/issue_tracking.csv` | The one shared file — agent, RA, and field team all edit it |
+| HTML report | `hfc/outputs/report.html` | Navigable findings (searchable tables, GPS map) |
+| Issue tracking | OneDrive `issue_tracking.xlsx` (required, no local copy) | The one shared file — agent, RA, and field team all edit it |
 | Findings | `hfc/registry/findings.csv` | Machine-readable findings |
 | Report link | `hfc/project.yaml` → `report_onedrive_url` | Shareable link to the built report |
 | Fixed data | `data/intermediate/<stem>.<ext>` | After Pipeline B; raw unchanged |
 
 ## Folder structure
 
-List the project tree after setup (`data/raw/`, `hfc-fieldloop/`, `hfc/` with checks, code, config, registry, output, report, fixes).
+List the project tree after setup (`data/raw/`, `hfc-fieldloop/`, `hfc/` with `config/`, `instruments/`, `registry/`, `outputs/`, `code/` — `code/checks/`, `code/resolutions/`).
 
 ## AI / confidentiality
 

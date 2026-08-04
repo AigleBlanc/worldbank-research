@@ -1,21 +1,29 @@
-# M13 — Consent / assent / audio FLAGS only (filenames -> M12)
+# HFC FieldLoop generated check: M13
+# Standalone, runnable script: reproduces this project's M13 (Consent & Assent)
+# findings using the same shared logic the build itself calls. Copied into
+# hfc/code/checks/M13_consent.R at build time with the path line below
+# substituted for your project's real path — this file, as shipped in the
+# skill's assets/check_templates/, is the copy-source template.
+#
+# Usage: Rscript hfc/code/checks/M13_consent.R
 
-check_m13_consent <- function(ds, roles) {
-  out <- list()
-  for (pair in list(
-    list(col = roles$assent, id = "missing_assent", cat = "assent", msg = "Missing or negative assent flag"),
-    list(col = roles$consent, id = "missing_consent", cat = "consent", msg = "Missing consent flag"),
-    list(col = roles$audio_flag %||% roles$audio, id = "missing_audio_flag", cat = "audio", msg = "Missing audio flag")
-  )) {
-    c <- pair$col
-    if (is.null(c) || is.na(c) || !c %in% names(ds)) next
-    # Do not treat filename columns as flags — those are M12's job.
-    media_files <- unique(c(roles$audio_file_cols %||% character(),
-                            roles$image_file_cols %||% character()))
-    if (c %in% media_files) next
-    miss <- ds %>% dplyr::filter(is.na(.data[[c]]) |
-                                   as.character(.data[[c]]) %in% c("", "0", "No", "no"))
-    out[[pair$cat]] <- mk_findings(miss, pair$id, "M13", pair$cat, pair$msg, roles)
-  }
-  dplyr::bind_rows(out)
+# Set project path (ONLY place to change for a new machine) ----
+path <- "your/path/to/survey_project/"
+
+skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")
+lib <- file.path(skill, "scripts", "lib")
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R")) {
+  source(file.path(lib, f))
 }
+suppressPackageStartupMessages({ library(dplyr); library(yaml) })
+
+roles <- yaml::read_yaml(hfc_path(path, "config", "role_map.yaml"))
+modules <- yaml::read_yaml(hfc_path(path, "config", "modules.yaml"))
+proj_yaml <- yaml::read_yaml(hfc_path(path, "project.yaml"))
+ds <- load_latest_dataset(path, proj_yaml$data_file)
+ds <- prepare_ds_for_checks(ds, roles, path)
+
+res <- check_m13(ds, roles, modules)
+res$findings <- dedupe_finding_ids(res$findings)
+message("M13 (Consent & Assent): ", nrow(res$findings), " findings")
+print(as.data.frame(res$findings))

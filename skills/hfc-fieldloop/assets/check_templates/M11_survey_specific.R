@@ -2,7 +2,7 @@
 # There are no built-in M11 checks — every M11 finding comes from a custom
 # check the AI writes for this survey's specific content.
 # Custom checks (from the Additional-checks gate) register here as
-# hfc/checks/<name>.R with an exported run_<name>(ds, roles) — see
+# hfc/code/checks/<name>.R with an exported run_<name>(ds, roles) — see
 # custom_check_example.R and references/check_modules.md.
 
 check_m11_survey_specific <- function(ds, roles, custom = character()) {
@@ -14,7 +14,7 @@ check_m11_survey_specific <- function(ds, roles, custom = character()) {
 # --- Salvaged example: enumerator daily-volume anomaly (was a default module,
 # old M5, before the redesign folded default enumerator reporting into M1
 # Completion's "completion by enumerator" table). Not enabled by default —
-# copy/adapt into a real hfc/checks/<name>.R and register under
+# copy/adapt into a real hfc/code/checks/<name>.R and register under
 # modules.yaml's M11.custom if a survey specifically wants SD-based
 # submission-count anomaly detection in addition to M1's descriptive table.
 #

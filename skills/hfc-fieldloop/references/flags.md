@@ -7,13 +7,13 @@
 | F3 | Findings without stable `finding_id` |
 | F4 | Applying a fix to a row that is not `Status=Open` with a non-empty RIL Comment (the sole eligibility gate); legacy `status`/`resolved` pairs accepted only when migrated |
 | F5 | Missing `Status` column on the issue tracking file |
-| F6 | Attempting an interactive OneDrive sign-in from a Claude-Code-driven run instead of falling back to the local `issue_tracking.xlsx` (the user must complete the one-time sign-in themselves via `setup_onedrive_auth.R`) |
+| F6 | Attempting an interactive OneDrive sign-in from a Claude-Code-driven run instead of stopping and telling the user to run `setup_onedrive_auth.R` themselves — never fall back to a local copy, there isn't one |
 | F7 | Proceeding without data confirm when files missing |
 | F8 | Asking unbounded per-column free-text instead of module options |
 | F9 | Building without writing `hfc/config/modules.yaml` from confirmed options (silent default overwrite of user picks) |
 | F10 | Requiring monorepo gold / Malawi paths for a new survey drop-in |
 | F11 | Treating an `onedrive.json` with `"enabled": false` (or missing) as live config |
-| F12 | Enabling an M11 custom check without a user-described need and a registered `hfc/checks/<name>.R` |
+| F12 | Enabling an M11 custom check without a user-described need and a registered `hfc/code/checks/<name>.R` |
 | F13 | Age/outlier copy that assumes child surveys when roles are generic adults/HH |
 | F14 | Calling deleted eval harness paths (`eval/`, `verify_all`, `run_demo`, SimUser as required) |
 | F15 | Project README missing or invented access dates / exhibit IDs not in the package |
@@ -22,7 +22,7 @@
 | F18 | Enabling M12 without detecting or confirming audio/image cols when they exist in data |
 | F19 | Asking primary confirms via free-text / mega-string (`M1=Y M2=…`) instead of AskUserQuestion option cards when AskUserQuestion is available; adding a redundant explicit Other when Claude Code already provides Other |
 | F20 | Skipping the Entity ID AskUserQuestion gate (must shortlist ≤3 single-column or ≤4 composite candidates after data confirm; Other is automatic) |
-| F21 | Writing product artifacts outside `hfc/` (checks, config, report, registry, output, code, fixes, project.yaml) |
+| F21 | Writing product artifacts outside `hfc/` (config, instruments, registry, outputs, code — with code/checks, code/resolutions — project.yaml) |
 | F22 | Flagging child/nested question blanks as missing when parent skip-logic makes them expected |
 | F23 | Skipping or silently auto-answering the "Additional checks" AskUserQuestion gate after module confirmation (it must fire every run, even under Accept-all pace) |
 | F24 | Skipping the country/timezone confirm gate, or treating a resolved country→timezone lookup as live without showing it back for confirmation |
@@ -30,3 +30,4 @@
 | F26 | Code/agent writing `Status`/`Corrections` directly to the live `issue_tracking.xlsx` instead of today's `resolutions/<date>_issues_resolution.xlsx` clone — the live file is only ever updated by `commit_merged_issue_tracking.R`, after explicit AskUserQuestion confirmation |
 | F27 | Skipping the duplicate-check-key sub-gate when Entity ID is NOT already 100% unique in the raw data (must offer detected round/wave-like candidates or "Entity ID alone"; auto-skip only applies when uniqueness already holds) |
 | F28 | Overwriting `issue_tracking.xlsx` (via `merge_issues.R`/`merge_resolutions.R`'s output) without an explicit AskUserQuestion confirmation first — always review the `merged_*.xlsx` file with the user before running `commit_merged_issue_tracking.R` |
+| F29 | Skipping or silently bypassing the OneDrive pre-flight check (A0c) — if OneDrive isn't configured/reachable, stop and direct the user to `install.R` + `assets/lib/onedrive.json` + `setup_onedrive_auth.R`; never proceed with a local-only build |

@@ -6,20 +6,21 @@ Recommended choices are listed first. Star in labels = recommended.
 
 ## Required fields (dedicated gate, before module pace)
 
-Four fields are confirmed in sequence, **before any module cards** (see `interaction.md`'s Gate map) — not folded into M1–M13 review:
+Five fields are confirmed in sequence, **before any module cards** (see `interaction.md`'s Gate map) — not folded into M1–M13 review:
 
 1. **Entity ID.** AskUserQuestion: single column vs. combine multiple columns (composite key, e.g. `household_id` + `member_id`) — this is the analysis-unit identifier (person/household/school/...), **not necessarily row-unique**.
    - Single: profile shortlists ≤3 candidates using names, labels, and uniqueness stats (`shortlist_entity_ids()`).
    - Composite: `multiSelect: true` over ≤4 candidates (`shortlist_composite_entity_ids()` — pools moderate-uniqueness + roster/member-like columns). After selection, report joint uniqueness inline in chat (not another gate).
-2. **Duplicate-check key.** Check whether Entity ID is already 100% unique per row in the raw data.
+2. **Entity Label.** AskUserQuestion: what to call the Entity ID in the HTML report (e.g. "Student ID", "Household ID") — "Entity ID" (generic, recommended) / Other (free text). Display-only: the xlsx/csv exports always keep the fixed generic "Entity ID" header regardless of this answer.
+3. **Duplicate-check key.** Check whether Entity ID is already 100% unique per row in the raw data.
    - Already unique: auto-resolve to "Entity ID alone," state it inline in chat, **skip the AskUserQuestion** — don't interrupt the common case.
    - Repeats (e.g. a household surveyed across multiple rounds): AskUserQuestion — Entity ID alone (only if the repeats really are duplicates) / add detected round/wave-like column(s) (`detect_duplicate_key_candidates()`, `multiSelect: true`, ≤4 candidates) / Other. Do not skip when Entity ID repeats (F27) — this feeds M2's actual grouping key, so a household legitimately surveyed twice isn't flagged as a duplicate.
-3. **Country(ies) + timezone.** AskUserQuestion: single vs. multiple countries.
+4. **Country(ies) + timezone.** AskUserQuestion: single vs. multiple countries.
    - Single: confirm one country → one global timezone (best-effort guess from any weak signal, e.g. project/folder name, is fine as one option — free-text Other is always available).
    - Multiple: shortlist a country-indicator column (`shortlist_country_columns()`), resolve each distinct value's timezone (`resolve_country_timezone_column()`), and **always show the resolved timezone back for confirmation/override** (F24) — never treat a lookup match as live without showing it. Unmatched countries fall back to asking for a raw IANA timezone string directly.
-4. **Last date of data collection.** AskUserQuestion: use the detected max date from the data (recommended) vs. a different date (Other). Do not skip (F25) — this drives report-wide bold-highlighting and the Last Day tab.
+5. **Last date of data collection.** AskUserQuestion: use the detected max date from the data (recommended) vs. a different date (Other). Do not skip (F25) — this drives report-wide bold-highlighting and the Last Day tab.
 
-Persist to `hfc/config/role_map.yaml`: `entity_id`, `entity_id_sep`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`.
+Persist to `hfc/config/role_map.yaml`: `entity_id`, `entity_id_sep`, `entity_label`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`. (`map_focus`, confirmed later at the build gate if GPS is on, also lives here — see A4 in `SKILL.md`.)
 
 ## Nested / skip-logic questions
 
@@ -32,7 +33,7 @@ AskUserQuestion:
 - Accept all recommended defaults (recommended)
 - Review module-by-module
 
-**Mandatory, every run, cannot be skipped or silently auto-answered (F23):** after pace / module cards, always ask **Additional checks?** — `No additional checks (recommended)` (Other automatic for a custom check). If Other, design a named check under `hfc/checks/<name>.R`, confirm the name/file, register under M11/`custom`, and write a ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.description`) so the HTML report can show it (see "Report display labels & descriptions" below).
+**Mandatory, every run, cannot be skipped or silently auto-answered (F23):** after pace / module cards, always ask **Additional checks?** — `No additional checks (recommended)` (Other automatic for a custom check). If Other, design a named check under `hfc/code/checks/<name>.R`, confirm the name/file, register under M11/`custom`, and write a ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.description`) so the HTML report can show it (see "Report display labels & descriptions" below).
 
 ## M1 — Completion
 
@@ -69,7 +70,7 @@ Reports: version × date-range × n table. Optional finding when a real version 
 
 ## M4 — Survey Duration
 
-**Default: ON** — descriptive stats (overall / by section / by enumerator) plus outlier flagging, decoupled from M5's early-start logic.
+**Default: ON** — descriptive stats (overall / by section / by enumerator) plus outlier flagging, decoupled from M5's early-start logic. Duration is always converted to and reported in **minutes** (the source column is SurveyCTO's native seconds export).
 
 1. M4 — Duration stats: Overall + by-section + by-enumerator (recommended) / Overall only
 2. M4 — Sections (if a form or column-name clustering finds candidates): Use detected N sections (recommended) / Edit sections
@@ -135,7 +136,7 @@ custom check the agent writes for this survey's specific content, described
 by the user at the Additional checks gate.
 
 Custom user-described checks are registered under M11/`custom` and live as
-`hfc/checks/<name>.R`, with an exported `run_<name>(ds, roles)` — see
+`hfc/code/checks/<name>.R`, with an exported `run_<name>(ds, roles)` — see
 `assets/check_templates/custom_check_example.R` for the convention.
 
 ## M12 — Media files (audio + pictures)
@@ -165,14 +166,14 @@ Map selections → `hfc/config/modules.yaml` + `hfc/config/role_map.yaml`, then 
 
 ## Report display labels & descriptions (authoritative)
 
-Source of truth for how modules appear in `hfc/report/index.html` (mirrored as `MODULE_META` in `scripts/lib/build_outputs.R` — keep both in sync). Tab/heading text is the label; the module code still appears alongside it, smaller, since it's used internally (e.g. `findings.csv`). Descriptions are ≤3 plain-English sentences, no raw column names.
+Source of truth for how modules appear in `hfc/outputs/report.html` (mirrored as `MODULE_META` in `scripts/lib/build_outputs.R` — keep both in sync). Tab/heading text is the label; the module code still appears alongside it, smaller, since it's used internally (e.g. `findings.csv`). Descriptions are ≤3 plain-English sentences, no raw column names.
 
 | Code | Label | Description |
 |---|---|---|
 | M1 | Completion | Reports how many submissions are complete overall, and by group, enumerator, and date, so gaps in fieldwork show up early. Can also flag sites whose completion falls far below the survey median. |
 | M2 | Duplicates | Flags submissions that share the same unique ID or survey key, which usually means the same interview was uploaded or entered more than once. |
 | M3 | Form Version | Tracks which version of the survey instrument was in use on each date, and flags any submission whose recorded version doesn't match the expected window for its date. |
-| M4 | Survey Duration | Reports how long interviews took overall and by enumerator, and flags individual interviews that were unusually long or short. |
+| M4 | Survey Duration | Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews that were unusually long or short. |
 | M5 | Irregular Timing | Flags interviews conducted at unusual times — weekends or outside normal working hours — using each submission's local time zone. |
 | M6 | Numeric Outliers | Flags unusually high or low values on key numeric questions (e.g. ages, scores) that fall outside the normal range for this survey. |
 | M7 | Missingness | Flags variables and enumerators with unusually high rates of missing or sentinel-coded (e.g. 99, -9999) responses on key survey questions. |

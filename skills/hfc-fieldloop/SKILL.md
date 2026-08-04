@@ -4,9 +4,10 @@ description: >-
   Drop-in HFC FieldLoop skill for a survey project folder in VS Code + Claude Code.
   Use when the user says "Run HFC FieldLoop", "Start FieldLoop", "Process HFC feedback",
   "Run FieldLoop fixes", or "Apply field feedback", or invokes /hfc-fieldloop. Discovers
-  data/form, confirms check modules with AskUserQuestion option cards, builds product
-  under hfc/ (HTML report + one shared issue_tracking.xlsx), or runs the
-  post-feedback fix pipeline, writing agent-authored fixes to data/intermediate/.
+  data/form, confirms check modules with AskUserQuestion option cards, builds the HTML
+  report and checks under hfc/, and keeps one shared issue_tracking.xlsx in OneDrive
+  (required — no local fallback), or runs the post-feedback fix pipeline, writing
+  agent-authored fixes to data/intermediate/.
 ---
 
 # HFC FieldLoop (drop-in project skill — Claude Code)
@@ -20,7 +21,7 @@ Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --open
 Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" "<project_root>" --open
 ```
 
-**Built product** (checks, config, report, registry, output, code, fixes) always lands under **`hfc/`** next to `data/raw/` and this skill. Open `hfc/structure.html` in a browser and AskUserQuestion **Continue** before writing the full package.
+**Built product** (`config/`, `instruments/`, `registry/`, `outputs/`, `code/` — with `code/checks/` and `code/resolutions/`) always lands under **`hfc/`** next to `data/raw/` and this skill. `issue_tracking.xlsx` itself lives entirely in OneDrive (required — see A0c), not under `hfc/`. Open `hfc/structure.html` in a browser and AskUserQuestion **Continue** before writing the full package.
 
 Two pipelines — choose by the user's prompt (see `references/prompts.md`):
 
@@ -35,7 +36,7 @@ Authority (read; do not invent standards):
 - `references/check_modules.md` — M1–M13 option-card specs + required-fields gate + nested skip-logic
 - `references/issue_tracking_schema.md` — the issue-tracking file's schema, including the `Status` lifecycle
 - `references/checklist.md` — package completeness
-- `references/flags.md` — failure modes (incl. F19–F28)
+- `references/flags.md` — failure modes (incl. F19–F29)
 - `references/prompts.md` — exact trigger phrases
 - `references/ai_use.md` — no PII to commercial AI
 
@@ -46,10 +47,9 @@ Helpers (prefer `Rscript` rather than reimplementing):
 - `scripts/apply_feedback.R` — post-feedback CLI (`clone` / `list-open` / `apply` / `needs-review`); fix logic is agent-authored, see `scripts/lib/apply_feedback_helpers.R`
 - `scripts/merge_issues.R` / `scripts/merge_resolutions.R` — fold a dated snapshot / resolutions clone back into `issue_tracking.xlsx`, producing a `merged_*.xlsx` for the agent to review
 - `scripts/commit_merged_issue_tracking.R` — the only script that ever overwrites the live `issue_tracking.xlsx`, run only after explicit AskUserQuestion confirmation
-- `scripts/sync_feedback.R` — pull/push the single `issue_tracking.xlsx` ↔ OneDrive (or local fallback)
 - `assets/issue_tracking_template.csv` — schema template
 - `assets/README_template.md` / `assets/README_example.md` — draft project README on setup
-- `assets/check_templates/` — M1–M13 skeletons (live logic: `scripts/lib/run_checks.R`, `scripts/lib/media.R`)
+- `assets/check_templates/` — M1–M13 real, runnable per-module scripts, copied into `hfc/code/checks/` at build time (same logic as `scripts/lib/run_checks.R`'s `check_mN()` functions, `scripts/lib/media.R` for M12)
 - `scripts/lib/media.R` — detect media cols, media folder, M12 file checks
 - `scripts/lib/geo_timezone.R` — country → IANA timezone lookup/resolver for M5
 - `scripts/lib/form_logic.R` — SurveyCTO relevance / nested skip-logic helper + M4's group/section parsing
@@ -69,7 +69,7 @@ Helpers (prefer `Rscript` rather than reimplementing):
 1. Phases that write files wait for explicit AskUserQuestion confirmation (no silent proceed).
 2. Never mutate original microdata in `data/raw/` — agent-authored fixes write to `data/intermediate/<stem>.<ext>` instead (one evolving file, sibling of `data/raw/`).
 3. Confirm via **option cards**, not free-text module strings. Max ~8–12 cards after data confirm — never 100 per-column questions.
-4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). Once `assets/lib/onedrive.json` has `"enabled": true`, that file's folder in the runner's own individual OneDrive for Business (no SharePoint site or Team needed) becomes the **sole source of truth** — there is no permanent local copy that persists as "the real file"; every read fetches current state, every write commits back. If OneDrive isn't configured, or a call fails, local `hfc/output/issue_tracking.xlsx` becomes the sole store instead — exactly one location either way, never a persistent dual copy. Two dated-snapshot subfolders live alongside it: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/onedrive.json` — the only file that matters, edited directly, no per-project override. Auth is delegated one-time interactive sign-in (`setup_onedrive_auth.R`, run once by the user outside Claude Code) — no secrets stored in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
+4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). OneDrive is **required** (no local fallback in the product — see A0c): once `assets/lib/onedrive.json` has `"enabled": true` and the user has signed in, that file's folder in the runner's own individual OneDrive for Business (no SharePoint site or Team needed) is the **sole store** — every read fetches current state, every write commits back, and there is never a local copy. Two dated-snapshot subfolders live alongside it, inside the same OneDrive folder: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/onedrive.json` — the only file that matters, edited directly, no per-project override. Auth is delegated one-time interactive sign-in (`setup_onedrive_auth.R`, run once by the user outside Claude Code) — no secrets stored in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
 5. After HTML build, auto-open with `utils::browseURL()` (or OS `open`).
 6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **selected** options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed (step 8 below).
 7. M11 (Survey-Specific) has no built-in checks and defaults to **off / empty** — every M11 finding comes from a custom check the agent writes for this survey's specific content, driven entirely by what the user describes at the Additional-checks gate (step 8).
@@ -107,6 +107,13 @@ Immediately after project root is resolved, check whether `hfc/config/role_map.y
 - **Start fresh** — delete `hfc/config/role_map.yaml` and `hfc/config/modules.yaml` (only those two files), then run A1–A4 normally as a first-ever setup.
 - **Open the config files for me to edit, then continue** — tell the user the paths (`hfc/config/role_map.yaml`, `hfc/config/modules.yaml`), wait for them to confirm they're done editing, then proceed straight to A4 build; the existing reload logic picks up their hand-edited values automatically.
 
+### A0c. OneDrive pre-flight (mandatory, every run)
+
+OneDrive is required — there is no local-only mode. Before proceeding to A1, verify it's configured and reachable: `assets/lib/onedrive.json` must have `"enabled": true` with a real `folder_path`, and the connection must actually succeed (this is exactly what `require_onedrive_ready()` in `scripts/lib/issue_store.R` checks — every CLI script in this skill calls it automatically and `stop()`s with the same instructions below, so this gate is also enforced in code, not just in this doc).
+
+- **If it's already configured and reachable:** say so briefly in chat (name the configured folder) and continue to A1 — no AskUserQuestion needed, there's no choice to make.
+- **If it isn't configured, or the connection fails:** stop here. Tell the user, in this order: (1) run `Rscript <skill_dir>/install.R` if packages might be missing, (2) edit `assets/lib/onedrive.json` — set `"enabled": true` and a `folder_path` — this is skill-level config, applies to every project using this skill copy, (3) run `Rscript <skill_dir>/setup_onedrive_auth.R` themselves, once, outside Claude Code (interactive browser/device-code sign-in — cannot be completed from a non-interactive `Rscript` call, and connects to their own OneDrive, not a shared site). Do not proceed with Pipeline A or B until they confirm this is done and the pre-flight succeeds.
+
 ### A1. Discover data + survey
 
 1. Run discovery under `project_root` (not workspace root unless they are the same).
@@ -137,7 +144,7 @@ Immediately after project root is resolved, check whether `hfc/config/role_map.y
 5. If **Review**: AskUserQuestion cards per `check_modules.md` (on/off, key columns, thresholds). Respect 2–4 options per question; split into sequential asks. Do not ask for typed `M1=Y M2=…`. **M7 Missingness is a genuine sequential dependency:** confirm the variable shortlist first, then confirm sentinel missing-codes in a follow-up question that names those specific confirmed variables — the second question cannot be authored as a static card ahead of time.
 6. Never one free-text question per variable.
 7. **Additional checks — mandatory, every run, cannot be skipped (F23):** immediately after steps 3–6, always run a separate AskUserQuestion — `No additional checks` (recommended) (Other automatic for custom). This fires regardless of whether the user picked Accept-all or Review in step 3; do not treat Accept-all as an implicit "no" here.
-8. **If the user answers Other in step 7:** propose a check name + `hfc/checks/<name>.R`, confirm via AskUserQuestion, implement and register under M11/`custom`, **and** write its ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.label` / `.description`) so `hfc/report/index.html` can show it under the M11 section (schema in `references/check_modules.md`).
+8. **If the user answers Other in step 7:** propose a check name + `hfc/code/checks/<name>.R`, confirm via AskUserQuestion, implement and register under M11/`custom`, **and** write its ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.label` / `.description`) so `hfc/outputs/report.html` can show it under the M11 section (schema in `references/check_modules.md`).
 
 ### A3. Outline + product structure
 
@@ -147,26 +154,25 @@ Immediately after project root is resolved, check whether `hfc/config/role_map.y
 
 ### A4. Build
 
-1. **AskUserQuestion — OneDrive:** read `assets/lib/onedrive.json` (the skill's own file, no per-project override) — if `enabled: true`, show the configured folder and offer Use it (recommended) / Local file only. If `enabled: false` or missing, note it's not yet set up and offer I will set it up now (enable + folder name) / Local file only. Never treat `enabled: false` as live. If the user sets it up: write `"enabled": true` plus the desired `folder_path`/`main_file` directly to `assets/lib/onedrive.json` (this is skill-level config, so it applies to every project using this skill copy — say so). Note: the very first sign-in is an interactive browser/device-code flow the user must complete themselves (`setup_onedrive_auth.R`, run outside Claude Code) — it cannot be completed from inside a non-interactive `Rscript` call, and it connects to the user's own OneDrive, not a shared site.
+1. **OneDrive — informational, not a gate here:** A0c already confirmed OneDrive is configured and reachable before A1 even started, so there's no choice left to make. State the configured folder inline in chat ("Using your configured OneDrive folder: `<folder_path>`") and move on — no AskUserQuestion.
 2. **AskUserQuestion — Issue tracking columns:** Keep the standard columns (recommended) / Modify columns. Schema: `Status` (Open default; any Open row with a non-empty RIL Comment is eligible for the agent to interpret and resolve in Pipeline B — Accepted/Revise are advisory triage values the field/RA can still set, not a hard gate; Resolved/Needs Review are set by the agent, always in the resolutions clone first, never written straight to the live file — see `references/issue_tracking_schema.md`).
-3. **AskUserQuestion — Map focus** (if GPS on): Country / City / World. Store in `hfc/config/report.yaml`.
+3. **AskUserQuestion — Map focus** (if GPS on): Country / City / World. Store in `hfc/config/role_map.yaml` (`map_focus`).
 4. **AskUserQuestion — Report:** HTML (recommended).
 5. Write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from confirmed options.
 6. Run builder:
    ```bash
    Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>" --open
-   # or local file only:
-   Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>" --no-onedrive --open
    # equivalently:
    Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" "<project_root>" --open
    ```
+   (No `--no-onedrive` flag exists — the builder itself calls `require_onedrive_ready()` and stops with setup instructions if OneDrive isn't reachable, same as A0c.)
    On a rebuild (an `issue_tracking.xlsx` already exists), the builder does **not** overwrite it — it writes `merged_issue_tracking.xlsx` and prints `MERGE_PENDING`. Show the user what changed (preserved rows unchanged, genuinely-new findings appended, nothing dropped), **AskUserQuestion** to confirm, then run:
    ```bash
    Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_tracking.xlsx
    ```
    Warn the user first that this replaces the live shared file — this is the only script that ever does so.
 7. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
-8. Auto-open `hfc/report/index.html`. Tell user: `issue_tracking.xlsx` and the report itself now live in the shared OneDrive folder (access already granted via the one-time manual folder share) — surface the report's OneDrive link from the run summary. Later: **Process HFC feedback** (+ project path if monorepo).
+8. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and the report itself now live in the shared OneDrive folder (access already granted via the one-time manual folder share) — surface the report's OneDrive link from the run summary. Later: **Process HFC feedback** (+ project path if monorepo).
 
 ---
 
@@ -187,7 +193,7 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
 3. **AskUserQuestion:** Proceed with these N rows (recommended).
 4. For **each** eligible row, in turn, in a single pass — interpret the RIL Comment, propose Corrections, apply the fix, and set Status, all at once:
    a. Read its `Issue`, `RIL Comment`, and other fields; decide the concrete technical fix the RIL Comment is asking for (e.g. drop the row, cap a value, recode a field), and draft the Corrections text describing what you did.
-   b. Write `hfc/fixes/<Issue ID, sanitized>.R` defining `fix(ds) -> ds` that implements it.
+   b. Write `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds` that implements it.
    c. Apply it:
       ```bash
       Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R apply "<project_root>" --finding-id "<Issue ID>" --corrections "<what you did>"
@@ -212,7 +218,8 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
 - Do not overwrite the original microdata file.
 - Do not start Pipeline A when the user clearly asked for post-feedback (and vice versa).
 - Do not invent access dates, exhibit IDs, or column names that are not in the data.
-- Do not attempt an interactive OneDrive sign-in from a Claude-Code-driven run; fall back to the local `issue_tracking.xlsx` if the token isn't already cached (the user must run `setup_onedrive_auth.R` themselves first).
+- Do not attempt an interactive OneDrive sign-in from a Claude-Code-driven run; if the token isn't already cached, stop and tell the user to run `setup_onedrive_auth.R` themselves first (F6) — never fall back to a local copy, there isn't one.
+- Do not skip or silently bypass the OneDrive pre-flight check (A0c) — if it fails, stop and direct the user to `install.R` + `assets/lib/onedrive.json` + `setup_onedrive_auth.R`, never proceed with a local-only build (F29).
 - Do not require monorepo gold data, `eval/`, `verify_all`, or SimUser for product runs.
 - Do not use typed mega-replies (`M1=Y M2=…`) as the primary confirmation UX when AskUserQuestion is available (F19).
 - Do not skip the unique-ID AskUserQuestion gate (F20).

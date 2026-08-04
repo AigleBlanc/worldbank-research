@@ -1,4 +1,4 @@
-# Example custom check: hfc/checks/example_check.R
+# Example custom check: hfc/code/checks/example_check.R
 # Convention: export run_<name>(ds, roles) returning a findings tibble
 # (same columns as empty_findings() / mk_findings()).
 #

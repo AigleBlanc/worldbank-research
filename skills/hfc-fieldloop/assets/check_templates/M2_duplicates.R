@@ -1,23 +1,29 @@
-# M2 — Duplicates
-# Adapted from prior hfc-app checks/duplicates.R; FieldLoop findings schema.
-# roles$entity_id may be a single column name or a character vector
-# (composite key, e.g. household_id + member_id) — group_by(across(all_of(.)))
-# handles both. Entity ID alone may legitimately repeat (e.g. a household
-# surveyed across multiple rounds) — modules$M2$extra_keys (confirmed at
-# setup via the duplicate-check-key gate, e.g. a round/wave column) gets
-# appended so those legitimate repeats aren't flagged as duplicates.
+# HFC FieldLoop generated check: M2
+# Standalone, runnable script: reproduces this project's M2 (Duplicates)
+# findings using the same shared logic the build itself calls. Copied into
+# hfc/code/checks/M2_duplicates.R at build time with the path line below
+# substituted for your project's real path — this file, as shipped in the
+# skill's assets/check_templates/, is the copy-source template.
+#
+# Usage: Rscript hfc/code/checks/M2_duplicates.R
 
-check_m2_duplicates <- function(ds, roles, extra_keys = character()) {
-  idc <- roles$entity_id
-  idc <- idc[!is.na(idc) & nzchar(as.character(idc))]
-  idc <- idc[idc %in% names(ds)]
-  extra_keys <- extra_keys[!is.na(extra_keys) & nzchar(as.character(extra_keys)) & extra_keys %in% names(ds)]
-  full_key <- c(idc, extra_keys)
-  if (!length(full_key)) return(empty_findings())
-  dups <- ds %>%
-    dplyr::filter(dplyr::if_all(dplyr::all_of(full_key), ~ !is.na(.) & as.character(.) != "")) %>%
-    dplyr::group_by(dplyr::across(dplyr::all_of(full_key))) %>%
-    dplyr::filter(dplyr::n() > 1) %>%
-    dplyr::ungroup()
-  mk_findings(dups, "duplicates_id", "M2", "duplicates", "Duplicate submission ID", roles)
+# Set project path (ONLY place to change for a new machine) ----
+path <- "your/path/to/survey_project/"
+
+skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")
+lib <- file.path(skill, "scripts", "lib")
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R")) {
+  source(file.path(lib, f))
 }
+suppressPackageStartupMessages({ library(dplyr); library(yaml) })
+
+roles <- yaml::read_yaml(hfc_path(path, "config", "role_map.yaml"))
+modules <- yaml::read_yaml(hfc_path(path, "config", "modules.yaml"))
+proj_yaml <- yaml::read_yaml(hfc_path(path, "project.yaml"))
+ds <- load_latest_dataset(path, proj_yaml$data_file)
+ds <- prepare_ds_for_checks(ds, roles, path)
+
+res <- check_m2(ds, roles, modules)
+res$findings <- dedupe_finding_ids(res$findings)
+message("M2 (Duplicates): ", nrow(res$findings), " findings")
+print(as.data.frame(res$findings))
