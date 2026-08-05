@@ -8,7 +8,7 @@
 # directly (see scripts/merge_resolutions.R for how the clone gets folded
 # back into the live file, after AskUserQuestion confirmation).
 #
-# Usage (OneDrive must already be configured and signed in — no local mode):
+# Usage (a shared sync folder must already be configured — no local mode):
 #   Rscript apply_feedback.R clone <project_root>
 #   Rscript apply_feedback.R list-open <project_root>
 #   Rscript apply_feedback.R apply <project_root> --finding-id <id> --corrections "<text>"
@@ -35,7 +35,7 @@ skill <- .resolve_skill()
 lib <- file.path(skill, "scripts", "lib")
 source(file.path(lib, "utils.R"))
 source(file.path(lib, "build_outputs.R"))
-source(file.path(lib, "onedrive_drive.R"))
+source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 source(file.path(lib, "apply_feedback_helpers.R"))
 
@@ -62,8 +62,8 @@ opt_val <- function(flag) {
 finding_id <- opt_val("--finding-id")
 corrections_text <- opt_val("--corrections")
 
-# Step 2b: OneDrive is required — no local fallback.
-require_onedrive_ready(project_root, skill)
+# Step 2b: a configured shared sync folder is required — no local fallback.
+require_sync_folder_ready(project_root, skill)
 
 # Step 3: dispatch.
 if (mode == "clone") {

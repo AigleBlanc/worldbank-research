@@ -30,19 +30,19 @@
 #' Resolve a per-row IANA timezone: one global tz (single-country mode) or a
 #' per-row lookup via a confirmed country column (multi-country mode).
 resolve_row_timezone <- function(ds, roles) {
-  n <- nrow(ds)
-  if (identical(roles$country_mode, "multi") &&
-      !is.null(roles$country_col) && !is.na(roles$country_col) &&
-      roles$country_col %in% names(ds)) {
-    map <- roles$country_timezone_map %||% list()
-    vals <- as.character(ds[[roles$country_col]])
-    tz <- vapply(vals, function(v) {
-      t <- map[[v]]
-      if (is.null(t) || !nzchar(t)) NA_character_ else t
-    }, character(1), USE.NAMES = FALSE)
-    return(tz)
-  }
-  rep(roles$timezone %||% Sys.timezone(), n)
+    n <- nrow(ds)
+    if (identical(roles$country_mode, "multi") &&
+        !is.null(roles$country_col) && !is.na(roles$country_col) &&
+        roles$country_col %in% names(ds)) {
+        map <- roles$country_timezone_map %||% list()
+        vals <- as.character(ds[[roles$country_col]])
+        tz <- vapply(vals, function(v) {
+        t <- map[[v]]
+        if (is.null(t) || !nzchar(t)) NA_character_ else t
+        }, character(1), USE.NAMES = FALSE)
+        return(tz)
+    }
+    rep(roles$timezone %||% Sys.timezone(), n)
 }
 
 #' Extract local hour-of-day and ISO weekday (1=Mon..7=Sun) from a naive
@@ -51,70 +51,70 @@ resolve_row_timezone <- function(ds, roles) {
 #' timezone group is force_tz()'d and read back separately, then only the
 #' extracted (non-POSIXct) hour/weekday numbers are recombined.
 local_daypart <- function(dt, tz_vec) {
-  n <- length(dt)
-  hr <- rep(NA_real_, n)
-  wd <- rep(NA_integer_, n)
-  tz_vec <- as.character(tz_vec)
-  tz_vec[is.na(tz_vec) | !nzchar(tz_vec)] <- Sys.timezone()
-  for (tz in unique(tz_vec)) {
-    idx <- which(tz_vec == tz & !is.na(dt))
-    if (!length(idx)) next
-    sub <- tryCatch(lubridate::force_tz(dt[idx], tzone = tz), error = function(e) dt[idx])
-    hr[idx] <- lubridate::hour(sub) + lubridate::minute(sub) / 60
-    wd[idx] <- lubridate::wday(sub, week_start = 1)
-  }
-  list(hour = hr, wday = wd)
+    n <- length(dt)
+    hr <- rep(NA_real_, n)
+    wd <- rep(NA_integer_, n)
+    tz_vec <- as.character(tz_vec)
+    tz_vec[is.na(tz_vec) | !nzchar(tz_vec)] <- Sys.timezone()
+    for (tz in unique(tz_vec)) {
+        idx <- which(tz_vec == tz & !is.na(dt))
+        if (!length(idx)) next
+        sub <- tryCatch(lubridate::force_tz(dt[idx], tzone = tz), error = function(e) dt[idx])
+        hr[idx] <- lubridate::hour(sub) + lubridate::minute(sub) / 60
+        wd[idx] <- lubridate::wday(sub, week_start = 1)
+    }
+    list(hour = hr, wday = wd)
 }
 
 #' Parse a start/end timestamp column into a naive POSIXct vector, trying a
 #' couple of common SurveyCTO export formats.
 parse_datetime_col <- function(x) {
-  x <- as.character(x)
-  dt <- suppressWarnings(lubridate::ymd_hms(x, quiet = TRUE))
-  if (sum(!is.na(dt)) < 0.5 * length(x)) {
-    dt <- suppressWarnings(lubridate::parse_date_time(
-      x, orders = c("Ymd HMS", "mdy HMS", "Ymd HM", "mdy HM", "Ymd", "mdy"), quiet = TRUE
-    ))
-  }
-  dt
+    x <- as.character(x)
+    dt <- suppressWarnings(lubridate::ymd_hms(x, quiet = TRUE))
+    if (sum(!is.na(dt)) < 0.5 * length(x)) {
+        dt <- suppressWarnings(lubridate::parse_date_time(
+        x, orders = c("Ymd HMS", "mdy HMS", "Ymd HM", "mdy HM", "Ymd", "mdy"), quiet = TRUE
+        ))
+    }
+    dt
 }
 
 #' Row-wise fraction of missing/blank cells across a set of columns.
 row_missing_ratio <- function(ds, cols) {
-  cols <- cols[cols %in% names(ds)]
-  if (!length(cols)) return(rep(0, nrow(ds)))
-  m <- vapply(cols, function(cn) {
-    x <- ds[[cn]]
-    if (is.character(x) || is.factor(x)) is.na(x) | !nzchar(as.character(x)) else is.na(x)
-  }, logical(nrow(ds)))
-  if (is.null(dim(m))) m <- matrix(m, nrow = nrow(ds))
-  rowMeans(m)
+    cols <- cols[cols %in% names(ds)]
+    if (!length(cols)) return(rep(0, nrow(ds)))
+    m <- vapply(cols, function(cn) {
+        x <- ds[[cn]]
+        if (is.character(x) || is.factor(x)) is.na(x) | !nzchar(as.character(x)) else is.na(x)
+    }, logical(nrow(ds)))
+    if (is.null(dim(m))) m <- matrix(m, nrow = nrow(ds))
+    rowMeans(m)
 }
 
 #' TRUE where a value looks like a "yes/complete/positive" indicator.
 is_complete_value <- function(x) {
-  s <- tolower(trimws(as.character(x)))
-  s %in% c("1", "yes", "y", "true", "complete", "completed", "full")
+    s <- tolower(trimws(as.character(x)))
+    s %in% c("1", "yes", "y", "true", "complete", "completed", "full")
 }
 
 #' Count + percent-complete, overall or split by a grouping vector.
 completion_summary <- function(complete_flag, group_vec = NULL) {
-  if (is.null(group_vec)) {
-    return(tibble::tibble(
-      group = "Overall", n = length(complete_flag),
-      n_complete = sum(complete_flag, na.rm = TRUE),
-      pct_complete = round(100 * mean(complete_flag, na.rm = TRUE), 1)
-    ))
-  }
-  tibble::tibble(group = as.character(group_vec), complete = complete_flag) %>%
-    dplyr::filter(!is.na(group), nzchar(group)) %>%
-    dplyr::group_by(group) %>%
-    dplyr::summarise(
-      n = dplyr::n(),
-      n_complete = sum(complete, na.rm = TRUE),
-      pct_complete = round(100 * mean(complete, na.rm = TRUE), 1),
-      .groups = "drop"
-    )
+    if (is.null(group_vec)) {
+        return(tibble::tibble(
+        group = "Overall", n = length(complete_flag),
+        n_complete = sum(complete_flag, na.rm = TRUE),
+        pct_complete = round(100 * mean(complete_flag, na.rm = TRUE), 1)
+        ))
+    }
+    tibble::tibble(group = as.character(group_vec), complete = complete_flag) %>%
+        dplyr::filter(!is.na(group), nzchar(group)) %>%
+        dplyr::group_by(group) %>%
+        dplyr::summarise(
+        n = dplyr::n(),
+        n_complete = sum(complete, na.rm = TRUE),
+        pct_complete = round(100 * mean(complete, na.rm = TRUE), 1),
+        .groups = "drop"
+        )
 }
 
 #' Shared per-run setup: one-time library loads, form-map resolution (read
@@ -124,148 +124,148 @@ completion_summary <- function(complete_flag, group_vec = NULL) {
 #' needing its own project_root parameter), and the two derived columns
 #' every module can rely on (.hfc_row, .hfc_id_display).
 prepare_ds_for_checks <- function(ds, roles, project_root = NULL) {
-  suppressPackageStartupMessages({
-    library(dplyr); library(lubridate); library(tibble)
-  })
-  form_map <- attr(ds, "hfc_form_map")
-  if (is.null(form_map) && !is.null(project_root)) {
-    fp <- hfc_path(project_root, "instruments", "form.xlsx")
-    if (file.exists(fp) && exists("parse_form_relevance", mode = "function")) {
-      form_map <- parse_form_relevance(fp)
+    suppressPackageStartupMessages({
+        library(dplyr); library(lubridate); library(tibble)
+    })
+    form_map <- attr(ds, "hfc_form_map")
+    if (is.null(form_map) && !is.null(project_root)) {
+        fp <- hfc_path(project_root, "instruments", "form.xlsx")
+        if (file.exists(fp) && exists("parse_form_relevance", mode = "function")) {
+        form_map <- parse_form_relevance(fp)
+        }
     }
-  }
-  attr(ds, "hfc_form_map") <- form_map
-  ds$.hfc_row <- seq_len(nrow(ds))
-  ds$.hfc_id_display <- composite_id_string(ds, roles$entity_id, roles$entity_id_sep %||% " / ")
-  ds
+    attr(ds, "hfc_form_map") <- form_map
+    ds$.hfc_row <- seq_len(nrow(ds))
+    ds$.hfc_id_display <- composite_id_string(ds, roles$entity_id, roles$entity_id_sep %||% " / ")
+    ds
 }
 
 # ---- M1 Completion ---------------------------------------------------------
 check_m1 <- function(ds, roles, modules) {
-  completion_var <- modules$M1$completion_var %||% NA_character_
-  complete_flag <- if (!is.na(completion_var) && completion_var %in% names(ds)) {
-    is_complete_value(ds[[completion_var]])
-  } else {
-    row_missing_ratio(ds, setdiff(names(ds), c(".hfc_row", ".hfc_id_display"))) <= 0.1
-  }
-  stats_overall <- completion_summary(complete_flag)
-  group_vars <- modules$M1$group_vars %||% character()
-  by_group <- lapply(group_vars[group_vars %in% names(ds)], function(gv) {
-    completion_summary(complete_flag, ds[[gv]]) %>%
-      mutate(group_var = gv, .before = 1) %>%
-      rename(value = group)
-  })
-  by_group_df <- if (length(by_group)) bind_rows(by_group) else tibble()
-  by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
-    completion_summary(complete_flag, ds[[roles$enum]]) %>% rename(enumerator = group)
-  } else tibble()
-  by_date_df <- if (isTRUE(modules$M1$by_date %||% TRUE) && !is.na(roles$start) && roles$start %in% names(ds)) {
-    d <- suppressWarnings(as.Date(as.character(ds[[roles$start]])))
-    completion_summary(complete_flag, as.character(d)) %>% rename(date = group) %>% arrange(desc(date))
-  } else tibble()
-  stats <- list(overall = stats_overall, by_group = by_group_df,
-                by_enumerator = by_enum_df, by_date = by_date_df)
-
-  findings <- empty_findings()
-  if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$group) && roles$group %in% names(ds)) {
-    pct_median <- modules$M1$pct_median %||% 0.5
-    counts <- ds %>% mutate(.complete = complete_flag) %>%
-      filter(.complete, !is.na(.data[[roles$group]])) %>%
-      group_by(.data[[roles$group]]) %>% summarise(n = n(), .groups = "drop")
-    if (nrow(counts) > 1) {
-      tgt <- stats::median(counts$n)
-      low_units <- counts[[roles$group]][counts$n < pct_median * tgt]
-      if (length(low_units)) {
-        flagged <- ds[as.character(ds[[roles$group]]) %in% as.character(low_units), , drop = FALSE]
-        findings <- mk_findings(
-          flagged, "low_completion", "M1", "low_completion",
-          sprintf("Site has fewer completed submissions than %.0f%% of the median", 100 * pct_median),
-          roles
-        )
-      }
+    completion_var <- modules$M1$completion_var %||% NA_character_
+    complete_flag <- if (!is.na(completion_var) && completion_var %in% names(ds)) {
+        is_complete_value(ds[[completion_var]])
+    } else {
+        row_missing_ratio(ds, setdiff(names(ds), c(".hfc_row", ".hfc_id_display"))) <= 0.1
     }
-  }
-  list(findings = findings, stats = stats)
+    stats_overall <- completion_summary(complete_flag)
+    group_vars <- modules$M1$group_vars %||% character()
+    by_group <- lapply(group_vars[group_vars %in% names(ds)], function(gv) {
+        completion_summary(complete_flag, ds[[gv]]) %>%
+        mutate(group_var = gv, .before = 1) %>%
+        rename(value = group)
+    })
+    by_group_df <- if (length(by_group)) bind_rows(by_group) else tibble()
+    by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
+        completion_summary(complete_flag, ds[[roles$enum]]) %>% rename(enumerator = group)
+    } else tibble()
+    by_date_df <- if (isTRUE(modules$M1$by_date %||% TRUE) && !is.na(roles$start) && roles$start %in% names(ds)) {
+        d <- suppressWarnings(as.Date(as.character(ds[[roles$start]])))
+        completion_summary(complete_flag, as.character(d)) %>% rename(date = group) %>% arrange(desc(date))
+    } else tibble()
+    stats <- list(overall = stats_overall, by_group = by_group_df,
+                    by_enumerator = by_enum_df, by_date = by_date_df)
+
+    findings <- empty_findings()
+    if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$group) && roles$group %in% names(ds)) {
+        pct_median <- modules$M1$pct_median %||% 0.5
+        counts <- ds %>% mutate(.complete = complete_flag) %>%
+        filter(.complete, !is.na(.data[[roles$group]])) %>%
+        group_by(.data[[roles$group]]) %>% summarise(n = n(), .groups = "drop")
+        if (nrow(counts) > 1) {
+        tgt <- stats::median(counts$n)
+        low_units <- counts[[roles$group]][counts$n < pct_median * tgt]
+        if (length(low_units)) {
+            flagged <- ds[as.character(ds[[roles$group]]) %in% as.character(low_units), , drop = FALSE]
+            findings <- mk_findings(
+            flagged, "low_completion", "M1", "low_completion",
+            sprintf("Site has fewer completed submissions than %.0f%% of the median", 100 * pct_median),
+            roles
+            )
+        }
+        }
+    }
+    list(findings = findings, stats = stats)
 }
 
 # ---- M2 Duplicates ----------------------------------------------------------
 check_m2 <- function(ds, roles, modules) {
-  findings <- empty_findings()
-  idc <- modules$M2$id %||% roles$entity_id
-  idc <- idc[!is.na(idc) & nzchar(as.character(idc)) & idc %in% names(ds)]
-  # Extra disambiguating columns (e.g. round/wave) confirmed at setup so
-  # an entity legitimately surveyed more than once isn't flagged as a
-  # duplicate — see roles$dup_key_extra / the duplicate-check-key gate.
-  extra <- modules$M2$extra_keys %||% character()
-  extra <- extra[!is.na(extra) & nzchar(as.character(extra)) & extra %in% names(ds)]
-  full_key <- c(idc, extra)
-  parts <- list()
-  if (length(full_key)) {
-    dups <- ds %>%
-      filter(if_all(all_of(full_key), ~ !is.na(.) & as.character(.) != "")) %>%
-      group_by(across(all_of(full_key))) %>%
-      filter(n() > 1) %>%
-      ungroup()
-    parts$m2 <- mk_findings(dups, "duplicates_id", "M2", "duplicates",
-                             "Duplicate submission ID", roles)
-    if (nrow(dups) == 0 && !is.na(roles$key) && roles$key %in% names(ds)) {
-      dups2 <- ds %>%
-        filter(!is.na(.data[[roles$key]]), as.character(.data[[roles$key]]) != "") %>%
-        group_by(.data[[roles$key]]) %>%
+    findings <- empty_findings()
+    idc <- modules$M2$id %||% roles$entity_id
+    idc <- idc[!is.na(idc) & nzchar(as.character(idc)) & idc %in% names(ds)]
+    # Extra disambiguating columns (e.g. round/wave) confirmed at setup so
+    # an entity legitimately surveyed more than once isn't flagged as a
+    # duplicate — see roles$dup_key_extra / the duplicate-check-key gate.
+    extra <- modules$M2$extra_keys %||% character()
+    extra <- extra[!is.na(extra) & nzchar(as.character(extra)) & extra %in% names(ds)]
+    full_key <- c(idc, extra)
+    parts <- list()
+    if (length(full_key)) {
+        dups <- ds %>%
+        filter(if_all(all_of(full_key), ~ !is.na(.) & as.character(.) != "")) %>%
+        group_by(across(all_of(full_key))) %>%
         filter(n() > 1) %>%
         ungroup()
-      parts$m2b <- mk_findings(dups2, "duplicates_key", "M2", "duplicates",
-                               "Duplicate survey KEY", roles)
+        parts$m2 <- mk_findings(dups, "duplicates_id", "M2", "duplicates",
+                                "Duplicate submission ID", roles)
+        if (nrow(dups) == 0 && !is.na(roles$key) && roles$key %in% names(ds)) {
+        dups2 <- ds %>%
+            filter(!is.na(.data[[roles$key]]), as.character(.data[[roles$key]]) != "") %>%
+            group_by(.data[[roles$key]]) %>%
+            filter(n() > 1) %>%
+            ungroup()
+        parts$m2b <- mk_findings(dups2, "duplicates_key", "M2", "duplicates",
+                                "Duplicate survey KEY", roles)
+        }
     }
-  }
-  if (length(parts)) findings <- bind_rows(parts)
-  list(findings = findings)
+    if (length(parts)) findings <- bind_rows(parts)
+    list(findings = findings)
 }
 
 # ---- M3 Form Version --------------------------------------------------------
 check_m3 <- function(ds, roles, modules) {
-  findings <- empty_findings()
-  stats <- NULL
-  version_col <- modules$M3$version_col %||% NA_character_
-  version_map <- modules$M3$version_map %||% list()
-  dcol <- roles$start
-  if (!is.na(version_col) && version_col %in% names(ds)) {
-    vc <- as.character(ds[[version_col]])
-    if (!is.na(dcol) && dcol %in% names(ds)) {
-      d <- suppressWarnings(as.Date(as.character(ds[[dcol]])))
-      by_version <- tibble(version = vc, date = d) %>%
-        filter(!is.na(version), nzchar(version)) %>%
-        group_by(version) %>%
-        summarise(n = n(), date_min = as.character(min(date, na.rm = TRUE)),
-                  date_max = as.character(max(date, na.rm = TRUE)), .groups = "drop")
-      stats <- by_version
+    findings <- empty_findings()
+    stats <- NULL
+    version_col <- modules$M3$version_col %||% NA_character_
+    version_map <- modules$M3$version_map %||% list()
+    dcol <- roles$start
+    if (!is.na(version_col) && version_col %in% names(ds)) {
+        vc <- as.character(ds[[version_col]])
+        if (!is.na(dcol) && dcol %in% names(ds)) {
+        d <- suppressWarnings(as.Date(as.character(ds[[dcol]])))
+        by_version <- tibble(version = vc, date = d) %>%
+            filter(!is.na(version), nzchar(version)) %>%
+            group_by(version) %>%
+            summarise(n = n(), date_min = as.character(min(date, na.rm = TRUE)),
+                    date_max = as.character(max(date, na.rm = TRUE)), .groups = "drop")
+        stats <- by_version
+        }
+        if (length(version_map) && !is.na(dcol) && dcol %in% names(ds)) {
+        d <- suppressWarnings(as.Date(as.character(ds[[dcol]])))
+        expected <- rep(NA_character_, nrow(ds))
+        for (vspec in version_map) {
+            d_start <- as.Date(vspec$date_start); d_end <- as.Date(vspec$date_end)
+            idx <- which(!is.na(d) & d >= d_start & d <= d_end)
+            expected[idx] <- vspec$version_label
+        }
+        mismatch <- !is.na(expected) & !is.na(vc) & nzchar(vc) & vc != expected
+        if (any(mismatch)) {
+            tmp <- ds[mismatch, , drop = FALSE]
+            tmp$.v <- sprintf("recorded=%s expected=%s", vc[mismatch], expected[mismatch])
+            findings <- mk_findings(
+            tmp, "form_version_mismatch", "M3", "form_version_mismatch",
+            "Recorded form version doesn't match the expected version for this date", roles, ".v",
+            variable_name = version_col
+            )
+        }
+        }
+    } else if (length(version_map)) {
+        rows <- lapply(version_map, function(v) {
+        tibble(version = v$version_label, date_start = v$date_start, date_end = v$date_end)
+        })
+        stats <- bind_rows(rows)
     }
-    if (length(version_map) && !is.na(dcol) && dcol %in% names(ds)) {
-      d <- suppressWarnings(as.Date(as.character(ds[[dcol]])))
-      expected <- rep(NA_character_, nrow(ds))
-      for (vspec in version_map) {
-        d_start <- as.Date(vspec$date_start); d_end <- as.Date(vspec$date_end)
-        idx <- which(!is.na(d) & d >= d_start & d <= d_end)
-        expected[idx] <- vspec$version_label
-      }
-      mismatch <- !is.na(expected) & !is.na(vc) & nzchar(vc) & vc != expected
-      if (any(mismatch)) {
-        tmp <- ds[mismatch, , drop = FALSE]
-        tmp$.v <- sprintf("recorded=%s expected=%s", vc[mismatch], expected[mismatch])
-        findings <- mk_findings(
-          tmp, "form_version_mismatch", "M3", "form_version_mismatch",
-          "Recorded form version doesn't match the expected version for this date", roles, ".v",
-          variable_name = version_col
-        )
-      }
-    }
-  } else if (length(version_map)) {
-    rows <- lapply(version_map, function(v) {
-      tibble(version = v$version_label, date_start = v$date_start, date_end = v$date_end)
-    })
-    stats <- bind_rows(rows)
-  }
-  list(findings = findings, stats = stats)
+    list(findings = findings, stats = stats)
 }
 
 # ---- M4 Survey Duration ------------------------------------------------------

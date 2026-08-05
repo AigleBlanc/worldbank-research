@@ -35,7 +35,7 @@ issue_tracking_header_map <- function() {
 }
 
 # Rename internal snake_case columns to their display header labels, for
-# writing to disk / uploading to OneDrive. Columns not in the map pass
+# writing to disk in the shared sync folder. Columns not in the map pass
 # through unchanged.
 rename_to_issue_tracking_headers <- function(tbl) {
     tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
@@ -45,8 +45,8 @@ rename_to_issue_tracking_headers <- function(tbl) {
     tbl
 }
 
-# Inverse of rename_to_issue_tracking_headers() — for reading from disk /
-# OneDrive back into internal snake_case names.
+# Inverse of rename_to_issue_tracking_headers() — for reading from disk
+# back into internal snake_case names.
 rename_from_issue_tracking_headers <- function(tbl) {
     tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
     hmap <- issue_tracking_header_map()
@@ -130,8 +130,7 @@ normalize_issue_tracking_status <- function(tbl) {
 
 # Normalize Status, fill/reorder to the canonical column set, and rename to
 # display header labels — the one shared prep step every writer (local xlsx,
-# local csv, OneDrive upload) must apply identically so the live file is
-# never inconsistent depending on which backend wrote it.
+# local csv) must apply identically so the live file stays consistent.
 prepare_tracking_display <- function(tbl) {
     tbl <- normalize_issue_tracking_status(tbl)
     cols <- names(issue_tracking_header_map())
@@ -814,7 +813,7 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     map_html,
     "<section id='all' class='card'><h2>All findings</h2>", all_tbl, "</section>",
     "<p class='note footer'>Field edits go in the shared <code>issue_tracking.xlsx</code> in your ",
-    "OneDrive folder (see <code>hfc-fieldloop/assets/lib/onedrive.json</code>). When ready, say ",
+    "OneDrive-synced folder (see <code>hfc-fieldloop/assets/lib/sync_folder.json</code>). When ready, say ",
     "<strong>Process HFC feedback</strong>.</p>",
     "</main>",
     "<script>

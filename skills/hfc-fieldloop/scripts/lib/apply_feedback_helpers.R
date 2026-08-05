@@ -16,8 +16,8 @@ sanitize_finding_id <- function(finding_id) gsub("[^A-Za-z0-9_.-]", "_", finding
 #' Create today's resolutions/<date> clone from the current issue_tracking.xlsx,
 #' unless today's clone already exists (a same-day second pass reuses it
 #' rather than discarding in-progress Status/Corrections edits).
-clone_for_resolution_pass <- function(project_root, skill_dir = NULL, date = Sys.Date(), force_local = FALSE) {
-  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir, force_local = force_local)
+clone_for_resolution_pass <- function(project_root, skill_dir = NULL, date = Sys.Date()) {
+  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir)
   existing <- read_resolution_clone(ctx, date = date)
   if (!is.null(existing)) {
     return(list(status = "reused", n = nrow(existing)))
@@ -30,18 +30,17 @@ clone_for_resolution_pass <- function(project_root, skill_dir = NULL, date = Sys
 #' Status=Open + non-empty RIL Comment rows from today's resolutions clone,
 #' with full row context for the agent to read directly — Issue, RIL
 #' Comment, Entity ID, Variable, Value, Issue Category, etc.
-list_open_commented_rows <- function(project_root, skill_dir = NULL, date = Sys.Date(), force_local = FALSE) {
+list_open_commented_rows <- function(project_root, skill_dir = NULL, date = Sys.Date()) {
   suppressPackageStartupMessages({ library(dplyr) })
-  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir, force_local = force_local)
+  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir)
   clone <- read_resolution_clone(ctx, date = date)
   if (is.null(clone)) stop("No resolutions/ clone for today — run clone_for_resolution_pass() first.")
   clone %>% filter(toupper(as.character(status)) == "OPEN", nzchar(as.character(ril_comment)))
 }
 
 #' Update one row's Status/Corrections in today's resolutions clone only.
-.update_clone_row <- function(project_root, skill_dir, date, finding_id, new_status, corrections_text = NULL,
-                               force_local = FALSE) {
-  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir, force_local = force_local)
+.update_clone_row <- function(project_root, skill_dir, date, finding_id, new_status, corrections_text = NULL) {
+  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir)
   clone <- read_resolution_clone(ctx, date = date)
   if (is.null(clone)) stop("No resolutions/ clone for today — run clone_for_resolution_pass() first.")
   if (!finding_id %in% clone$finding_id) stop("Issue ID not found in today's resolutions clone: ", finding_id)
@@ -57,8 +56,7 @@ list_open_commented_rows <- function(project_root, skill_dir = NULL, date = Sys.
 #' after interpreting the row's RIL Comment. This loads the latest dataset,
 #' applies the fix, writes data/intermediate/<stem>.<ext>, and records the
 #' Corrections text + Status = "Resolved" in today's resolutions clone.
-apply_one_fix <- function(project_root, finding_id, corrections_text, skill_dir = NULL, date = Sys.Date(),
-                           force_local = FALSE) {
+apply_one_fix <- function(project_root, finding_id, corrections_text, skill_dir = NULL, date = Sys.Date()) {
   fixes_dir <- hfc_path(project_root, "code", "resolutions")
   fix_file <- file.path(fixes_dir, paste0(sanitize_finding_id(finding_id), ".R"))
   if (!file.exists(fix_file)) {
@@ -81,14 +79,14 @@ apply_one_fix <- function(project_root, finding_id, corrections_text, skill_dir 
   fixed_ds <- env$fix(ds)
   out_path <- write_intermediate(fixed_ds, project_root, stem, ext)
 
-  .update_clone_row(project_root, skill_dir, date, finding_id, "Resolved", corrections_text, force_local = force_local)
+  .update_clone_row(project_root, skill_dir, date, finding_id, "Resolved", corrections_text)
 
   list(status = "ok", intermediate_path = out_path, fix_file = fix_file)
 }
 
 #' The agent couldn't confidently resolve this row — mark it for human
 #' follow-up instead of leaving it stuck on Open.
-mark_needs_review <- function(project_root, finding_id, skill_dir = NULL, date = Sys.Date(), force_local = FALSE) {
-  .update_clone_row(project_root, skill_dir, date, finding_id, "Needs Review", force_local = force_local)
+mark_needs_review <- function(project_root, finding_id, skill_dir = NULL, date = Sys.Date()) {
+  .update_clone_row(project_root, skill_dir, date, finding_id, "Needs Review")
   list(status = "ok")
 }

@@ -131,7 +131,6 @@
             <li><span class="name">SKILL.md</span><span class="meta">agent contract</span></li>
             <li><span class="name">README.md</span><span class="meta">product docs</span></li>
             <li><span class="name">install.R</span><span class="meta">CRAN deps</span></li>
-            <li><span class="name">setup_onedrive_auth.R</span><span class="meta">one-time interactive sign-in, run by the user</span></li>
             <li><span class="name">structure.html</span><span class="meta">this map</span></li>
             <li><span class="name">.gitignore</span></li>
             <li class="dir"><span class="name">references/</span>
@@ -160,7 +159,7 @@
                 </li>
                 <li class="dir"><span class="name">lib/</span>
                   <ul>
-                    <li>onedrive.json <span class="meta">the only OneDrive config that matters — edit directly</span></li>
+                    <li>sync_folder.json <span class="meta">the only OneDrive config that matters — edit directly</span></li>
                   </ul>
                 </li>
               </ul>
@@ -177,7 +176,7 @@
                     <li>utils.R, discover.R, media.R, profile_roles.R</li>
                     <li>form_logic.R, product_structure.R, geo_timezone.R</li>
                     <li>run_checks.R, build_outputs.R</li>
-                    <li>onedrive_drive.R, issue_store.R, apply_feedback_helpers.R</li>
+                    <li>sync_folder.R, issue_store.R, apply_feedback_helpers.R</li>
                   </ul>
                 </li>
               </ul>
@@ -196,7 +195,7 @@
 
     <details>
       <summary>After drop-in (project root)</summary>
-      <p>The survey project gains an <code>hfc/</code> product tree: <code>config/</code>, <code>instruments/</code>, <code>registry/</code>, <code>outputs/</code> (<code>report.html</code>), and <code>code/</code> — with <code>code/checks/</code> (real, runnable per-module scripts + custom) and <code>code/resolutions/</code> (post-feedback fix scripts) — plus <code>structure.html</code> and <code>project.yaml</code>. Raw data stays under <code>data/raw/</code>; agent-authored fixes write to <code>data/intermediate/</code> instead. Open <code>hfc/structure.html</code> in a browser and confirm Continue before the full build. <code>issue_tracking.xlsx</code> is the single shared tracking file — it lives entirely in OneDrive (required, no local fallback) — see <code>references/issue_tracking_schema.md</code>.</p>
+      <p>The survey project gains an <code>hfc/</code> product tree: <code>config/</code>, <code>instruments/</code>, <code>registry/</code>, <code>outputs/</code> (<code>report.html</code>), and <code>code/</code> — with <code>code/checks/</code> (real, runnable per-module scripts + custom) and <code>code/resolutions/</code> (post-feedback fix scripts) — plus <code>structure.html</code> and <code>project.yaml</code>. Raw data stays under <code>data/raw/</code>; agent-authored fixes write to <code>data/intermediate/</code> instead. Open <code>hfc/structure.html</code> in a browser and confirm Continue before the full build. <code>issue_tracking.xlsx</code> is the single shared tracking file — it lives entirely in a folder synced by the OneDrive desktop app (required, no local-only fallback) — see <code>references/issue_tracking_schema.md</code>.</p>
     </details>
 
     <footer>HFC FieldLoop · structure map · update when layout changes</footer>

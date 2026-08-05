@@ -1,7 +1,8 @@
 # Setup build for a drop-in project root.
 # Rscript run_setup_build.R <project_root> [--open] [--sample N]
-# OneDrive must already be configured and signed in (see setup_onedrive_auth.R)
-# — there is no local-only mode.
+# A shared sync folder must already be configured (assets/lib/sync_folder.json's
+# local_path pointed at a folder the OneDrive desktop app is syncing) — there
+# is no local-only mode.
 #
 # Reads optional hfc/config/modules.yaml; otherwise uses profile defaults.
 # All product artifacts land under <project_root>/hfc/.
@@ -43,7 +44,7 @@ source(file.path(lib, "form_logic.R"))
 source(file.path(lib, "run_checks.R"))
 source(file.path(lib, "build_outputs.R"))
 source(file.path(lib, "product_structure.R"))
-source(file.path(lib, "onedrive_drive.R"))
+source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 
 # Step 2: parse CLI args — project root + flags.
@@ -66,9 +67,10 @@ suppressPackageStartupMessages({
     library(yaml); library(jsonlite); library(lubridate); library(tibble)
 })
 
-# Step 2b: OneDrive is required — no local fallback. Fail fast, before any
-# other work, with setup instructions rather than silently proceeding.
-require_onedrive_ready(project_root, skill)
+# Step 2b: a configured shared sync folder is required — no local fallback.
+# Fail fast, before any other work, with setup instructions rather than
+# silently proceeding.
+require_sync_folder_ready(project_root, skill)
 
 # Step 3: scaffold hfc/ and drop the skill-tree browser page.
 message("Project root: ", project_root)
@@ -216,8 +218,8 @@ readr::write_csv(findings, hfc_path(project_root, "registry", "findings.csv"))
 write_check_scripts(project_root, modules, skill_dir = skill)
 write_main_r(project_root, skill_dir = skill)
 
-# Step 17: fetch the live issue_tracking.xlsx from OneDrive (see
-# scripts/lib/issue_store.R), write this run's fresh findings as today's
+# Step 17: fetch the live issue_tracking.xlsx from the shared sync folder
+# (see scripts/lib/issue_store.R), write this run's fresh findings as today's
 # intermediate/ snapshot, then either commit directly (first-ever run —
 # nothing to merge against) or merge and stop for the agent to confirm (a
 # prior file exists: merging must never silently overwrite field/RA/agent
@@ -237,14 +239,12 @@ if (is.null(ctx$tbl)) {
     issue_tracking_status <- "merge_pending"
 }
 
-drive <- list(status = ctx$backend, reason = ctx$reason %||% "", url = NA_character_)
-
-# Step 18: mirror the skill's OneDrive config into hfc/ for the record (this
-# copy is informational only — the live config always stays in the skill's
-# own assets/lib/onedrive.json).
-drv_cfg <- load_onedrive_config(project_root, skill)
+# Step 18: mirror the skill's sync-folder config into hfc/ for the record
+# (this copy is informational only — the live config always stays in the
+# skill's own assets/lib/sync_folder.json).
+drv_cfg <- load_sync_folder_config(project_root, skill)
 if (isTRUE(drv_cfg$found)) {
-    cfg_dest <- hfc_path(project_root, "config", "onedrive.json")
+    cfg_dest <- hfc_path(project_root, "config", "sync_folder.json")
     dir.create(dirname(cfg_dest), showWarnings = FALSE, recursive = TRUE)
     if (!identical(normalizePath(drv_cfg$path, mustWork = FALSE),
                     normalizePath(cfg_dest, mustWork = FALSE))) {
@@ -252,8 +252,8 @@ if (isTRUE(drv_cfg$found)) {
     }
 }
 
-# Step 19: assemble the project's own metadata file (data path, OneDrive
-# links, config pointers) — written after the report link is known below.
+# Step 19: assemble the project's own metadata file (data path, config
+# pointers) — written after the report copy is done below.
 project_id <- basename(project_root)
 proj_yaml <- list(
     project_id = project_id,
@@ -262,9 +262,8 @@ proj_yaml <- list(
     report_type = "html",
     map_focus = report_cfg$map_focus %||% "country",
     shiny_later = TRUE,
-    issue_tracking_backend = ctx$backend,
     issue_tracking_merge_pending = merge_pending,
-    onedrive_config = "hfc-fieldloop/assets/lib/onedrive.json",
+    sync_folder_config = "hfc-fieldloop/assets/lib/sync_folder.json",
     created = as.character(Sys.time()),
     n_findings = nrow(findings)
 )
@@ -276,20 +275,20 @@ html_path <- write_html_report(
     stats = stats
 )
 
-# Step 21: upload the report to OneDrive and get its shareable URL, then
-# finish + persist project.yaml now that the link is known.
-report_link <- upload_report_and_get_link(project_root, project_id, skill_dir = skill, html_path)
-proj_yaml$report_onedrive_url <- report_link$url %||% NA
+# Step 21: copy the report into the OneDrive-synced folder (passive sharing
+# — OneDrive's own sync client propagates it to the cloud from there), then
+# finish + persist project.yaml.
+report_copy <- copy_report_to_sync_folder(project_root, project_id, skill_dir = skill, html_path)
 yaml::write_yaml(proj_yaml, hfc_path(project_root, "project.yaml"))
 
 message("Done. HTML: ", html_path)
 message("Product root: ", hfc_root(project_root))
-message("Issue tracking backend: ", ctx$backend, " (", drive$reason %||% "", ")")
+message("Issue tracking folder: ", ctx$local_dir %||% "(unavailable)", " (", ctx$reason %||% "", ")")
 if (merge_pending) {
     message("MERGE_PENDING: review merged_issue_tracking.xlsx before overwriting issue_tracking.xlsx.")
     message("  Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R \"<project_root>\" merged_issue_tracking.xlsx")
 } else {
     message("issue_tracking.xlsx created fresh (first build).")
 }
-message("Report link: ", report_link$status, " (", report_link$reason %||% "", ") ", report_link$url %||% "(none)")
+message("Report copy: ", report_copy$status, " (", report_copy$reason %||% "", ") ", report_copy$dest_path %||% "(none)")
 message("When field edits issue_tracking, run: Process HFC feedback")

@@ -36,12 +36,8 @@ Rscript .claude/skills/hfc-fieldloop/install.R
 ```
 
 **b) Set up OneDrive** (required, so the field team, RA, and agent all share one live `issue_tracking.xlsx`):
-1. Open `.claude/skills/hfc-fieldloop/assets/lib/onedrive.json` and set `"enabled": true`. Pick a `folder_path` (e.g. `"HFC Reports"`) — this is where things will be stored in your OneDrive.
-2. Sign in once, yourself, outside of Claude Code, in a normal R or RStudio session:
-   ```bash
-   Rscript .claude/skills/hfc-fieldloop/setup_onedrive_auth.R
-   ```
-   This opens a browser login. After this one time, the agent can read/write that OneDrive folder automatically — no further sign-ins needed.
+1. Make sure the OneDrive desktop app is installed and signed in on this machine, and note the local folder it syncs to.
+2. Open `.claude/skills/hfc-fieldloop/assets/lib/sync_folder.json`, set `"enabled": true`, and set `"local_path"` to that folder's absolute path (e.g. `"/Users/you/OneDrive - Your Org/HFC Reports"`). There's no sign-in step — the agent reads/writes that folder like any other local folder, and OneDrive's own sync client handles getting it to the cloud.
 3. Share that OneDrive folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
 
 If OneDrive isn't set up yet, the agent will tell you and stop before doing any real work — do these steps first.
@@ -100,7 +96,7 @@ You don't have to set `Accepted` before the agent will act — it picks up any `
 | What | Where |
 |---|---|
 | HTML report | `hfc/outputs/report.html` |
-| Shared tracking file | `issue_tracking.xlsx` — in your OneDrive folder (required, no local copy) |
+| Shared tracking file | `issue_tracking.xlsx` — in your OneDrive-synced folder (required, no local copy) |
 | Fixed data (raw is never touched) | `data/intermediate/` |
 | Your original data | `data/raw/` — never modified |
 

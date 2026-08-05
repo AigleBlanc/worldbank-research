@@ -5,7 +5,7 @@
 # file and confirms via AskUserQuestion, then runs
 # commit_merged_issue_tracking.R to actually replace issue_tracking.xlsx.
 #
-# Usage: Rscript merge_resolutions.R <project_root>   (OneDrive must already be configured)
+# Usage: Rscript merge_resolutions.R <project_root>   (a shared sync folder must already be configured)
 
 `%||%` <- function(a, b) {
   if (is.null(a) || length(a) == 0) return(b)
@@ -27,14 +27,14 @@ skill <- .resolve_skill()
 lib <- file.path(skill, "scripts", "lib")
 source(file.path(lib, "utils.R"))
 source(file.path(lib, "build_outputs.R"))
-source(file.path(lib, "onedrive_drive.R"))
+source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
 if (!length(args)) stop("Usage: merge_resolutions.R <project_root>")
 project_root <- normalizePath(decode_file_arg(args[[1]]))
 
-require_onedrive_ready(project_root, skill)
+require_sync_folder_ready(project_root, skill)
 ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
 current <- ctx$tbl
 if (is.null(current)) stop("No issue_tracking.xlsx found — run the setup build first.")

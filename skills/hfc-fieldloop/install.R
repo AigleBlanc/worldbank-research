@@ -4,8 +4,7 @@
 
 core <- c(
     "haven", "readr", "readxl", "dplyr", "tidyr", "tibble", "stringr",
-    "lubridate", "openxlsx", "yaml", "jsonlite",
-    "Microsoft365R"  # OneDrive is required — issue tracking has no local fallback
+    "lubridate", "openxlsx", "yaml", "jsonlite"
 )
 recommended <- c("geosphere")
 

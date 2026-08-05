@@ -33,7 +33,8 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 
 - R version tested:
 - Install: `Rscript .claude/skills/hfc-fieldloop/install.R`
-- Core packages: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite, Microsoft365R (OneDrive is required — no local fallback)
+- Core packages: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite
+- OneDrive (required, no local fallback) — accessed as a plain local folder synced by the OneDrive desktop app, no extra package needed
 - Optional: geosphere (GPS distance)
 
 ## Instructions
@@ -43,7 +44,7 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 1. Place `.claude/skills/hfc-fieldloop/` in the survey project; put microdata (+ optional form) in `data/raw/`.
 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 3. In VS Code + Claude Code: **Run HFC FieldLoop** or `/hfc-fieldloop` (add `for <project>` in a monorepo). Choose AskUserQuestion option cards; use **Other** for custom answers — do not type `M1=Y M2=…`.
-4. `issue_tracking.xlsx` lives in a shared OneDrive folder (required — no local fallback) — access to that folder is set up once, by hand, via OneDrive's own sharing UI, and someone must have already completed the one-time interactive sign-in via `setup_onedrive_auth.R` before the first build.
+4. `issue_tracking.xlsx` lives in a shared OneDrive-synced folder (required — no local fallback): make sure the OneDrive desktop app is installed and signed in, then edit `.claude/skills/hfc-fieldloop/assets/lib/sync_folder.json` — set `"enabled": true` and `"local_path"` to that folder's absolute path. Access is shared with collaborators once, by hand, via OneDrive's own sharing UI.
 
 CLI equivalent after modules confirmed:
 
@@ -71,9 +72,8 @@ Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R . me
 |---|---|---|
 | Product map | `hfc/structure.html` | Review tree in browser before Continue |
 | HTML report | `hfc/outputs/report.html` | Navigable findings (searchable tables, GPS map) |
-| Issue tracking | OneDrive `issue_tracking.xlsx` (required, no local copy) | The one shared file — agent, RA, and field team all edit it |
+| Issue tracking | OneDrive-synced `issue_tracking.xlsx` (required, no local copy) | The one shared file — agent, RA, and field team all edit it |
 | Findings | `hfc/registry/findings.csv` | Machine-readable findings |
-| Report link | `hfc/project.yaml` → `report_onedrive_url` | Shareable link to the built report |
 | Fixed data | `data/intermediate/<stem>.<ext>` | After Pipeline B; raw unchanged |
 
 ## Folder structure

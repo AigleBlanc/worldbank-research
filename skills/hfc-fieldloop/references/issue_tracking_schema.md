@@ -1,8 +1,8 @@
 # Issue tracking schema
 
-Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (RIL Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in OneDrive — **required, no local fallback**: the folder named in `assets/lib/onedrive.json` (inside the runner's own individual OneDrive for Business — no SharePoint site or Team needed) is the sole store. Every read fetches current state, every write commits back, and there is never a local copy of it anywhere under `hfc/`. Every user-facing script calls `require_onedrive_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if OneDrive isn't reachable — see `SKILL.md`'s A0c.
+Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (RIL Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in a folder the OneDrive desktop app keeps synced to the cloud — **required, no local-only fallback**: `local_path` in `assets/lib/sync_folder.json` points at that folder, and every read/write is plain file I/O against it; OneDrive's own sync client (not this skill) is what propagates changes to/from the cloud. There is never a separate local-only copy anywhere under `hfc/`. Every user-facing script calls `require_sync_folder_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if the folder isn't configured/reachable — see `SKILL.md`'s A0c.
 
-Two dated-snapshot subfolders live alongside the live file, inside the same OneDrive folder:
+Two dated-snapshot subfolders live alongside the live file, inside the same synced folder:
 
 | Subfolder | Filename | Written by | Purpose |
 |---|---|---|---|
@@ -75,23 +75,19 @@ The live `issue_tracking.xlsx` is never overwritten silently — two different m
 
 ## Config
 
-One file, one rule: `hfc-fieldloop/assets/lib/onedrive.json` — the only config that matters, edited directly. No per-project override; every project using this skill copy shares it. Ships `"enabled": false` by default — must be turned on before first use:
+One file, one rule: `hfc-fieldloop/assets/lib/sync_folder.json` — the only config that matters, edited directly. No per-project override; every project using this skill copy shares it. Ships `"enabled": false` by default — must be turned on before first use:
 ```json
 {
   "enabled": true,
-  "folder_path": "HFC Reports",
+  "local_path": "/Users/you/OneDrive - Your Org/HFC Reports",
   "main_file": "issue_tracking.xlsx"
 }
 ```
-`"enabled": false` (or the file missing) → every user-facing script's `require_onedrive_ready()` pre-flight `stop()`s with setup instructions rather than proceeding. There's no site/tenant URL to configure — `Microsoft365R::get_business_onedrive()` connects to whichever account signs in.
+`local_path` must be an absolute path to a folder the OneDrive desktop app is already syncing on this machine (it's created automatically if the sync client hasn't materialized it yet). `"enabled": false` (or the file missing, or `local_path` empty) → every user-facing script's `require_sync_folder_ready()` pre-flight `stop()`s with setup instructions rather than proceeding.
 
-**Auth:** delegated, one-time interactive sign-in — no secrets stored in this package. Run `Rscript setup_onedrive_auth.R` **once, yourself, in a normal interactive R/RStudio session** — this cannot be done from inside a non-interactive Claude-Code-driven run. `Microsoft365R`/`AzureAuth` then cache the token locally and refresh it silently on every later run. This connects to the runner's own OneDrive — no SharePoint site or Team needs to exist.
+Share the OneDrive **folder** (not the individual file) with collaborators via the normal OneDrive "Specific people" sharing UI, once, before relying on this — this skill never mints its own share links, it just reads/writes whatever folder access has already been configured.
 
-Share the OneDrive **folder** (not the individual file) with collaborators via the normal OneDrive "Specific people" sharing UI, once, before relying on this — the code never mints its own share links, it just uploads into whatever folder access has already been configured.
-
-`hfc/project.yaml` stores `issue_tracking_backend` (always `onedrive` in normal use) and `issue_tracking_merge_pending` (whether a rebuild is waiting on a merge confirm) plus `report_onedrive_url` (the report's own URL).
-
-**Internal-only local backend:** `scripts/lib/issue_store.R` still contains a `"local"` code path, but it is never reachable from any CLI flag, AskUserQuestion, or documented workflow — it exists purely so this skill's own test suite can exercise the tracking/merge logic without a live OneDrive connection. See the file's header comment.
+`hfc/project.yaml` stores `issue_tracking_merge_pending` (whether a rebuild is waiting on a merge confirm).
 
 **Migrating from the old dual-twin design:** if a project still has `issue_resolution.xlsx`/`.csv` from a prior version of this skill, there's no automated migration — those files simply stop being written; manually fold anything still relevant into `issue_tracking.xlsx` and delete them.
 

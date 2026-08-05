@@ -90,7 +90,7 @@ write_product_structure_html <- function(project_root, open = FALSE) {
                 <li class="dir"><span class="name">config/</span>
                   <ul>
                     <li>modules.yaml · role_map.yaml</li>
-                    <li>onedrive.json · module_cards.txt</li>
+                    <li>sync_folder.json · module_cards.txt</li>
                   </ul>
                 </li>
                 <li class="dir"><span class="name">instruments/</span><span class="meta">optional form copy</span></li>

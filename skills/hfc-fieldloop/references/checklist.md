@@ -24,9 +24,8 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 | Item | Notes |
 |---|---|
-| `assets/lib/onedrive.json` with `"enabled": true` + `folder_path` | Skill-level config, no per-project override |
-| OneDrive pre-flight (A0c) passes before any real work starts | No local-only mode — `require_onedrive_ready()` stops the build otherwise |
-| One-time interactive sign-in via `setup_onedrive_auth.R`, run by the user outside Claude Code | Token then cached and auto-refreshed; no secrets stored in this package |
+| `assets/lib/sync_folder.json` with `"enabled": true` + `local_path` | Skill-level config, no per-project override — `local_path` is the OneDrive desktop app's synced local folder |
+| OneDrive pre-flight (A0c) passes before any real work starts | No local-only mode — `require_sync_folder_ready()` stops the build otherwise |
 | Folder shared with collaborators via OneDrive's own "Specific people" UI (once, by hand) | Code never mints its own share links |
 
 ## After post-feedback
@@ -44,7 +43,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 - [ ] Report tables searchable; GPS map present when M8 on; flagged points render in a distinct color from non-flagged points
 - [ ] Last Day tab present and populated when a last date was confirmed; matching findings bolded in their own module tables
 - [ ] Every table sorted by enumerator, then unique ID, then date (most recent first)
-- [ ] `issue_tracking.xlsx`, plus the report link, reachable from the shared OneDrive folder
+- [ ] `issue_tracking.xlsx`, plus a copy of the report, present in the shared OneDrive-synced folder
 - [ ] Grep: no hardcoded user home paths outside `hfc/code/main.R`
 - [ ] If survey has pictures/audio: M12 on; filename cols not mis-filed under M13
 - [ ] Nested skip-logic blanks not flagged as missing when form available

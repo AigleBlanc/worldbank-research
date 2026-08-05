@@ -1,0 +1,5 @@
+{
+    "enabled": false,
+    "local_path": "<absolute path to your OneDrive-synced folder>",
+    "main_file": "issue_tracking.xlsx"
+}

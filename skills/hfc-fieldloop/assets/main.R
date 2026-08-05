@@ -7,9 +7,9 @@
 # Normal use is entirely through chat ("Run HFC FieldLoop", "Process HFC
 # feedback") — the agent runs every command below for you. This file is a
 # reference/cheat-sheet for running any step by hand from a terminal.
-# OneDrive must already be configured and signed in (assets/lib/onedrive.json
-# "enabled": true + setup_onedrive_auth.R) — every script below requires it,
-# there is no local-only mode.
+# A shared sync folder must already be configured (assets/lib/sync_folder.json
+# "enabled": true + "local_path" pointed at a folder the OneDrive desktop app
+# is syncing) — every script below requires it, there is no local-only mode.
 
 # Load libraries ----
 # Prefer: Rscript hfc-fieldloop/install.R  (once per machine)

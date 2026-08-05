@@ -23,7 +23,8 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 ## Software requirements
 
 > - R ≥ 4.3 (tested with R 4.4 on macOS)
-> - `Rscript .claude/skills/hfc-fieldloop/install.R` installs: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite, Microsoft365R (OneDrive is required); geosphere is optional (GPS distance)
+> - `Rscript .claude/skills/hfc-fieldloop/install.R` installs: haven, readr, readxl, dplyr, tidyr, tibble, stringr, lubridate, openxlsx, yaml, jsonlite; geosphere is optional (GPS distance)
+> - OneDrive is required — a plain local folder synced by the OneDrive desktop app, no extra R package needed
 
 [Why this works: install entrypoint and package list, not a vague “R packages”.]
 
@@ -32,7 +33,7 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 > 1. Confirm `.claude/skills/hfc-fieldloop/` is installed and `data/raw/` is ready.
 > 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 > 3. In Claude Code (VS Code): **Run HFC FieldLoop** or `/hfc-fieldloop` (add `for <project>` if the workspace is a monorepo). The agent first confirms OneDrive is reachable (required — stops with setup instructions if not), then walks through config reuse (if a prior run exists), data, **required fields (Entity ID, Entity Label, duplicate-check key, country/timezone, last date)**, modules, additional checks, `hfc/structure.html` Continue, and feedback columns — use **Other** when needed. Do not type `M1=Y M2=…`.
-> 4. Open `hfc/outputs/report.html` (builder may auto-open). Field/RA edit `issue_tracking.xlsx` directly in the shared OneDrive folder (access set up once, by hand).
+> 4. Open `hfc/outputs/report.html` (builder may auto-open). Field/RA edit `issue_tracking.xlsx` directly in the shared OneDrive-synced folder (access set up once, by hand).
 > 5. Later: **Process HFC feedback** once RIL Comments exist on Open rows in `issue_tracking.xlsx` — the agent reads each row and writes the fix itself, against a working clone, then merges back after confirmation (choose options to proceed).
 >
 > CLI after `hfc/config/modules.yaml` exists:
@@ -48,8 +49,8 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 
 > - `hfc/structure.html` — product tree (review before Continue)
 > - `hfc/outputs/report.html` — findings by module (searchable tables, GPS map)
-> - OneDrive `issue_tracking.xlsx` (required, no local copy) — the one shared file; agent, RA, and field team all edit it
-> - `.claude/skills/hfc-fieldloop/assets/lib/onedrive.json` — `enabled`/`folder_path`/`main_file`; skill-level, not per-project
+> - OneDrive-synced `issue_tracking.xlsx` (required, no local copy) — the one shared file; agent, RA, and field team all edit it
+> - `.claude/skills/hfc-fieldloop/assets/lib/sync_folder.json` — `enabled`/`local_path`/`main_file`; skill-level, not per-project
 > - `hfc/registry/findings.csv` — stable, content-derived Issue IDs
 
 ## Folder structure

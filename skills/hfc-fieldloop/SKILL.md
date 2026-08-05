@@ -69,7 +69,7 @@ Helpers (prefer `Rscript` rather than reimplementing):
 1. Phases that write files wait for explicit AskUserQuestion confirmation (no silent proceed).
 2. Never mutate original microdata in `data/raw/` — agent-authored fixes write to `data/intermediate/<stem>.<ext>` instead (one evolving file, sibling of `data/raw/`).
 3. Confirm via **option cards**, not free-text module strings. Max ~8–12 cards after data confirm — never 100 per-column questions.
-4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). OneDrive is **required** (no local fallback in the product — see A0c): once `assets/lib/onedrive.json` has `"enabled": true` and the user has signed in, that file's folder in the runner's own individual OneDrive for Business (no SharePoint site or Team needed) is the **sole store** — every read fetches current state, every write commits back, and there is never a local copy. Two dated-snapshot subfolders live alongside it, inside the same OneDrive folder: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/onedrive.json` — the only file that matters, edited directly, no per-project override. Auth is delegated one-time interactive sign-in (`setup_onedrive_auth.R`, run once by the user outside Claude Code) — no secrets stored in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
+4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). OneDrive is **required** (no local fallback in the product — see A0c): once `assets/lib/sync_folder.json` has `"enabled": true` and `"local_path"` pointed at a folder the OneDrive desktop app is syncing, that folder is the **sole store** — every read/write is plain file I/O against it, and OneDrive's own sync client (not this skill) propagates changes to the cloud, so there is never a separate local-only copy. Two dated-snapshot subfolders live alongside it, inside the same synced folder: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/sync_folder.json` — the only file that matters, edited directly, no per-project override, no auth step or secrets in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
 5. After HTML build, auto-open with `utils::browseURL()` (or OS `open`).
 6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **selected** options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed (step 8 below).
 7. M11 (Survey-Specific) has no built-in checks and defaults to **off / empty** — every M11 finding comes from a custom check the agent writes for this survey's specific content, driven entirely by what the user describes at the Additional-checks gate (step 8).
@@ -109,10 +109,10 @@ Immediately after project root is resolved, check whether `hfc/config/role_map.y
 
 ### A0c. OneDrive pre-flight (mandatory, every run)
 
-OneDrive is required — there is no local-only mode. Before proceeding to A1, verify it's configured and reachable: `assets/lib/onedrive.json` must have `"enabled": true` with a real `folder_path`, and the connection must actually succeed (this is exactly what `require_onedrive_ready()` in `scripts/lib/issue_store.R` checks — every CLI script in this skill calls it automatically and `stop()`s with the same instructions below, so this gate is also enforced in code, not just in this doc).
+OneDrive is required — there is no local-only mode. It's accessed as a plain local folder that the OneDrive desktop app keeps synced to the cloud, not via any API/sign-in — so before proceeding to A1, verify it's configured and reachable: `assets/lib/sync_folder.json` must have `"enabled": true` with a real `local_path` pointing at an existing (or creatable) local directory (this is exactly what `require_sync_folder_ready()` in `scripts/lib/issue_store.R` checks — every CLI script in this skill calls it automatically and `stop()`s with the same instructions below, so this gate is also enforced in code, not just in this doc).
 
 - **If it's already configured and reachable:** say so briefly in chat (name the configured folder) and continue to A1 — no AskUserQuestion needed, there's no choice to make.
-- **If it isn't configured, or the connection fails:** stop here. Tell the user, in this order: (1) run `Rscript <skill_dir>/install.R` if packages might be missing, (2) edit `assets/lib/onedrive.json` — set `"enabled": true` and a `folder_path` — this is skill-level config, applies to every project using this skill copy, (3) run `Rscript <skill_dir>/setup_onedrive_auth.R` themselves, once, outside Claude Code (interactive browser/device-code sign-in — cannot be completed from a non-interactive `Rscript` call, and connects to their own OneDrive, not a shared site). Do not proceed with Pipeline A or B until they confirm this is done and the pre-flight succeeds.
+- **If it isn't configured, or the path isn't reachable:** stop here. Tell the user, in this order: (1) run `Rscript <skill_dir>/install.R` if packages might be missing, (2) make sure the OneDrive desktop app is installed and signed in on this machine, and note the local folder it syncs to, (3) edit `assets/lib/sync_folder.json` — set `"enabled": true` and `"local_path"` to that folder's absolute path — this is skill-level config, applies to every project using this skill copy. Do not proceed with Pipeline A or B until they confirm this is done and the pre-flight succeeds.
 
 ### A1. Discover data + survey
 
@@ -154,7 +154,7 @@ OneDrive is required — there is no local-only mode. Before proceeding to A1, v
 
 ### A4. Build
 
-1. **OneDrive — informational, not a gate here:** A0c already confirmed OneDrive is configured and reachable before A1 even started, so there's no choice left to make. State the configured folder inline in chat ("Using your configured OneDrive folder: `<folder_path>`") and move on — no AskUserQuestion.
+1. **OneDrive — informational, not a gate here:** A0c already confirmed OneDrive is configured and reachable before A1 even started, so there's no choice left to make. State the configured folder inline in chat ("Using your configured OneDrive folder: `<local_path>`") and move on — no AskUserQuestion.
 2. **AskUserQuestion — Issue tracking columns:** Keep the standard columns (recommended) / Modify columns. Schema: `Status` (Open default; any Open row with a non-empty RIL Comment is eligible for the agent to interpret and resolve in Pipeline B — Accepted/Revise are advisory triage values the field/RA can still set, not a hard gate; Resolved/Needs Review are set by the agent, always in the resolutions clone first, never written straight to the live file — see `references/issue_tracking_schema.md`).
 3. **AskUserQuestion — Map focus** (if GPS on): Country / City / World. Store in `hfc/config/role_map.yaml` (`map_focus`).
 4. **AskUserQuestion — Report:** HTML (recommended).
@@ -165,14 +165,14 @@ OneDrive is required — there is no local-only mode. Before proceeding to A1, v
    # equivalently:
    Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" "<project_root>" --open
    ```
-   (No `--no-onedrive` flag exists — the builder itself calls `require_onedrive_ready()` and stops with setup instructions if OneDrive isn't reachable, same as A0c.)
+   (No `--no-onedrive` flag exists — the builder itself calls `require_sync_folder_ready()` and stops with setup instructions if OneDrive isn't reachable, same as A0c.)
    On a rebuild (an `issue_tracking.xlsx` already exists), the builder does **not** overwrite it — it writes `merged_issue_tracking.xlsx` and prints `MERGE_PENDING`. Show the user what changed (preserved rows unchanged, genuinely-new findings appended, nothing dropped), **AskUserQuestion** to confirm, then run:
    ```bash
    Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_tracking.xlsx
    ```
    Warn the user first that this replaces the live shared file — this is the only script that ever does so.
 7. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
-8. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and the report itself now live in the shared OneDrive folder (access already granted via the one-time manual folder share) — surface the report's OneDrive link from the run summary. Later: **Process HFC feedback** (+ project path if monorepo).
+8. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and a copy of the report itself now live in the shared OneDrive-synced folder (access already granted via the one-time manual folder share) — it'll sync to the cloud automatically. Later: **Process HFC feedback** (+ project path if monorepo).
 
 ---
 
@@ -218,8 +218,7 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
 - Do not overwrite the original microdata file.
 - Do not start Pipeline A when the user clearly asked for post-feedback (and vice versa).
 - Do not invent access dates, exhibit IDs, or column names that are not in the data.
-- Do not attempt an interactive OneDrive sign-in from a Claude-Code-driven run; if the token isn't already cached, stop and tell the user to run `setup_onedrive_auth.R` themselves first (F6) — never fall back to a local copy, there isn't one.
-- Do not skip or silently bypass the OneDrive pre-flight check (A0c) — if it fails, stop and direct the user to `install.R` + `assets/lib/onedrive.json` + `setup_onedrive_auth.R`, never proceed with a local-only build (F29).
+- Do not skip or silently bypass the OneDrive pre-flight check (A0c) — if `local_path` isn't configured or isn't reachable, stop and direct the user to `install.R` + confirming OneDrive desktop sync is running + editing `assets/lib/sync_folder.json`, never proceed with a build that has nowhere to write `issue_tracking.xlsx` (F29).
 - Do not require monorepo gold data, `eval/`, `verify_all`, or SimUser for product runs.
 - Do not use typed mega-replies (`M1=Y M2=…`) as the primary confirmation UX when AskUserQuestion is available (F19).
 - Do not skip the unique-ID AskUserQuestion gate (F20).
