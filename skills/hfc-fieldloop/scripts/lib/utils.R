@@ -104,7 +104,8 @@ empty_findings <- function() {
         group_id = character(), enumerator = character(),
         start_date = character(), end_date = character(),
         key = character(), value = character(), variable = character(),
-        entity_name = character(), group_name = character(), enumerator_name = character()
+        entity_name = character(), group_name = character(), enumerator_name = character(),
+        sort_value = double()
     )
 }
 
@@ -121,7 +122,15 @@ composite_id_string <- function(df, id_cols, sep = ":") {
 }
 
 # Build a findings tibble from flagged rows of df, one row per finding.
-mk_findings <- function(df, check_id, module, category, issue_chr, roles, value_col = NULL, variable_name = NULL) {
+# `sort_value_col`: optional numeric column (already present in df) used only
+# for display ordering (sort_findings_for_display() in build_outputs.R) — a
+# module-specific "how bad is this" magnitude, decoupled from the displayed
+# `value` string since that's often not the right sort key as-is (e.g. a raw
+# outlier value isn't comparable across positive/negative deviations; a
+# formatted datetime string isn't numeric at all). Never exported to
+# issue_tracking.xlsx/csv (those pull a fixed named column list).
+mk_findings <- function(df, check_id, module, category, issue_chr, roles, value_col = NULL, variable_name = NULL,
+                         sort_value_col = NULL) {
     if (is.null(df) || nrow(df) == 0) return(empty_findings())
     n <- nrow(df)
     sub_id <- if (".hfc_id_display" %in% names(df)) {
@@ -146,7 +155,8 @@ mk_findings <- function(df, check_id, module, category, issue_chr, roles, value_
         variable = variable_name %||% "",
         entity_name = if (!is.null(roles$entity_name_field) && roles$entity_name_field %in% names(df)) as.character(df[[roles$entity_name_field]]) else "",
         group_name = if (!is.null(roles$group_name) && roles$group_name %in% names(df)) as.character(df[[roles$group_name]]) else "",
-        enumerator_name = if (!is.null(roles$enum_name) && roles$enum_name %in% names(df)) as.character(df[[roles$enum_name]]) else ""
+        enumerator_name = if (!is.null(roles$enum_name) && roles$enum_name %in% names(df)) as.character(df[[roles$enum_name]]) else "",
+        sort_value = if (!is.null(sort_value_col) && sort_value_col %in% names(df)) suppressWarnings(as.numeric(df[[sort_value_col]])) else NA_real_
     )
 }
 

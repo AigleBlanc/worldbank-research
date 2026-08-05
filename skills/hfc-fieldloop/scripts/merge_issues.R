@@ -36,7 +36,8 @@ project_root <- normalizePath(decode_file_arg(args[[1]]))
 suppressPackageStartupMessages({ library(dplyr) })
 
 require_sync_folder_ready(project_root, skill)
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
+entity_label <- load_entity_label(project_root)
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
 current <- ctx$tbl
 
 if (is.null(current)) {
@@ -44,13 +45,13 @@ if (is.null(current)) {
   quit(save = "no", status = 0)
 }
 
-snapshot <- read_tracking_snapshot(ctx)
+snapshot <- read_tracking_snapshot(ctx, entity_label = entity_label)
 if (is.null(snapshot)) {
   stop("No snapshot found for today under intermediate/ — run the setup build first.")
 }
 
 merged <- merge_preserve_existing(current, snapshot)
-res <- write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx")
+res <- write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label)
 
 message("Wrote merged_issue_tracking.xlsx (", nrow(merged), " rows: ", nrow(current), " existing + ",
         nrow(merged) - nrow(current), " new).")

@@ -30,3 +30,5 @@
 | F27 | Skipping the duplicate-check-key sub-gate when Entity ID is NOT already 100% unique in the raw data (must offer detected round/wave-like candidates or "Entity ID alone"; auto-skip only applies when uniqueness already holds) |
 | F28 | Overwriting `issue_tracking.xlsx` (via `merge_issues.R`/`merge_resolutions.R`'s output) without an explicit AskUserQuestion confirmation first — always review the `merged_*.xlsx` file with the user before running `commit_merged_issue_tracking.R` |
 | F29 | Skipping or silently bypassing the OneDrive pre-flight check (A0c) — if `local_path` isn't configured/reachable, stop and direct the user to `install.R` + confirming OneDrive desktop sync is running + `assets/lib/sync_folder.json`; never proceed with a build that has nowhere to write `issue_tracking.xlsx` |
+| F30 | Skipping the mandatory post-commit report rebuild in Pipeline B (step 6b) — leaving `hfc/outputs/report.html` showing findings that were already fixed/resolved |
+| F31 | Skipping the mandatory important-variables shortlist gate (A2.10) before build, or letting M6/M9/M10 fall back to their old independent auto-pools when a unified list was never confirmed |

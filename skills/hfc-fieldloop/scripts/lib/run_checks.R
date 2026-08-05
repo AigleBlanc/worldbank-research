@@ -177,10 +177,13 @@ check_m1 <- function(ds, roles, modules) {
         low_units <- counts[[roles$group]][counts$n < pct_median * tgt]
         if (length(low_units)) {
             flagged <- ds[as.character(ds[[roles$group]]) %in% as.character(low_units), , drop = FALSE]
+            # Sort worst-first (lowest completion ratio first): each flagged
+            # row's group completion count over the target median.
+            flagged$.sortv <- counts$n[match(as.character(flagged[[roles$group]]), as.character(counts[[roles$group]]))] / tgt
             findings <- mk_findings(
             flagged, "low_completion", "M1", "low_completion",
             sprintf("Site has fewer completed submissions than %.0f%% of the median", 100 * pct_median),
-            roles
+            roles, sort_value_col = ".sortv"
             )
         }
         }
@@ -207,7 +210,7 @@ check_m2 <- function(ds, roles, modules) {
         filter(n() > 1) %>%
         ungroup()
         parts$m2 <- mk_findings(dups, "duplicates_id", "M2", "duplicates",
-                                "Duplicate submission ID", roles)
+                                sprintf("Duplicate rows sharing the same %s", paste(full_key, collapse = " + ")), roles)
         if (nrow(dups) == 0 && !is.na(roles$key) && roles$key %in% names(ds)) {
         dups2 <- ds %>%
             filter(!is.na(.data[[roles$key]]), as.character(.data[[roles$key]]) != "") %>%
@@ -215,7 +218,7 @@ check_m2 <- function(ds, roles, modules) {
             filter(n() > 1) %>%
             ungroup()
         parts$m2b <- mk_findings(dups2, "duplicates_key", "M2", "duplicates",
-                                "Duplicate survey KEY", roles)
+                                sprintf("Duplicate rows sharing the same %s", roles$key), roles)
         }
     }
     if (length(parts)) findings <- bind_rows(parts)
@@ -319,7 +322,7 @@ check_m4 <- function(ds, roles, modules) {
         parts$long <- mk_findings(
           tmp, "long_duration", "M4", "long_duration",
           sprintf("Interview duration more than %s SD above the mean", sd_rule), roles, ".v",
-          variable_name = dc
+          variable_name = dc, sort_value_col = ".v"
         )
       }
       if (any(short_flag)) {
@@ -327,7 +330,7 @@ check_m4 <- function(ds, roles, modules) {
         parts$short <- mk_findings(
           tmp, "short_duration", "M4", "short_duration",
           sprintf("Interview duration more than %s SD below the mean", sd_rule), roles, ".v",
-          variable_name = dc
+          variable_name = dc, sort_value_col = ".v"
         )
       }
     }
@@ -353,9 +356,23 @@ check_m5 <- function(ds, roles, modules) {
     if (any(flag)) {
       tmp <- ds[flag, , drop = FALSE]
       tmp$.v <- format(dt[flag], "%Y-%m-%d %H:%M")
+      hrs_window <- sprintf("%02d:00-%02d:00", morning_hour, evening_hour)
+      reason <- ifelse(
+        is_weekend[flag] & is_offhours[flag],
+        sprintf("weekend and outside %s local time", hrs_window),
+        ifelse(is_weekend[flag], "on a weekend",
+               sprintf("outside %s local time", hrs_window))
+      )
+      tmp$.issue <- sprintf("Interview conducted %s", reason)
+      # Sort worst-first: distance past the nearest hour-window edge, plus a
+      # flat bonus for weekend flags so they don't get buried under small
+      # off-hours deviations.
+      off_dist <- ifelse(dp$hour[flag] >= evening_hour, dp$hour[flag] - evening_hour,
+                   ifelse(dp$hour[flag] < morning_hour, morning_hour - dp$hour[flag], 0))
+      tmp$.sortv <- off_dist + ifelse(is_weekend[flag], 1, 0)
       findings <- mk_findings(
         tmp, "irregular_time", "M5", "irregular_time",
-        "Interview conducted at an irregular time (weekend or outside normal hours)", roles, ".v"
+        tmp$.issue, roles, ".v", sort_value_col = ".sortv"
       )
     }
   }
@@ -379,6 +396,10 @@ check_m6 <- function(ds, roles, modules) {
     if (!any(flag)) next
     tmp <- ds[flag, , drop = FALSE]
     tmp$.v <- v[flag]
+    # Sort worst-first by deviation magnitude (SDs from the mean), not the
+    # raw value — a raw value alone isn't comparable across variables or
+    # across low/high outliers on the same variable.
+    tmp$.sortv <- abs(v[flag] - mu) / sdv
     catg <- if (identical(vc, roles$age) || grepl("age", vc, ignore.case = TRUE)) "age_outlier" else "numeric_outlier"
     label <- if (catg == "age_outlier") {
       sprintf("Age outlier (beyond %s SD)", sd_rule)
@@ -387,7 +408,7 @@ check_m6 <- function(ds, roles, modules) {
     }
     parts[[vc]] <- mk_findings(
       utils::head(tmp, 200), sprintf("outlier_%s", vc), "M6", catg, label, roles, ".v",
-      variable_name = vc
+      variable_name = vc, sort_value_col = ".sortv"
     )
   }
   if (length(parts)) findings <- bind_rows(parts)
@@ -401,6 +422,7 @@ check_m7 <- function(ds, roles, modules) {
   sentinel <- modules$M7$sentinel_codes %||% character()
   sentinel_is_map <- is.list(sentinel) && !is.null(names(sentinel))
   by_enum <- isTRUE(modules$M7$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)
+  sd_multiplier <- modules$M7$sd_multiplier %||% 2
   by_var <- list(); by_enum_list <- list(); parts <- list()
   for (vc in vars) {
     codes <- if (sentinel_is_map) sentinel[[vc]] %||% character() else sentinel
@@ -418,13 +440,15 @@ check_m7 <- function(ds, roles, modules) {
       global_pct <- mean(miss) * 100
       sdv <- stats::sd(by_e$pct_missing, na.rm = TRUE)
       if (is.finite(sdv) && sdv > 0) {
-        hi <- by_e$enumerator[by_e$pct_missing > global_pct + 2 * sdv]
+        hi <- by_e$enumerator[by_e$pct_missing > global_pct + sd_multiplier * sdv]
         if (length(hi)) {
           flagged <- ds[as.character(ds[[roles$enum]]) %in% hi, , drop = FALSE]
+          flagged$.pct <- by_e$pct_missing[match(as.character(flagged[[roles$enum]]), by_e$enumerator)]
           parts[[vc]] <- mk_findings(
             flagged, sprintf("high_missing_%s", vc), "M7", "high_missingness",
-            sprintf("Enumerator has unusually high missingness on %s", vc), roles,
-            variable_name = vc
+            sprintf("Enumerator's missingness on %s is %s%% vs a %s%% survey average (>%sx the between-enumerator SD)",
+                    vc, flagged$.pct, round(global_pct, 1), sd_multiplier),
+            roles, ".pct", variable_name = vc, sort_value_col = ".pct"
           )
         }
       }
@@ -462,8 +486,9 @@ check_m8 <- function(ds, roles, modules) {
       flagged$.v <- as.character(round(flagged$dist_m))
       findings <- mk_findings(
         flagged, "gps_distance", "M8", "gps_distance",
-        sprintf("Distance between reference and survey coordinates is %.0f meters", flagged$dist_m),
-        roles, ".v"
+        sprintf("Distance between reference and survey coordinates is %.0f meters (flag threshold: %s m)",
+                flagged$dist_m, thr),
+        roles, ".v", sort_value_col = "dist_m"
       )
     }
   }
@@ -502,10 +527,11 @@ check_m9 <- function(ds, roles, modules) {
       if (!any(keep)) next
       tmp <- ds[keep, , drop = FALSE]
       tmp$.v <- v[keep]
+      tmp$.share <- tab$top_share[match(enum_vec[keep], tab$enum)]
       parts[[paste0("enum_", vc)]] <- mk_findings(
         tmp, sprintf("straightlining_enum_%s", vc), "M9", "straightlining_enum",
         sprintf("Enumerator gave the same answer on %s in %.0f%%+ of their surveys", vc, enum_thr * 100),
-        roles, ".v", variable_name = vc
+        roles, ".v", variable_name = vc, sort_value_col = ".share"
       )
     }
   }
@@ -524,7 +550,7 @@ check_m9 <- function(ds, roles, modules) {
       parts$survey <- mk_findings(
         tmp, "straightlining_survey", "M9", "straightlining_survey",
         sprintf("%.0f%%+ of this submission's ordinal answers are identical", survey_thr * 100),
-        roles, ".v"
+        roles, ".v", sort_value_col = ".v"
       )
     }
   }
@@ -533,16 +559,40 @@ check_m9 <- function(ds, roles, modules) {
 }
 
 # ---- M10 Summary Statistics (descriptive only, never produces findings) ----
+# Returns a named list of tables: "Overall" (all rows, unchanged shape) plus
+# one additional table per enumerator when modules$M10$by_enum is on (default
+# TRUE) — full Variable/Mean/SD/Min/Max/Obs breakdown per enumerator, not a
+# replacement for Overall. Uses roles$enum_name (PII/display name) as the
+# table label when available, falling back to the raw enumerator ID.
 check_m10 <- function(ds, roles, modules) {
   vars <- modules$M10$vars %||% character()
   vars <- vars[!is.na(vars) & vars %in% names(ds)]
-  rows <- lapply(vars, function(vc) {
-    v <- safe_num(ds[[vc]]); ok <- is.finite(v)
-    tibble(Variable = vc, Mean = round(mean(v[ok]), 3), SD = round(stats::sd(v[ok]), 3),
-          Min = round(suppressWarnings(min(v[ok])), 3), Max = round(suppressWarnings(max(v[ok])), 3),
-          Obs = sum(ok))
-  })
-  stats <- if (length(rows)) bind_rows(rows) else tibble()
+
+  mk_table <- function(sub_ds) {
+    rows <- lapply(vars, function(vc) {
+      v <- safe_num(sub_ds[[vc]]); ok <- is.finite(v)
+      tibble(Variable = vc, Mean = round(mean(v[ok]), 3), SD = round(stats::sd(v[ok]), 3),
+            Min = round(suppressWarnings(min(v[ok])), 3), Max = round(suppressWarnings(max(v[ok])), 3),
+            Obs = sum(ok))
+    })
+    if (length(rows)) bind_rows(rows) else tibble()
+  }
+
+  stats <- list(Overall = mk_table(ds))
+
+  by_enum <- isTRUE(modules$M10$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)
+  if (by_enum && length(vars)) {
+    enum_vals <- as.character(ds[[roles$enum]])
+    enum_names <- if (!is.null(roles$enum_name) && roles$enum_name %in% names(ds)) {
+      as.character(ds[[roles$enum_name]])
+    } else enum_vals
+    for (ev in sort(unique(enum_vals[!is.na(enum_vals) & nzchar(enum_vals)]))) {
+      idx <- which(enum_vals == ev)
+      nm <- unique(enum_names[idx]); nm <- nm[!is.na(nm) & nzchar(nm)]
+      label <- if (length(nm)) sprintf("%s (%s)", nm[[1]], ev) else ev
+      stats[[label]] <- mk_table(ds[idx, , drop = FALSE])
+    }
+  }
   list(stats = stats)
 }
 
@@ -556,23 +606,23 @@ check_m13 <- function(ds, roles, modules) {
     if (exists("filter_expected_skips", mode = "function") && !is.null(form_map)) {
       miss <- filter_expected_skips(miss, ds, col, form_map)
     }
-    mk_findings(miss, check_id, "M13", category, issue, roles)
+    mk_findings(miss, check_id, "M13", category, sprintf("%s (column '%s')", issue, col), roles)
   }
   parts <- list()
   if (!is.na(roles$assent)) {
     parts$a <- flag_miss(roles$assent, "missing_assent", "assent",
-                          "Missing or negative assent flag")
+                          "Missing, 0, or No assent flag")
   }
   if (!is.na(roles$consent)) {
     parts$c <- flag_miss(roles$consent, "missing_consent", "consent",
-                          "Consent flag missing or negative")
+                          "Missing, 0, or No consent flag")
   }
   audio_flag <- modules$M13$audio %||% roles$audio_flag %||% roles$audio
   media_files <- unique(c(roles$audio_file_cols %||% character(),
                           roles$image_file_cols %||% character()))
   if (!is.na(audio_flag) && audio_flag %in% names(ds) && !audio_flag %in% media_files) {
     parts$aud <- flag_miss(audio_flag, "missing_audio_flag", "audio",
-                            "Audio consent flag missing or negative")
+                            "Missing, 0, or No audio consent flag")
   }
   parts <- Filter(Negate(is.null), parts)
   findings <- if (length(parts)) bind_rows(parts) else empty_findings()

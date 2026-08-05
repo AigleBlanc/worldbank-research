@@ -35,17 +35,18 @@ if (!length(args)) stop("Usage: merge_resolutions.R <project_root>")
 project_root <- normalizePath(decode_file_arg(args[[1]]))
 
 require_sync_folder_ready(project_root, skill)
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
+entity_label <- load_entity_label(project_root)
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
 current <- ctx$tbl
 if (is.null(current)) stop("No issue_tracking.xlsx found — run the setup build first.")
 
-clone <- read_resolution_clone(ctx)
+clone <- read_resolution_clone(ctx, entity_label = entity_label)
 if (is.null(clone)) {
   stop("No resolutions/ clone found for today — run `apply_feedback.R clone` first.")
 }
 
 merged <- merge_resolution_updates(current, clone)
-write_named_tracking_file(ctx, merged, "merged_issue_resolutions.xlsx")
+write_named_tracking_file(ctx, merged, "merged_issue_resolutions.xlsx", entity_label = entity_label)
 
 n_changed <- sum(current$finding_id %in% clone$finding_id &
                  (current$status != clone$status[match(current$finding_id, clone$finding_id)]))

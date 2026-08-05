@@ -11,7 +11,7 @@ Five fields are confirmed in sequence, **before any module cards** (see `interac
 1. **Entity ID.** AskUserQuestion: single column vs. combine multiple columns (composite key, e.g. `household_id` + `member_id`) — this is the analysis-unit identifier (person/household/school/...), **not necessarily row-unique**.
    - Single: profile shortlists ≤3 candidates using names, labels, and uniqueness stats (`shortlist_entity_ids()`).
    - Composite: `multiSelect: true` over ≤4 candidates (`shortlist_composite_entity_ids()` — pools moderate-uniqueness + roster/member-like columns). After selection, report joint uniqueness inline in chat (not another gate).
-2. **Entity Label.** AskUserQuestion: what to call the Entity ID in the HTML report (e.g. "Student ID", "Household ID") — "Entity ID" (generic, recommended) / Other (free text). Display-only: the xlsx/csv exports always keep the fixed generic "Entity ID" header regardless of this answer.
+2. **Entity Label.** AskUserQuestion: what to call the Entity ID (e.g. "Student ID", "Household ID") — "Entity ID" (generic, recommended) / Other (free text). Applies everywhere the entity is displayed: the HTML report's findings tables *and* the xlsx/csv issue-tracking export.
 3. **Duplicate-check key.** Check whether Entity ID is already 100% unique per row in the raw data.
    - Already unique: auto-resolve to "Entity ID alone," state it inline in chat, **skip the AskUserQuestion** — don't interrupt the common case.
    - Repeats (e.g. a household surveyed across multiple rounds): AskUserQuestion — Entity ID alone (only if the repeats really are duplicates) / add detected round/wave-like column(s) (`detect_duplicate_key_candidates()`, `multiSelect: true`, ≤4 candidates) / Other. Do not skip when Entity ID repeats (F27) — this feeds M2's actual grouping key, so a household legitimately surveyed twice isn't flagged as a duplicate.
@@ -88,8 +88,7 @@ Reports: version × date-range × n table. Optional finding when a real version 
 **Default: ON** — up to 10 continuous vars (exclude IDs/codes), two-sided SD rule (default 3, was 2 before this redesign; the old 1%/99% percentile-tail hybrid is dropped for predictability).
 
 1. M6 — Numeric outliers: On (recommended) / Off
-2. M6 — Variables: Use recommended shortlist (up to 10) (recommended) / Edit list
-   Prefer `multiSelect: true` on the shortlist when offering individual vars (≤4 options per call; split if needed).
+2. M6 — Variables: uses the confirmed unified Important Variables list (SKILL.md A2.10) directly — no separate module-level variable gate.
 3. M6 — SD threshold: 3 SD (recommended) / 2 SD / 2.5 SD
 
 ## M7 — Missingness
@@ -98,8 +97,9 @@ Reports: version × date-range × n table. Optional finding when a real version 
 
 1. M7 — Variables: Use recommended shortlist (up to 10) (recommended) / Edit list
 2. M7 — Missing codes **(this question's text must name the variables confirmed in step 1)**: `No special codes, blanks only (recommended)` / `Yes, same code(s) for all` / `Yes, different codes per variable`. If "same for all," one follow-up (Other) captures the shared code list. If "different per variable," loop per-variable (≤4 per call), each question naming the specific variable from step 1 — this cannot be authored as a static card set ahead of time, since it depends on step 1's answer.
+3. M7 — Enumerator flag threshold: 2 SD (recommended) / 1.5 SD / 2.5 SD (`modules.yaml`'s `M7$sd_multiplier`)
 
-Reports: missingness % by variable and by enumerator. Flags enumerators whose missingness on a variable is far above the survey-wide average.
+Reports: missingness % by variable and by enumerator. Flags enumerators whose missingness on a variable is more than the configured threshold above the survey-wide average (between-enumerator SD).
 
 ## M8 — GPS
 
@@ -116,7 +116,7 @@ When GPS is on, also AskUserQuestion **map focus** for the HTML report: Country 
 **Default: ON if ordinal-like candidates are detected, else Off.** Two independently-confirmed definitions (redefined properly from the prior design):
 
 1. M9 — Straightlining: On (recommended if candidates found) / Off
-2. M9 — Ordinal variables: Use detected ≤7-category variables (recommended) / Edit list
+2. M9 — Ordinal variables: intersects the confirmed unified Important Variables list (SKILL.md A2.10) with the auto-detected ≤7-category ordinal pool; falls back to the full auto-detected pool if that intersection is empty (never silently turns M9 off over a variable-selection choice) — no separate module-level variable gate.
 3. M9 — Enumerator threshold: 80% (recommended) / 70% / 90% — flags an enumerator who gave the identical single answer on one question in ≥ this share of their own surveys (per-question, not an overall pattern comparison).
 4. M9 — Survey threshold: 80% (recommended) / 70% / 90% — flags a submission where ≥ this share of the confirmed ordinal variables share one identical value.
 
@@ -124,10 +124,10 @@ When GPS is on, also AskUserQuestion **map focus** for the HTML report: Country 
 
 **Default: ON** — purely descriptive, zero findings rows.
 
-1. M10 — Variables: Use recommended shortlist (up to 10) (recommended) / Edit list / Increase beyond 10
-2. M10 — How many (if increasing): 15 / 20 / Other for a custom count
+1. M10 — Variables: uses the confirmed unified Important Variables list (SKILL.md A2.10) directly — no separate module-level variable gate.
+2. M10 — How many (if the list needs to grow beyond 10): 15 / 20 / Other for a custom count
 
-Flat table only: Variable | Mean | SD | Min | Max | Obs — no panel/lettered grouping (the `assets/check_templates/sum stats.png` reference image is a formatting style cue only).
+Two kinds of tables, both Variable | Mean | SD | Min | Max | Obs, no panel/lettered grouping (the `assets/check_templates/sum stats.png` reference image is a formatting style cue only): an **Overall** table (always first, all rows), plus one additional table **per enumerator** (using the enumerator's display name when available) — not a replacement for Overall, both always render together.
 
 ## M11 — Survey-specific
 

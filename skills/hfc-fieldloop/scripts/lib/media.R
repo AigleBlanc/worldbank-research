@@ -220,6 +220,7 @@ run_m12_media_checks <- function(ds, roles, modules) {
     # 2–3. Missing / tiny on disk; 6. duration
     absent_i <- integer(); tiny_i <- integer(); dur_i <- integer()
     absent_v <- character(); tiny_v <- character(); dur_v <- character()
+    tiny_sz <- numeric(); dur_dev <- numeric()
     thr <- if (is_audio) min_audio else min_image
     for (i in nonempty_idx) {
       fn <- vals[[i]]
@@ -233,12 +234,14 @@ run_m12_media_checks <- function(ds, roles, modules) {
       if (!is.finite(sz) || sz < thr) {
         tiny_i <- c(tiny_i, i)
         tiny_v <- c(tiny_v, as.character(sz))
+        tiny_sz <- c(tiny_sz, as.numeric(sz))
       }
       if (is_audio && media_duration_available()) {
         dur <- audio_duration_sec(path)
         if (is.finite(dur) && (dur < min_dur || dur > max_dur)) {
           dur_i <- c(dur_i, i)
           dur_v <- c(dur_v, as.character(round(dur, 1)))
+          dur_dev <- c(dur_dev, if (dur < min_dur) min_dur - dur else dur - max_dur)
         }
       }
     }
@@ -253,18 +256,21 @@ run_m12_media_checks <- function(ds, roles, modules) {
     if (length(tiny_i)) {
       tmp <- ds[tiny_i, , drop = FALSE]
       tmp$.v <- tiny_v
+      tmp$.sortv <- tiny_sz
       out[[paste0("tiny_", col)]] <- mk_findings(
         tmp, sprintf("media_tiny_%s", col), "M12", "media_tiny",
-        sprintf("%s file too small (column %s)", kind, col), roles, ".v"
+        sprintf("%s file too small (column %s) — %s bytes, below the %s-byte minimum", kind, col, tiny_v, thr),
+        roles, ".v", sort_value_col = ".sortv"
       )
     }
     if (length(dur_i)) {
       tmp <- ds[dur_i, , drop = FALSE]
       tmp$.v <- dur_v
+      tmp$.sortv <- dur_dev
       out[[paste0("dur_", col)]] <- mk_findings(
         tmp, sprintf("media_duration_%s", col), "M12", "media_duration",
         sprintf("Audio duration outside [%s, %s]s (column %s)", min_dur, max_dur, col),
-        roles, ".v"
+        roles, ".v", sort_value_col = ".sortv"
       )
     }
   }
@@ -287,9 +293,10 @@ run_m12_media_checks <- function(ds, roles, modules) {
         if (length(ids) < 2) next
         tmp <- ds[idx, , drop = FALSE]
         tmp$.v <- bn
+        tmp$.sortv <- length(ids)
         out[[paste0("dup_", col, "_", bn)]] <- mk_findings(
           tmp, sprintf("media_dup_%s", col), "M12", "media_dup",
-          sprintf("Same media file used by multiple IDs: %s", bn), roles, ".v"
+          sprintf("Same media file used by multiple IDs: %s", bn), roles, ".v", sort_value_col = ".sortv"
         )
       }
     }
@@ -320,10 +327,11 @@ run_m12_media_checks <- function(ds, roles, modules) {
           if (length(unique(chunk$id)) < 2) next
           tmp <- ds[chunk$i, , drop = FALSE]
           tmp$.v <- chunk$hash[[1]]
+          tmp$.sortv <- length(unique(chunk$id))
           out[[paste0("hash_", chunk$hash[[1]])]] <- mk_findings(
             tmp, "media_dup_hash", "M12", "media_dup",
             sprintf("Identical media content (hash) across IDs: %s", paste(unique(chunk$bn), collapse = ", ")),
-            roles, ".v"
+            roles, ".v", sort_value_col = ".sortv"
           )
         }
       }

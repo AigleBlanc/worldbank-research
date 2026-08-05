@@ -445,6 +445,21 @@ default_modules <- function(roles) {
     audio_cols <- utils::head(audio_cols, 5)
     image_cols <- utils::head(image_cols, 5)
 
+    # Unified "important variables" shortlist (SKILL.md A2.10) drives M6/M9/M10
+    # instead of each module picking its own independent pool. M6/M10 use it
+    # directly (any variable type is fine there); M9 straightlining still
+    # needs ordinal-shaped columns specifically, so it intersects the
+    # confirmed list with the auto-detected ordinal pool — falling back to
+    # the FULL auto ordinal pool if that intersection is empty, so a
+    # variable-selection choice never silently disables the whole module.
+    important_vars <- roles$important_vars %||% character()
+    m6_vars <- if (length(important_vars)) important_vars else (roles$numeric_shortlist %||% character())
+    m10_vars <- if (length(important_vars)) important_vars else (roles$sumstats_var_candidates %||% character())
+    m9_ordinal <- if (length(important_vars)) {
+        intersect(important_vars, roles$ordinal_vars %||% character())
+    } else character()
+    if (!length(m9_ordinal)) m9_ordinal <- roles$ordinal_vars %||% character()
+
     list(
         M1 = list(
         on = TRUE,
@@ -474,21 +489,22 @@ default_modules <- function(roles) {
         evening_hour = 19,
         morning_hour = 7
         ),
-        M6 = list(on = TRUE, vars = utils::head(roles$numeric_shortlist, 10), sd_rule = 3),
+        M6 = list(on = TRUE, vars = utils::head(m6_vars, 10), sd_rule = 3),
         M7 = list(
         on = TRUE,
         vars = roles$missingness_var_candidates %||% character(),
         sentinel_codes = character(),
-        by_enum = TRUE
+        by_enum = TRUE,
+        sd_multiplier = 2
         ),
         M8 = list(on = isTRUE(roles$has_gps), x = roles$x, y = roles$y, threshold_m = 300),
         M9 = list(
-        on = length(roles$ordinal_vars %||% character()) > 0,
-        ordinal_vars = utils::head(roles$ordinal_vars %||% character(), 15),
+        on = length(m9_ordinal) > 0,
+        ordinal_vars = utils::head(m9_ordinal, 15),
         enum_threshold_pct = 0.8,
         survey_threshold_pct = 0.8
         ),
-        M10 = list(on = TRUE, vars = roles$sumstats_var_candidates %||% character(), max_n = 10L),
+        M10 = list(on = TRUE, vars = utils::head(m10_vars, 10), by_enum = TRUE, max_n = 10L),
         M11 = list(on = FALSE, enabled = character(), custom = character()),
         M12 = list(
         on = isTRUE(roles$has_media),

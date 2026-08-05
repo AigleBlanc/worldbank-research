@@ -39,11 +39,12 @@ project_root <- normalizePath(decode_file_arg(args[[1]]))
 merged_filename <- args[[2]]
 
 require_sync_folder_ready(project_root, skill)
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
-merged <- read_named_tracking_file(ctx, merged_filename)
+entity_label <- load_entity_label(project_root)
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
+merged <- read_named_tracking_file(ctx, merged_filename, entity_label = entity_label)
 if (is.null(merged)) stop("No such merged file found: ", merged_filename)
 
-commit_issue_tracking(project_root, merged, skill_dir = skill, fetch_ctx = ctx)
+commit_issue_tracking(project_root, merged, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
 delete_named_tracking_file(ctx, merged_filename)
 
 message("Committed ", merged_filename, " -> issue_tracking.xlsx (", nrow(merged), " rows). ", merged_filename, " deleted.")

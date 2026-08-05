@@ -43,6 +43,8 @@ source(file.path(lib, "profile_roles.R"))
 source(file.path(lib, "form_logic.R"))
 source(file.path(lib, "run_checks.R"))
 source(file.path(lib, "build_outputs.R"))
+source(file.path(lib, "module_desc.R"))
+source(file.path(lib, "pipeline_core.R"))
 source(file.path(lib, "product_structure.R"))
 source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
@@ -127,25 +129,14 @@ if (length(roles$entity_id_rationale)) {
     message("Entity ID shortlist:\n  ", paste(roles$entity_id_rationale, collapse = "\n  "))
 }
 
-# Step 9: load confirmed module config if it exists (from a prior run /
-# AskUserQuestion confirm), else fall back to profiled defaults and write it.
-modules_path <- hfc_path(project_root, "config", "modules.yaml")
-if (file.exists(modules_path)) {
-    modules <- yaml::read_yaml(modules_path)
-    if (!is.null(modules$M12) &&
-        (is.null(modules$M12$media_folder) || is.na(modules$M12$media_folder) ||
-        !nzchar(as.character(modules$M12$media_folder[[1]])))) {
-    modules$M12$media_folder <- media_folder
-    }
-} else {
-    modules <- default_modules(roles)
-    yaml::write_yaml(modules, modules_path)
-}
-
-# Step 10: same for role_map.yaml — reload previously confirmed roles
-# (required-fields gate answers) so rebuilds don't re-derive/re-ask them.
+# Step 9: reload previously confirmed roles (required-fields gate answers,
+# and the important-variables shortlist) from role_map.yaml, BEFORE modules
+# are loaded/defaulted next — default_modules() reads roles$important_vars,
+# so this must happen first or a true first-ever build (no modules.yaml yet)
+# would silently ignore an already-confirmed important-variables shortlist.
 role_map_path <- hfc_path(project_root, "config", "role_map.yaml")
-if (file.exists(role_map_path)) {
+role_map_existed <- file.exists(role_map_path)
+if (role_map_existed) {
     saved <- yaml::read_yaml(role_map_path)
     # Required-fields gate answers (Entity ID, duplicate-check key,
     # country/timezone, last date) persist here; reload them each rebuild
@@ -181,10 +172,29 @@ if (file.exists(role_map_path)) {
     if (!is.null(saved$map_focus) && nzchar(as.character(saved$map_focus))) {
         roles$map_focus <- as.character(saved$map_focus)
     }
-    if (!is.null(modules$M2)) {
-        modules$M2$id <- roles$entity_id
-        modules$M2$extra_keys <- roles$dup_key_extra %||% character()
+    if (!is.null(saved$important_vars) && length(saved$important_vars)) {
+        roles$important_vars <- unlist(saved$important_vars)
     }
+}
+
+# Step 10: load confirmed module config if it exists (from a prior run /
+# AskUserQuestion confirm), else fall back to profiled defaults (now using
+# the possibly-reloaded roles above) and write it.
+modules_path <- hfc_path(project_root, "config", "modules.yaml")
+if (file.exists(modules_path)) {
+    modules <- yaml::read_yaml(modules_path)
+    if (!is.null(modules$M12) &&
+        (is.null(modules$M12$media_folder) || is.na(modules$M12$media_folder) ||
+        !nzchar(as.character(modules$M12$media_folder[[1]])))) {
+    modules$M12$media_folder <- media_folder
+    }
+} else {
+    modules <- default_modules(roles)
+    yaml::write_yaml(modules, modules_path)
+}
+if (role_map_existed && !is.null(modules$M2)) {
+    modules$M2$id <- roles$entity_id
+    modules$M2$extra_keys <- roles$dup_key_extra %||% character()
 }
 # Step 11: persist the (possibly reloaded) roles + a human-readable option-
 # card dump for reference.
@@ -206,17 +216,11 @@ report_cfg <- list(map_focus = roles$map_focus %||% "country")
 module_notes_path <- hfc_path(project_root, "config", "module_notes.yaml")
 module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes_path) else NULL
 
-# Step 15: the actual work — run every confirmed M1–M13 + custom check.
-message("Running checks...")
-check_res <- run_check_modules(ds, roles, modules, project_root = project_root)
-findings <- check_res$findings
-stats <- check_res$stats
-message("Findings: ", nrow(findings))
-
-# Step 16: write registry outputs from the findings.
-readr::write_csv(findings, hfc_path(project_root, "registry", "findings.csv"))
-write_check_scripts(project_root, modules, skill_dir = skill)
-write_main_r(project_root, skill_dir = skill)
+# Steps 15-16: the actual work — run every confirmed M1–M13 + custom check,
+# then write registry outputs (shared with scripts/rebuild_report.R).
+res <- run_checks_and_write_registry(project_root, ds, roles, modules, skill)
+findings <- res$findings
+stats <- res$stats
 
 # Step 17: fetch the live issue_tracking.xlsx from the shared sync folder
 # (see scripts/lib/issue_store.R), write this run's fresh findings as today's
@@ -224,17 +228,18 @@ write_main_r(project_root, skill_dir = skill)
 # nothing to merge against) or merge and stop for the agent to confirm (a
 # prior file exists: merging must never silently overwrite field/RA/agent
 # work on the live shared file).
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill)
+entity_label <- roles$entity_label %||% NA_character_
+ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
 fb_new <- findings_to_issue_tracking(findings)
-write_tracking_snapshot(ctx, fb_new)
+write_tracking_snapshot(ctx, fb_new, entity_label = entity_label)
 
 merge_pending <- FALSE
 if (is.null(ctx$tbl)) {
-    commit_issue_tracking(project_root, fb_new, skill_dir = skill, fetch_ctx = ctx)
+    commit_issue_tracking(project_root, fb_new, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
     issue_tracking_status <- "created"
 } else {
     merged <- merge_preserve_existing(ctx$tbl, fb_new)
-    write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx")
+    write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label)
     merge_pending <- TRUE
     issue_tracking_status <- "merge_pending"
 }
@@ -272,7 +277,7 @@ proj_yaml <- list(
 html_path <- write_html_report(
     findings, project_root, project_id, open = do_open,
     roles = roles, ds = ds, report_cfg = report_cfg, module_notes = module_notes,
-    stats = stats
+    stats = stats, modules = modules
 )
 
 # Step 21: copy the report into the OneDrive-synced folder (passive sharing

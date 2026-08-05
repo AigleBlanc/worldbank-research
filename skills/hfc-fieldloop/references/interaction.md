@@ -16,7 +16,7 @@ Authority for how FieldLoop asks the user during setup and post-feedback in **Cl
 9. Do **not** dump numbered menus in plain chat when AskUserQuestion is available.
 10. **Fallback** (AskUserQuestion unavailable): same options as a short numbered list; user replies with a single number/letter — still not long free-form module strings.
 11. Max ~8–12 cards for module setup; never one free-text question per column.
-12. **Required-fields gate** is mandatory after data confirm, before any module cards — five sequential sub-gates: Entity ID (single or composite; shortlist ≤3/≤4 candidates, Other automatic; do not proceed without a choice, F20), Entity Label (display-only name for the HTML report, e.g. "Student ID"; "Entity ID" recommended), duplicate-check key (auto-skip only when Entity ID is already unique; otherwise offer Entity ID alone / detected round-wave-like candidates, F27), country(ies) + timezone (always show the resolved timezone back for confirmation, F24), and last date of data collection (F25).
+12. **Required-fields gate** is mandatory after data confirm, before any module cards — five sequential sub-gates: Entity ID (single or composite; shortlist ≤3/≤4 candidates, Other automatic; do not proceed without a choice, F20), Entity Label (display-only name for the HTML report and xlsx/csv export, e.g. "Student ID"; "Entity ID" recommended), duplicate-check key (auto-skip only when Entity ID is already unique; otherwise offer Entity ID alone / detected round-wave-like candidates, F27), country(ies) + timezone (always show the resolved timezone back for confirmation, F24), and last date of data collection (F25).
 13. Some gates are genuinely sequential — a later question's options or wording depend on an earlier answer (e.g. M7 Missingness: sentinel-code question must name the variables just confirmed). Author the dependent question after the prior answer resolves; do not pre-write it as a static card.
 14. Agent note: AskUserQuestion is unavailable inside Agent-tool subagents — run these confirms in the main chat.
 
@@ -27,18 +27,21 @@ Authority for how FieldLoop asks the user during setup and post-feedback in **Cl
 | Project folder | Workspace has multiple surveys / path unclear | up to 4 candidates |
 | Data files | After discover | Use discovered paths (recommended) / Pick different paths / Wait — I will upload |
 | **Entity ID** | **Immediately after data confirm** | Single column vs. combine multiple; up to 3 (single) or 4 (composite, `multiSelect`) shortlisted candidates |
-| **Entity Label** | **Right after Entity ID** | "Entity ID" (generic, recommended) / Other (free text, e.g. "Student ID") — display-only, HTML report only |
+| **Entity Label** | **Right after Entity ID** | "Entity ID" (generic, recommended) / Other (free text, e.g. "Student ID") — display-only, applies to the HTML report and the xlsx/csv export |
 | **Duplicate-check key** | **Right after Entity Label** | Auto-skipped when Entity ID is already unique; otherwise Entity ID alone / add detected round-wave-like column(s), up to 4 (`multiSelect`) (F27) |
 | **Country(ies) + timezone** | **Right after duplicate-check key** | Single country vs. multiple (+ country column if multiple); resolved timezone always shown back for confirmation (F24) |
 | **Last date of data collection** | **Right after country/timezone** | Use detected max date (recommended) / a different date (F25) |
 | Media folder | Media filename cols found | Use discovered folder (recommended) / Column-only checks (no folder) |
-| Module pace | After profile | Accept all recommended defaults / Review module-by-module |
+| Check-modules preview | Right before the pace question | Not a choice — build/open `hfc/check_modules.html` (tree of proposed defaults) for the user to review |
+| Module pace | After profile (and the preview above) | Accept all recommended defaults / Review module-by-module |
 | M1–M13 | If reviewing (or sub-picks after Accept all) | See `check_modules.md` option cards |
 | **M3 Form Version mapping** | If reviewing M3, or a version column/inference is found | Use detected/inferred version↔date mapping (recommended) / Edit mapping |
 | **M7 Missingness variables** | If reviewing M7 | Use recommended shortlist (≤10) (recommended) / Edit list |
 | **M7 Missingness codes** | **After M7 variables confirmed — question must name those variables** | No special codes (recommended) / Same code(s) for all / Different codes per variable |
+| **M7 Missingness threshold** | After M7 codes | 2 SD (recommended) / 1.5 SD / 2.5 SD |
 | **M9 Straightlining thresholds** | If reviewing M9 | Enumerator threshold 80% (recommended) / 70% / 90%; Survey threshold 80% (recommended) / 70% / 90% (confirmed independently) |
 | **Additional checks** | After proposed modules reviewed — **always fires, even under Accept-all pace; never skip or auto-answer (F23)** | No additional checks (recommended) |
+| **Important variables shortlist** | After Additional checks, before build — **unified for M6/M9/M10, always fires (F31)** | Posted as a plain numbered chat list (not a card, doesn't fit the 4-option cap), then: Use this list as-is (recommended) / I'll reply with edits |
 | Custom check name | If user requested an extra check | Confirm proposed name + `hfc/code/checks/<name>.R` |
 | **Product structure** | After modules + extras; before build | Continue with this structure (recommended) |
 | OneDrive pre-flight (A0c) | Before Pipeline A/B start, every run | Mandatory — not a choice; if unreachable, stop and direct the user to set it up (no AskUserQuestion, just an inline message) |

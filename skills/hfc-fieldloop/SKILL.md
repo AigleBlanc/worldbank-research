@@ -43,7 +43,9 @@ Authority (read; do not invent standards):
 Helpers (prefer `Rscript` rather than reimplementing):
 
 - `scripts/lib/discover.R` — find/create `data/raw`, classify data vs form
+- `scripts/preview_modules.R` — build/open `hfc/check_modules.html`, a tree preview of proposed module defaults (run before the pace question, A2.3)
 - `scripts/run_setup_build.R` — build after modules confirmed (project root as arg); writes under `hfc/`
+- `scripts/rebuild_report.R` — post-resolution report refresh (Pipeline B step 7): re-runs checks against the latest data, drops Resolved/untracked findings from `report.html` only (`issue_tracking.xlsx` keeps full history)
 - `scripts/apply_feedback.R` — post-feedback CLI (`clone` / `list-open` / `apply` / `needs-review`); fix logic is agent-authored, see `scripts/lib/apply_feedback_helpers.R`
 - `scripts/merge_issues.R` / `scripts/merge_resolutions.R` — fold a dated snapshot / resolutions clone back into `issue_tracking.xlsx`, producing a `merged_*.xlsx` for the agent to review
 - `scripts/commit_merged_issue_tracking.R` — the only script that ever overwrites the live `issue_tracking.xlsx`, run only after explicit AskUserQuestion confirmation
@@ -54,6 +56,9 @@ Helpers (prefer `Rscript` rather than reimplementing):
 - `scripts/lib/geo_timezone.R` — country → IANA timezone lookup/resolver for M5
 - `scripts/lib/form_logic.R` — SurveyCTO relevance / nested skip-logic helper + M4's group/section parsing
 - `scripts/lib/product_structure.R` — write `hfc/structure.html`
+- `scripts/lib/check_modules_preview.R` — write `hfc/check_modules.html`
+- `scripts/lib/module_desc.R` — per-module report descriptions computed from this project's actual configured thresholds
+- `scripts/lib/pipeline_core.R` — shared "run checks + write registry" step used by both `run_setup_build.R` and `rebuild_report.R`
 
 ## Interactive confirms (AskUserQuestion)
 
@@ -71,9 +76,9 @@ Helpers (prefer `Rscript` rather than reimplementing):
 3. Confirm via **option cards**, not free-text module strings. Max ~8–12 cards after data confirm — never 100 per-column questions.
 4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). OneDrive is **required** (no local fallback in the product — see A0c): once `assets/lib/sync_folder.json` has `"enabled": true` and `"local_path"` pointed at a folder the OneDrive desktop app is syncing, that folder is the **sole store** — every read/write is plain file I/O against it, and OneDrive's own sync client (not this skill) propagates changes to the cloud, so there is never a separate local-only copy. Two dated-snapshot subfolders live alongside it, inside the same synced folder: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/sync_folder.json` — the only file that matters, edited directly, no per-project override, no auth step or secrets in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
 5. After HTML build, auto-open with `utils::browseURL()` (or OS `open`).
-6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **selected** options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed (step 8 below).
+6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **selected** options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed (step 9 below), and `role_map.yaml`'s `important_vars` from the confirmed shortlist (step 10 below).
 7. M11 (Survey-Specific) has no built-in checks and defaults to **off / empty** — every M11 finding comes from a custom check the agent writes for this survey's specific content, driven entirely by what the user describes at the Additional-checks gate (step 8).
-8. **Additional-checks gate is mandatory, every run (F23):** immediately after module cards/Accept-all, always run the "Additional checks?" AskUserQuestion (`No additional checks` recommended / Other automatic). Never infer "no" silently, never fold it into the pace question, never skip it because Accept-all was chosen. If Other, also write the custom check's ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (see step A2.7).
+8. **Additional-checks gate is mandatory, every run (F23):** immediately after module cards/Accept-all, always run the "Additional checks?" AskUserQuestion (`No additional checks` recommended / Other automatic). Never infer "no" silently, never fold it into the pace question, never skip it because Accept-all was chosen. If Other, also write the custom check's ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (see step A2.9).
 9. Draft project-root `README.md` from `assets/README_template.md`; confirm with AskUserQuestion once. Point to `references/ai_use.md`.
 10. **M12 media:** if audio/image filename columns exist, propose M12 ON. AskUserQuestion for media folder if not discovered. Proceed with column-only checks if folder missing. Never put filename cols under M13.
 11. **Required-fields hard gate:** after data confirm, and before any module cards, confirm FIVE fields in sequence — (a) Entity ID (single column, or a confirmed multi-column composite key; shortlist ≤3/≤4 candidates, F20) — the analysis-unit identifier, not necessarily row-unique, (b) Entity Label — what to call it in the HTML report (e.g. "Student ID"), display-only, (c) the duplicate-check key (Entity ID alone, auto-resolved when already unique, or Entity ID + confirmed extra column(s) like round/wave, F27), (d) country/countries of data collection + resolved timezone, always shown back for confirmation, never trusted silently (F24), and (e) last date of data collection, used for report-wide bold-highlighting and the Last Day tab (F25). Persist all five to `hfc/config/role_map.yaml`.
@@ -126,7 +131,7 @@ OneDrive is required — there is no local-only mode. It's accessed as a plain l
 5. Form optional: proceed data-only; note M11 / M3 / nested logic weaker.
 6. **Required-fields gate (mandatory, immediately after data confirm, before any module cards) — five sequential AskUserQuestion sub-gates, in this order:**
    1. **Entity ID:** the analysis-unit identifier (person/household/school/whatever level the user wants) — ask single column vs. combine multiple columns (e.g. household_id + member_id). If single: shortlist ≤3 candidates (name/label/uniqueness rationale via `shortlist_entity_ids()`). If composite: `multiSelect: true` over ≤4 candidates from `shortlist_composite_entity_ids()`; after selection, report joint uniqueness inline in chat. Note: Entity ID is **not** necessarily row-unique (e.g. a household surveyed across multiple rounds keeps the same Entity ID) — that's what the next sub-gate is for. Do not proceed without a choice (F20).
-   2. **Entity Label:** ask what to call the Entity ID in the HTML report (e.g. "Student ID", "Household ID") — offer "Entity ID" (generic, recommended) vs. Other (free text). Display-only: the xlsx/csv exports always keep the fixed generic "Entity ID" header regardless of this answer.
+   2. **Entity Label:** ask what to call the Entity ID (e.g. "Student ID", "Household ID") — offer "Entity ID" (generic, recommended) vs. Other (free text). Applies everywhere the entity is displayed: the HTML report's findings tables *and* the xlsx/csv issue-tracking export (its paired plain-name column, e.g. "Entity", becomes "Student Name").
    3. **Duplicate-check key:** check whether Entity ID (as just confirmed) is already 100% unique per row in the raw data. If yes, auto-resolve to "Entity ID alone" and say so inline in chat — do **not** fire an AskUserQuestion for this common case. If Entity ID repeats, ask: *"Entity ID repeats in your data — does that reflect real duplicates, or do you need extra columns (e.g. round/wave) to check for true duplicates?"* — options: Entity ID alone / add detected candidate column(s) (`detect_duplicate_key_candidates()`, `multiSelect: true`, ≤4) / Other. Do not skip when Entity ID repeats (F27).
    4. **Country(ies) + timezone:** ask single vs. multiple countries. If multiple, shortlist a country-indicator column (`shortlist_country_columns()`), resolve each value's timezone (`resolve_country_timezone_column()` in `scripts/lib/geo_timezone.R`), and **always show the resolved timezone back for confirmation/override** — never treat an unconfirmed lookup as live (F24). If single, confirm one country → one global timezone.
    5. **Last date of data collection:** offer the detected max date from the data (recommended) vs. a different date (Other). Do not skip this gate (F25) — it drives report-wide bold-highlighting and the Last Day tab.
@@ -137,14 +142,20 @@ OneDrive is required — there is no local-only mode. It's accessed as a plain l
 
 1. Read `references/check_modules.md` and `references/interaction.md`.
 2. Profile columns (names/types/labels only — no PII row dumps). Use `format_module_cards` / profile for recommended defaults.
-3. **AskUserQuestion (pace):**
+3. **Build and open the check-modules preview:**
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/preview_modules.R "<project_root>" --open
+   ```
+   Writes/opens `hfc/check_modules.html` — a tree view of every M1–M13 module's *proposed default* (on/off, rationale, thresholds/variables), so the user has something concrete to look at while deciding the pace question next. Nothing here is written to `hfc/config/*.yaml` yet.
+4. **AskUserQuestion (pace):**
    - Accept all recommended defaults (recommended)
    - Review module-by-module
-4. If **Accept all**: apply starred defaults from profile; skip per-module cards unless M3 (Form Version)/M7 (Missingness)/M9 (Straightlining)/M11/M12 need a quick confirm.
-5. If **Review**: AskUserQuestion cards per `check_modules.md` (on/off, key columns, thresholds). Respect 2–4 options per question; split into sequential asks. Do not ask for typed `M1=Y M2=…`. **M7 Missingness is a genuine sequential dependency:** confirm the variable shortlist first, then confirm sentinel missing-codes in a follow-up question that names those specific confirmed variables — the second question cannot be authored as a static card ahead of time.
-6. Never one free-text question per variable.
-7. **Additional checks — mandatory, every run, cannot be skipped (F23):** immediately after steps 3–6, always run a separate AskUserQuestion — `No additional checks` (recommended) (Other automatic for custom). This fires regardless of whether the user picked Accept-all or Review in step 3; do not treat Accept-all as an implicit "no" here.
-8. **If the user answers Other in step 7:** propose a check name + `hfc/code/checks/<name>.R`, confirm via AskUserQuestion, implement and register under M11/`custom`, **and** write its ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.label` / `.description`) so `hfc/outputs/report.html` can show it under the M11 section (schema in `references/check_modules.md`).
+5. If **Accept all**: apply starred defaults from profile; skip per-module cards unless M3 (Form Version)/M7 (Missingness)/M9 (Straightlining)/M11/M12 need a quick confirm.
+6. If **Review**: AskUserQuestion cards per `check_modules.md` (on/off, key columns, thresholds). Respect 2–4 options per question; split into sequential asks. Do not ask for typed `M1=Y M2=…`. **M7 Missingness is a genuine sequential dependency:** confirm the variable shortlist first, then confirm sentinel missing-codes in a follow-up question that names those specific confirmed variables — the second question cannot be authored as a static card ahead of time.
+7. Never one free-text question per variable.
+8. **Additional checks — mandatory, every run, cannot be skipped (F23):** immediately after steps 4–7, always run a separate AskUserQuestion — `No additional checks` (recommended) (Other automatic for custom). This fires regardless of whether the user picked Accept-all or Review in step 4; do not treat Accept-all as an implicit "no" here.
+9. **If the user answers Other in step 8:** propose a check name + `hfc/code/checks/<name>.R`, confirm via AskUserQuestion, implement and register under M11/`custom`, **and** write its ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.label` / `.description`) so `hfc/outputs/report.html` can show it under the M11 section (schema in `references/check_modules.md`).
+10. **Important variables shortlist (unified for M6/M9/M10) — mandatory, every run (F31):** propose up to 10 variables using your own judgment about what's contextually important to this survey — read column names/labels/content, informed by (not limited to) the profile's numeric/ordinal candidate pools, not driven by numeric-ness alone. Post them in chat as a **plain numbered list, 3 per line**, clearly structured (not an AskUserQuestion card — the tool's 4-option cap doesn't fit 10 items), then a single AskUserQuestion: *Use this list as-is (recommended)* / *I'll reply with edits*. Write the confirmed list to `hfc/config/role_map.yaml`'s `important_vars:` key. M6 (outliers) and M10 (summary stats) use it directly; M9 (straightlining) further filters it to the ordinal-shaped subset, falling back to its own automatic ordinal pool if that intersection is empty (never silently turns a whole module off over a variable-selection choice).
 
 ### A3. Outline + product structure
 
@@ -171,8 +182,13 @@ OneDrive is required — there is no local-only mode. It's accessed as a plain l
    Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_tracking.xlsx
    ```
    Warn the user first that this replaces the live shared file — this is the only script that ever does so.
-7. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
-8. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and a copy of the report itself now live in the shared OneDrive-synced folder (access already granted via the one-time manual folder share) — it'll sync to the cloud automatically. Later: **Process HFC feedback** (+ project path if monorepo).
+7. **Draft the Summary narrative:** read `hfc/registry/findings.csv` (or the just-built report) and draft a short, terse Slack-register message — the "pressing issues" a field team should notice and respond to first thing in the morning. Focus on M1 (completion gaps), M2 (duplicates), M5 (irregular timing), and M11 (custom checks); ignore modules with nothing notable. PII is fine — the point is fast, specific action, not anonymized reporting. Write it to `hfc/config/summary_message.md` (plain text, overwritten each time — not `module_notes.yaml`), post it in chat as an FYI, then rebuild the report so it's folded in before the final open:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>"
+   ```
+   (No `--open` needed here — step 9 opens it once, after the README is drafted.)
+8. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
+9. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and a copy of the report itself now live in the shared OneDrive-synced folder (access already granted via the one-time manual folder share) — it'll sync to the cloud automatically. Later: **Process HFC feedback** (+ project path if monorepo).
 
 ---
 
@@ -209,7 +225,15 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
    ```bash
    Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_resolutions.xlsx
    ```
-7. Tell the user which rows were Resolved vs. Needs Review, and that `data/intermediate/<stem>.<ext>` now holds the latest fixed data (raw unchanged).
+7. **Rebuild the report — mandatory, every pass (F30):**
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/rebuild_report.R "<project_root>"
+   ```
+   Re-runs M1–M13 against the latest data (`data/intermediate/` if any fixes were applied, else `data/raw/`) using the project's stored config, then drops any finding from the report whose live-tracking Status is now `Resolved`, or whose Issue ID no longer appears in `issue_tracking.xlsx` at all — display-only: the xlsx itself keeps full history unchanged, this only affects what `report.html` shows. Re-read `hfc/registry/findings.csv` and redraft the Summary narrative (`hfc/config/summary_message.md`, same approach as A4.7) against these fresh findings, then re-run with `--open`:
+   ```bash
+   Rscript .claude/skills/hfc-fieldloop/scripts/rebuild_report.R "<project_root>" --open
+   ```
+8. Tell the user which rows were Resolved vs. Needs Review, and that `data/intermediate/<stem>.<ext>` now holds the latest fixed data (raw unchanged).
 
 ---
 

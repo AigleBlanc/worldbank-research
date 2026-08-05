@@ -2,6 +2,15 @@
 # project scaffold under hfc/. Single output replaces the old separate
 # tracking.xlsx + feedback twin.
 
+# Derive the paired "plain name" column label from a configured entity_id
+# label — e.g. "Farmer ID" -> "Farmer Name". Strips a trailing " ID" if
+# present; otherwise just appends " Name" to whatever was configured.
+derive_entity_name_label <- function(entity_label) {
+    el <- trimws(entity_label)
+    stripped <- sub("\\s+[Ii][Dd]$", "", el)
+    if (nzchar(stripped) && !identical(stripped, el)) paste0(stripped, " Name") else paste0(el, " Name")
+}
+
 # Single source of truth for the issue-tracking schema: internal snake_case
 # name (used everywhere in R) -> assets/issue_tracking_template.csv header
 # label (used only at the file read/write boundary). Column order here is
@@ -10,11 +19,17 @@
 # tracking key (<module>:<entity>[:<variable>][:N]; see mk_findings() /
 # dedupe_finding_ids() in utils.R), needed because one submission can
 # produce several findings, so `unique_submission_id` alone can't key rows.
-issue_tracking_header_map <- function() {
+# `entity_label`: the project's configured entity label (role_map.yaml), so
+# the xlsx/csv header never shows the generic "Entity ID"/"Entity" when a
+# real label (e.g. "Farmer ID") is configured — same substitution the HTML
+# report's findings tables already apply.
+issue_tracking_header_map <- function(entity_label = NA_character_) {
+    eid <- if (!is.na(entity_label) && nzchar(entity_label)) entity_label else "Entity ID"
+    ename <- if (!is.na(entity_label) && nzchar(entity_label)) derive_entity_name_label(entity_label) else "Entity"
     c(
         today_date            = "Today's Date",
-        entity_id             = "Entity ID",
-        entity                = "Entity",
+        entity_id             = eid,
+        entity                = ename,
         group_id              = "Group ID",
         group                 = "Group",
         enumerator_id         = "Enumerator ID",
@@ -37,9 +52,9 @@ issue_tracking_header_map <- function() {
 # Rename internal snake_case columns to their display header labels, for
 # writing to disk in the shared sync folder. Columns not in the map pass
 # through unchanged.
-rename_to_issue_tracking_headers <- function(tbl) {
+rename_to_issue_tracking_headers <- function(tbl, entity_label = NA_character_) {
     tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
-    hmap <- issue_tracking_header_map()
+    hmap <- issue_tracking_header_map(entity_label)
     present <- intersect(names(hmap), names(tbl))
     names(tbl)[match(present, names(tbl))] <- hmap[present]
     tbl
@@ -47,9 +62,9 @@ rename_to_issue_tracking_headers <- function(tbl) {
 
 # Inverse of rename_to_issue_tracking_headers() — for reading from disk
 # back into internal snake_case names.
-rename_from_issue_tracking_headers <- function(tbl) {
+rename_from_issue_tracking_headers <- function(tbl, entity_label = NA_character_) {
     tbl <- as.data.frame(tbl, stringsAsFactors = FALSE)
-    hmap <- issue_tracking_header_map()
+    hmap <- issue_tracking_header_map(entity_label)
     inv <- setNames(names(hmap), hmap)
     present <- intersect(names(inv), names(tbl))
     names(tbl)[match(present, names(tbl))] <- inv[present]
@@ -131,18 +146,18 @@ normalize_issue_tracking_status <- function(tbl) {
 # Normalize Status, fill/reorder to the canonical column set, and rename to
 # display header labels — the one shared prep step every writer (local xlsx,
 # local csv) must apply identically so the live file stays consistent.
-prepare_tracking_display <- function(tbl) {
+prepare_tracking_display <- function(tbl, entity_label = NA_character_) {
     tbl <- normalize_issue_tracking_status(tbl)
     cols <- names(issue_tracking_header_map())
     for (c in cols) if (!c %in% names(tbl)) tbl[[c]] <- ""
     tbl <- tbl[, cols, drop = FALSE]
-    rename_to_issue_tracking_headers(tbl)
+    rename_to_issue_tracking_headers(tbl, entity_label)
 }
 
 # Write the issue-tracking csv + xlsx (Tracking/Findings/Instructions tabs).
-write_issue_tracking <- function(tbl, findings, xlsx_path, csv_path) {
+write_issue_tracking <- function(tbl, findings, xlsx_path, csv_path, entity_label = NA_character_) {
     suppressPackageStartupMessages({ library(openxlsx); library(readr) })
-    display <- prepare_tracking_display(tbl)
+    display <- prepare_tracking_display(tbl, entity_label)
 
     dir.create(dirname(csv_path), recursive = TRUE, showWarnings = FALSE)
     dir.create(dirname(xlsx_path), recursive = TRUE, showWarnings = FALSE)
@@ -195,7 +210,7 @@ blank_na_to_empty <- function(tbl) {
 }
 
 # Read the issue-tracking csv/xlsx back into internal snake_case columns.
-read_issue_tracking <- function(path, sheet = "Tracking") {
+read_issue_tracking <- function(path, sheet = "Tracking", entity_label = NA_character_) {
     suppressPackageStartupMessages({ library(readr); library(openxlsx) })
     ext <- tolower(tools::file_ext(path))
     raw <- if (ext == "csv") {
@@ -203,7 +218,7 @@ read_issue_tracking <- function(path, sheet = "Tracking") {
     } else {
         read_xlsx_verbatim_headers(path, sheet)
     }
-    normalize_issue_tracking_status(blank_na_to_empty(rename_from_issue_tracking_headers(raw)))
+    normalize_issue_tracking_status(blank_na_to_empty(rename_from_issue_tracking_headers(raw, entity_label)))
 }
 
 # Incrementally merge a freshly-computed snapshot (e.g. today's
@@ -247,6 +262,23 @@ merge_resolution_updates <- function(current, resolution_clone) {
     dplyr::bind_rows(merged, clone_only)
 }
 
+# Display-only filter for a post-resolution report rebuild (scripts/rebuild_report.R):
+# drops any finding whose live-tracking row has Status == "Resolved", and any
+# finding whose finding_id no longer appears in the live tracking file at
+# all (re-running the checks may no longer reproduce it, even if nobody
+# explicitly marked it Resolved). `issue_tracking.xlsx` itself is untouched —
+# this only changes what report.html shows; the tracking file keeps its full
+# history exactly as merge_preserve_existing() already guarantees elsewhere.
+filter_findings_by_tracking_status <- function(findings, tracking_tbl) {
+    if (is.null(findings) || nrow(findings) == 0) return(findings)
+    if (is.null(tracking_tbl) || nrow(tracking_tbl) == 0 || !"finding_id" %in% names(tracking_tbl)) {
+        return(findings[0, , drop = FALSE])
+    }
+    status <- toupper(trimws(as.character(tracking_tbl$status %||% "")))
+    keep_ids <- tracking_tbl$finding_id[status != "RESOLVED"]
+    findings[findings$finding_id %in% keep_ids, , drop = FALSE]
+}
+
 # Module code -> plain-English label + <=3-sentence description.
 # Keep in sync with references/check_modules.md ("Report display labels & descriptions").
 MODULE_ORDER <- paste0("M", 1:13)
@@ -271,7 +303,7 @@ MODULE_META <- list(
     M9 = list(label = "Straightlining",
                 desc = "Flags enumerators who gave the same answer on a question in most of their interviews, and submissions where most ordinal/Likert-style questions share one identical value."),
     M10 = list(label = "Summary Statistics",
-                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important numeric variables."),
+                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important variables — overall, and broken out per enumerator."),
     M11 = list(label = "Survey-Specific",
                 desc = "Flags logic issues specific to this survey's content (for example, a mismatch between a record saying something happened and the respondent's own answer), including any custom checks requested for this project."),
     M12 = list(label = "Media Files",
@@ -288,9 +320,22 @@ module_label <- function(code) {
     }, character(1), USE.NAMES = FALSE)
 }
 
-module_desc <- function(code) {
-    m <- MODULE_META[[as.character(code)]]
-    if (is.null(m)) "" else m$desc
+# `modules`: the project's confirmed modules.yaml list — when supplied and a
+# dynamic builder exists for this module code (module_desc.R), the
+# description states this project's actual configured thresholds instead of
+# the generic static text. Falls back to the static MODULE_META desc if
+# `modules` is NULL, the module has no dynamic builder, or the builder errors
+# on malformed config (never let a description-string failure break the
+# whole report build).
+module_desc <- function(code, modules = NULL) {
+    code <- as.character(code)
+    m <- MODULE_META[[code]]
+    static_desc <- if (is.null(m)) "" else m$desc
+    if (is.null(modules)) return(static_desc)
+    builder <- DYNAMIC_MODULE_DESC[[code]]
+    if (is.null(builder)) return(static_desc)
+    dyn <- tryCatch(builder(modules), error = function(e) NA_character_)
+    if (is.na(dyn) || !nzchar(dyn)) static_desc else dyn
 }
 
 # Human-readable labels for findings$category values, for the "By category"
@@ -338,12 +383,40 @@ category_label <- function(category) {
     }, character(1), USE.NAMES = FALSE)
 }
 
-# Order findings by enumerator, then submission_id, then date (most recent
-# first), for display. Blank/NA values in enumerator/submission_id are
-# grouped last (they mean "not applicable to this check") so individually
-# traceable rows surface first instead of interleaving with N/A rows.
+# Which direction counts as "worse" for a category's sort_value (see
+# mk_findings()'s sort_value_col) — "asc" means smaller = worse (e.g. a very
+# short interview), "desc" means larger = worse (e.g. a large GPS distance).
+# Categories absent from this map have no continuous badness measure (binary/
+# categorical checks like duplicates, form version, consent) and fall back to
+# the old enumerator/entity-ID order untouched.
+FINDING_SORT_DIRECTION <- c(
+    low_completion = "asc",
+    long_duration = "desc", short_duration = "asc",
+    irregular_time = "desc",
+    age_outlier = "desc", numeric_outlier = "desc",
+    high_missingness = "desc",
+    gps_distance = "desc",
+    straightlining_enum = "desc", straightlining_survey = "desc",
+    media_tiny = "asc", media_duration = "desc", media_dup = "desc"
+)
+
+# Order findings by module (M1..M13, in MODULE_ORDER), then "worst first"
+# within each module's block (direction from FINDING_SORT_DIRECTION, keyed by
+# category, applied to mk_findings()'s sort_value), then enumerator, then
+# submission_id (entity ID), then date (most recent first) as a final
+# tiebreak. Categories with no sort_value (NA) keep the old enumerator/
+# entity-ID/date order, matching pre-existing behavior exactly. Blank/NA
+# values in enumerator/submission_id are grouped last (they mean "not
+# applicable to this check") so individually traceable rows surface first
+# instead of interleaving with N/A rows.
 sort_findings_for_display <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
+    module_rank <- match(df$check_module, MODULE_ORDER)
+    module_rank[is.na(module_rank)] <- length(MODULE_ORDER) + 1L
+    direction <- unname(FINDING_SORT_DIRECTION[as.character(df$category)])
+    sv <- if ("sort_value" %in% names(df)) suppressWarnings(as.numeric(df$sort_value)) else rep(NA_real_, nrow(df))
+    has_badness <- !is.na(direction) & !is.na(sv)
+    badness <- ifelse(has_badness, ifelse(direction == "asc", -sv, sv), NA_real_)
     enum <- if ("enumerator" %in% names(df)) as.character(df$enumerator) else rep("", nrow(df))
     sid  <- if ("submission_id" %in% names(df)) as.character(df$submission_id) else rep("", nrow(df))
     enum[is.na(enum)] <- ""
@@ -355,7 +428,8 @@ sort_findings_for_display <- function(df) {
     } else rep(NA_character_, nrow(df))
     date_key <- suppressWarnings(as.numeric(as.Date(raw_date)))
     date_key[is.na(date_key)] <- -Inf
-    ord <- order(enum == "", enum, sid == "", sid, -date_key)
+    ord <- order(module_rank, !has_badness, -ifelse(has_badness, badness, 0),
+                 enum == "", enum, sid == "", sid, -date_key)
     df[ord, , drop = FALSE]
 }
 
@@ -448,7 +522,7 @@ format_pct_cols <- function(df) {
 # columns. M10 is already Title-Case — included for uniformity.
 STATS_COL_LABELS <- list(
     M1 = c(n = "Target", n_complete = "Completed surveys", pct_complete = "Completion",
-            group = "Group", group_var = "Group variable", value = "Value",
+            group = "Group", group_var = "Group", value = "Value",
             enumerator = "Enumerator", date = "Date"),
     M3 = c(version = "Version", n = "N", date_min = "First seen", date_max = "Last seen",
             date_start = "Window start", date_end = "Window end"),
@@ -459,6 +533,15 @@ STATS_COL_LABELS <- list(
     M10 = c(Variable = "Variable", Mean = "Mean", SD = "SD", Min = "Min", Max = "Max", Obs = "Obs")
 )
 
+STATS_BLOCK_COLLAPSE_AFTER <- 4L
+
+# Renders one table per named element of `mod_stats` (or a single "Summary"
+# table when given a bare data.frame). When there are more than
+# STATS_BLOCK_COLLAPSE_AFTER non-empty entries (e.g. M10's per-enumerator
+# breakdown), every entry except the first ("Overall", when present) renders
+# collapsed inside a <details> with a jump-index of links at the top — a flat
+# wall of 19 open tables (1 overall + 18 enumerators) isn't navigable
+# otherwise. Below the threshold, every table just renders open as before.
 render_stats_block <- function(mod_stats, prefix, col_labels = NULL) {
     if (is.null(mod_stats)) return("")
     esc <- function(x) {
@@ -470,25 +553,58 @@ render_stats_block <- function(mod_stats, prefix, col_labels = NULL) {
         x
     }
     if (is.data.frame(mod_stats)) mod_stats <- list(Summary = mod_stats)
+    present <- names(mod_stats)[vapply(mod_stats, function(df) is.data.frame(df) && nrow(df) > 0, logical(1))]
+    collapse <- length(present) > STATS_BLOCK_COLLAPSE_AFTER
+
+    index_links <- character()
     blocks <- character()
-    for (nm in names(mod_stats)) {
-        df <- mod_stats[[nm]]
-        if (is.null(df) || !is.data.frame(df) || !nrow(df)) next
-        df <- format_pct_cols(df)
+    for (nm in present) {
+        df <- format_pct_cols(mod_stats[[nm]])
         tid <- paste0("tbl-", prefix, "-", tolower(gsub("[^A-Za-z0-9]+", "-", nm)))
         label <- gsub("_", " ", nm)
         label <- paste0(toupper(substr(label, 1, 1)), substr(label, 2, nchar(label)))
-        blocks <- c(blocks, paste0(
-        "<h4>", esc(label), "</h4>",
-        html_searchable_table(df, names(df), tid, 10L, col_labels = col_labels)
+        table_html <- html_searchable_table(df, names(df), tid, 10L, col_labels = col_labels)
+        is_first <- identical(nm, present[[1]])
+        if (collapse && !is_first) {
+        # NOTE: html_searchable_table() already puts id="{tid}" on the
+        # <table> itself (and "{tid}-wrap" on its wrapper div) — the details
+        # anchor must use a third, distinct suffix to avoid a duplicate id.
+        index_links <- c(index_links, sprintf("<a href='#%s-details'>%s</a>", tid, esc(label)))
+        blocks <- c(blocks, sprintf(
+            "<details class='stats-details' id='%s-details'><summary>%s</summary>%s</details>",
+            tid, esc(label), table_html
         ))
+        } else {
+        blocks <- c(blocks, paste0("<h4>", esc(label), "</h4>", table_html))
+        }
     }
-    paste(blocks, collapse = "")
+    idx_html <- if (length(index_links)) {
+        paste0("<nav class='stats-index'>", paste(index_links, collapse = " &middot; "), "</nav>")
+    } else ""
+    paste0(idx_html, paste(blocks, collapse = ""))
+}
+
+SUMMARY_PLACEHOLDER_TEXT <- "Summary not yet drafted — findings are listed below by module."
+
+# hfc/config/summary_message.md — a short, agent-drafted narrative (Slack-
+# register, focused on the pressing issues: completion, duplicates,
+# irregular timing, custom checks) meant to be read at a glance each morning.
+# Plain free text, hand-authored directly by the agent after reviewing
+# findings — NOT reusing module_notes.yaml's overrides/custom schema, since
+# this is a different kind of content (a narrative message, not a per-module
+# description). Falls back to a placeholder when absent/empty (e.g. the very
+# first build, before the agent has seen any findings yet).
+read_summary_message <- function(project_root) {
+    path <- hfc_path(project_root, "config", "summary_message.md")
+    if (!file.exists(path)) return(NA_character_)
+    txt <- paste(readLines(path, warn = FALSE), collapse = "\n")
+    if (!nzchar(trimws(txt))) return(NA_character_)
+    txt
 }
 
 write_html_report <- function(findings, project_root, project_id, open = FALSE,
                                 roles = NULL, ds = NULL, report_cfg = NULL,
-                                module_notes = NULL, stats = NULL) {
+                                module_notes = NULL, stats = NULL, modules = NULL) {
     suppressPackageStartupMessages({ library(dplyr) })
     report_dir <- hfc_path(project_root, "outputs")
     dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
@@ -531,8 +647,6 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
     # tracking workbook keep natural order.
     findings <- sort_findings_for_display(findings)
 
-    by_cat <- if (nrow(findings)) findings %>% count(category, sort = TRUE) else
-        tibble(category = character(), n = integer())
     by_mod <- if (nrow(findings) && "check_module" %in% names(findings)) {
         findings %>% count(check_module, sort = TRUE)
     } else tibble(check_module = character(), n = integer())
@@ -547,14 +661,12 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
         )
     } else ""
 
-    # Display-only relabel: by_cat itself (and findings$category / the xlsx
-    # "Issue Category" export) always keep the raw machine value.
-    by_cat_display <- by_cat
-    by_cat_display$category <- category_label(by_cat_display$category)
-    cat_table <- html_searchable_table(
-        by_cat_display, c("category", "n"), "tbl-cats", 10L,
-        col_labels = list(category = "Category", n = "Count")
-    )
+    summary_msg <- read_summary_message(project_root)
+    summary_msg_html <- if (!is.na(summary_msg)) {
+        paste0("<div class='summary-narrative'>", gsub("\n", "<br/>", esc(summary_msg), fixed = TRUE), "</div>")
+    } else {
+        paste0("<div class='summary-narrative summary-placeholder'><em>", esc(SUMMARY_PLACEHOLDER_TEXT), "</em></div>")
+    }
 
     # Per-module sections. A module appears if it produced row-level findings
     # OR non-empty descriptive stats (M10 Summary Statistics never produces
@@ -582,7 +694,7 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
         '<a href="#%s">%s <sup class="mod-code">%s</sup></a>', aid, esc(module_label(mod)), esc(mod)
         ))
         desc_override <- module_notes$overrides[[mod]]
-        desc_text <- if (!is.null(desc_override) && nzchar(desc_override)) desc_override else module_desc(mod)
+        desc_text <- if (!is.null(desc_override) && nzchar(desc_override)) desc_override else module_desc(mod, modules)
         desc_html <- if (nzchar(desc_text)) paste0("<p class='mod-desc'>", esc(desc_text), "</p>") else ""
         custom_html <- ""
         if (identical(mod, "M11") && length(module_notes$custom)) {
@@ -709,7 +821,7 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
     ),
     vapply(modules_present, function(m) paste0(
       "<li><strong>", esc(module_label(m)), "</strong> <span class='mod-code'>", esc(m),
-      "</span> — ", esc(module_desc(m)), "</li>"
+      "</span> — ", esc(module_desc(m, modules)), "</li>"
     ), character(1)),
     if (has_gps) "<li><strong>Map</strong> — an interactive map of all submission locations; points flagged by GPS Location are shown in red. Click a point to see its unique ID.</li>",
     "<li><strong>All findings</strong> — every flagged row from every check module in one searchable table.</li>"
@@ -795,6 +907,13 @@ dl.glossary dd{margin:0 0 .5rem;color:var(--muted);font-size:.9rem}
 .custom-checks h3{margin:0 0 .3rem;font-size:.95rem;font-family:'IBM Plex Sans',system-ui,sans-serif}
 .custom-checks ul{margin:0;padding-left:1.1rem}
 .custom-checks li{margin:.25rem 0;color:var(--muted);font-size:.9rem}
+.summary-narrative{margin:.4rem 0 1rem;padding:.75rem 1rem;background:var(--card);border-left:4px solid var(--accent, #3d9a7a);border-radius:6px;line-height:1.5}
+.summary-placeholder{color:var(--muted);border-left-color:var(--line)}
+.stats-index{margin:.3rem 0 .8rem;font-size:.85rem;color:var(--muted)}
+.stats-index a{color:var(--accent);text-decoration:none}
+.stats-index a:hover{text-decoration:underline}
+details.stats-details{margin:.5rem 0}
+details.stats-details summary{cursor:pointer;font-weight:600;padding:.3rem 0;font-family:'IBM Plex Sans',system-ui,sans-serif}
 footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
 </style>
 <link href='https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,700&display=swap' rel='stylesheet'/>
@@ -806,8 +925,8 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     "<p class='meta'>Generated ", Sys.Date(), " · ", nrow(findings), " findings · ",
     dplyr::n_distinct(findings$category), " categories</p>",
     about_html,
-    "<section id='summary' class='card'><h2>Summary</h2>", summary_cards,
-    "<h3>By category</h3>", cat_table, "</section>",
+    "<section id='summary' class='card'><h2>Summary</h2>", summary_msg_html,
+    "<h3>By category</h3>", summary_cards, "</section>",
     lastday_html,
     paste(mod_sections, collapse = "\n"),
     map_html,
@@ -865,6 +984,15 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
       if(input){ input.value=''; applySearch(input); }
     });
   });
+  function openDetailsTarget(){
+    var h=location.hash;
+    if(!h) return;
+    var el=document.querySelector(h);
+    if(el && el.tagName==='DETAILS'){ el.open=true; el.scrollIntoView(); }
+  }
+  window.addEventListener('hashchange', openDetailsTarget);
+  window.addEventListener('DOMContentLoaded', openDetailsTarget);
+  openDetailsTarget();
 })();
 </script>",
     "</body></html>"

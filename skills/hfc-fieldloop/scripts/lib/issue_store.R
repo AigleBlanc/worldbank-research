@@ -60,21 +60,23 @@ require_sync_folder_ready <- function(project_root, skill_dir = NULL) {
 }
 
 #' Read a named tracking-shaped xlsx from the live location (or a subfolder),
-#' or NULL if it doesn't exist yet.
-read_named_tracking_file <- function(ctx, dest_name, subfolder = NULL) {
+#' or NULL if it doesn't exist yet. `entity_label`: project's configured
+#' entity label (role_map.yaml), so the file's own "Entity ID"/"Entity"-style
+#' header is read back correctly regardless of what it was configured as.
+read_named_tracking_file <- function(ctx, dest_name, subfolder = NULL, entity_label = NA_character_) {
   dir <- if (!is.null(subfolder)) .tracking_subfolder(ctx, subfolder) else ctx$local_dir
   path <- file.path(dir, dest_name)
   if (!file.exists(path)) return(NULL)
-  read_issue_tracking(path)
+  read_issue_tracking(path, entity_label = entity_label)
 }
 
 #' Write a tracking-shaped tibble as `dest_name` at the live location (or a
 #' subfolder) — single xlsx, no CSV twin (a CSV registry copy is kept only
 #' for the live issue_tracking.xlsx itself, see commit_issue_tracking()).
-write_named_tracking_file <- function(ctx, tbl, dest_name, subfolder = NULL) {
+write_named_tracking_file <- function(ctx, tbl, dest_name, subfolder = NULL, entity_label = NA_character_) {
   dir <- if (!is.null(subfolder)) .tracking_subfolder(ctx, subfolder) else ctx$local_dir
   xlsx_path <- file.path(dir, dest_name)
-  display <- prepare_tracking_display(tbl)
+  display <- prepare_tracking_display(tbl, entity_label)
   suppressPackageStartupMessages(library(openxlsx))
   wb <- createWorkbook(); addWorksheet(wb, "Tracking")
   writeData(wb, "Tracking", display); saveWorkbook(wb, xlsx_path, overwrite = TRUE)
@@ -92,20 +94,20 @@ delete_named_tracking_file <- function(ctx, dest_name, subfolder = NULL) {
 
 #' Fetch the current live issue_tracking.xlsx into internal snake_case
 #' columns. `tbl` is NULL if it doesn't exist yet (first-ever run).
-fetch_issue_tracking <- function(project_root, skill_dir = NULL) {
+fetch_issue_tracking <- function(project_root, skill_dir = NULL, entity_label = NA_character_) {
   ctx <- resolve_tracking_ctx(project_root, skill_dir)
   dest_name <- ctx$cfg$main_file %||% "issue_tracking.xlsx"
-  tbl <- read_named_tracking_file(ctx, dest_name)
+  tbl <- read_named_tracking_file(ctx, dest_name, entity_label = entity_label)
   c(ctx, list(tbl = tbl, dest_name = dest_name))
 }
 
 #' Commit tbl as the live issue_tracking.xlsx. No local-only copy is written
 #' anywhere else — the configured OneDrive-synced folder is the sole store;
 #' see the file header.
-commit_issue_tracking <- function(project_root, tbl, skill_dir = NULL, fetch_ctx = NULL) {
+commit_issue_tracking <- function(project_root, tbl, skill_dir = NULL, fetch_ctx = NULL, entity_label = NA_character_) {
   ctx <- fetch_ctx %||% resolve_tracking_ctx(project_root, skill_dir)
   dest_name <- ctx$cfg$main_file %||% "issue_tracking.xlsx"
-  write_named_tracking_file(ctx, tbl, dest_name)
+  write_named_tracking_file(ctx, tbl, dest_name, entity_label = entity_label)
 }
 
 snapshot_tracking_filename <- function(date = Sys.Date()) paste0(format(date, "%Y%m%d"), "_issue_tracking.xlsx")
@@ -113,19 +115,33 @@ snapshot_resolution_filename <- function(date = Sys.Date()) paste0(format(date, 
 
 #' Write/read today's intermediate/ snapshot (one per setup-build run; a
 #' same-day rerun overwrites today's file rather than appending a new one).
-write_tracking_snapshot <- function(ctx, tbl, date = Sys.Date()) {
-  write_named_tracking_file(ctx, tbl, snapshot_tracking_filename(date), subfolder = "intermediate")
+write_tracking_snapshot <- function(ctx, tbl, date = Sys.Date(), entity_label = NA_character_) {
+  write_named_tracking_file(ctx, tbl, snapshot_tracking_filename(date), subfolder = "intermediate", entity_label = entity_label)
 }
-read_tracking_snapshot <- function(ctx, date = Sys.Date()) {
-  read_named_tracking_file(ctx, snapshot_tracking_filename(date), subfolder = "intermediate")
+read_tracking_snapshot <- function(ctx, date = Sys.Date(), entity_label = NA_character_) {
+  read_named_tracking_file(ctx, snapshot_tracking_filename(date), subfolder = "intermediate", entity_label = entity_label)
 }
 
 #' Write/read today's resolutions/ clone (one working copy per "Process HFC
 #' feedback" day — a same-day second pass reuses the existing clone rather
 #' than discarding in-progress Status/Corrections edits).
-write_resolution_clone <- function(ctx, tbl, date = Sys.Date()) {
-  write_named_tracking_file(ctx, tbl, snapshot_resolution_filename(date), subfolder = "resolutions")
+write_resolution_clone <- function(ctx, tbl, date = Sys.Date(), entity_label = NA_character_) {
+  write_named_tracking_file(ctx, tbl, snapshot_resolution_filename(date), subfolder = "resolutions", entity_label = entity_label)
 }
-read_resolution_clone <- function(ctx, date = Sys.Date()) {
-  read_named_tracking_file(ctx, snapshot_resolution_filename(date), subfolder = "resolutions")
+read_resolution_clone <- function(ctx, date = Sys.Date(), entity_label = NA_character_) {
+  read_named_tracking_file(ctx, snapshot_resolution_filename(date), subfolder = "resolutions", entity_label = entity_label)
+}
+
+#' Load a project's configured entity_label from hfc/config/role_map.yaml —
+#' for scripts that don't already have `roles` loaded in memory (e.g.
+#' commit_merged_issue_tracking.R, merge_resolutions.R). Returns NA if the
+#' file or field is missing (reproduces the generic "Entity ID"/"Entity"
+#' header, same as today).
+load_entity_label <- function(project_root) {
+  path <- hfc_path(project_root, "config", "role_map.yaml")
+  if (!file.exists(path)) return(NA_character_)
+  cfg <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
+  lbl <- cfg$entity_label
+  if (is.null(lbl) || !nzchar(as.character(lbl))) return(NA_character_)
+  as.character(lbl)
 }

@@ -17,13 +17,14 @@ sanitize_finding_id <- function(finding_id) gsub("[^A-Za-z0-9_.-]", "_", finding
 #' unless today's clone already exists (a same-day second pass reuses it
 #' rather than discarding in-progress Status/Corrections edits).
 clone_for_resolution_pass <- function(project_root, skill_dir = NULL, date = Sys.Date()) {
-  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir)
-  existing <- read_resolution_clone(ctx, date = date)
+  entity_label <- load_entity_label(project_root)
+  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir, entity_label = entity_label)
+  existing <- read_resolution_clone(ctx, date = date, entity_label = entity_label)
   if (!is.null(existing)) {
     return(list(status = "reused", n = nrow(existing)))
   }
   if (is.null(ctx$tbl)) stop("No issue_tracking.xlsx found — run the setup build first.")
-  write_resolution_clone(ctx, ctx$tbl, date = date)
+  write_resolution_clone(ctx, ctx$tbl, date = date, entity_label = entity_label)
   list(status = "created", n = nrow(ctx$tbl))
 }
 
@@ -32,23 +33,25 @@ clone_for_resolution_pass <- function(project_root, skill_dir = NULL, date = Sys
 #' Comment, Entity ID, Variable, Value, Issue Category, etc.
 list_open_commented_rows <- function(project_root, skill_dir = NULL, date = Sys.Date()) {
   suppressPackageStartupMessages({ library(dplyr) })
-  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir)
-  clone <- read_resolution_clone(ctx, date = date)
+  entity_label <- load_entity_label(project_root)
+  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir, entity_label = entity_label)
+  clone <- read_resolution_clone(ctx, date = date, entity_label = entity_label)
   if (is.null(clone)) stop("No resolutions/ clone for today — run clone_for_resolution_pass() first.")
   clone %>% filter(toupper(as.character(status)) == "OPEN", nzchar(as.character(ril_comment)))
 }
 
 #' Update one row's Status/Corrections in today's resolutions clone only.
 .update_clone_row <- function(project_root, skill_dir, date, finding_id, new_status, corrections_text = NULL) {
-  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir)
-  clone <- read_resolution_clone(ctx, date = date)
+  entity_label <- load_entity_label(project_root)
+  ctx <- fetch_issue_tracking(project_root, skill_dir = skill_dir, entity_label = entity_label)
+  clone <- read_resolution_clone(ctx, date = date, entity_label = entity_label)
   if (is.null(clone)) stop("No resolutions/ clone for today — run clone_for_resolution_pass() first.")
   if (!finding_id %in% clone$finding_id) stop("Issue ID not found in today's resolutions clone: ", finding_id)
   clone$status[clone$finding_id == finding_id] <- new_status
   if (!is.null(corrections_text)) {
     clone$corrections[clone$finding_id == finding_id] <- corrections_text
   }
-  write_resolution_clone(ctx, clone, date = date)
+  write_resolution_clone(ctx, clone, date = date, entity_label = entity_label)
   invisible(clone)
 }
 
