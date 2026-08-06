@@ -3,16 +3,16 @@
 # scripts/rebuild_report.R (Pipeline B's post-resolution report refresh)
 # need identically. Extracted so the two scripts can't drift apart on what
 # "running the checks" actually means.
-run_checks_and_write_registry <- function(project_root, ds, roles, modules, skill_dir) {
+run_checks_and_write_registry <- function(code_output_dir, ds, roles, modules, skill_dir, target_ds = NULL) {
     message("Running checks...")
-    check_res <- run_check_modules(ds, roles, modules, project_root = project_root)
+    check_res <- run_check_modules(ds, roles, modules, code_output_dir = code_output_dir, target_ds = target_ds)
     findings <- check_res$findings
     stats <- check_res$stats
     message("Findings: ", nrow(findings))
 
-    readr::write_csv(findings, hfc_path(project_root, "registry", "findings.csv"))
-    write_check_scripts(project_root, modules, skill_dir = skill_dir)
-    write_main_r(project_root, skill_dir = skill_dir)
+    readr::write_csv(findings, hfc_path(code_output_dir, "registry", "findings.csv"))
+    write_check_scripts(code_output_dir, modules, skill_dir = skill_dir)
+    write_main_r(code_output_dir, skill_dir = skill_dir)
 
     list(findings = findings, stats = stats)
 }

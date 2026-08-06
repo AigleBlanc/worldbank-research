@@ -1,8 +1,8 @@
 # Refresh hfc/outputs/report.html after a "Process HFC feedback" pass —
-# re-runs M1-M13 against the latest data (data/intermediate/ if any fixes
-# were applied, else data/raw/) using the project's already-confirmed
-# hfc/config/role_map.yaml + modules.yaml (read as-is, never re-profiled or
-# re-derived), then drops from the REPORT (not from issue_tracking.xlsx,
+# re-runs M1-M13 against the latest data (<sibling of input_data_dir>/intermediate/
+# if any fixes were applied, else the original file in input_data_dir) using
+# the project's already-confirmed hfc/config/role_map.yaml + modules.yaml
+# (read as-is, never re-profiled or re-derived), then drops from the REPORT (not from issue_tracking.xlsx,
 # which keeps full history unchanged) any finding whose live-tracking Status
 # is now Resolved, or whose Issue ID no longer appears in the live tracking
 # file at all.
@@ -14,7 +14,7 @@
 # already-committed live file and filter the report against it, never to
 # merge into it again.
 #
-# Usage: Rscript rebuild_report.R <project_root> [--open]
+# Usage: Rscript rebuild_report.R [--open]
 
 `%||%` <- function(a, b) {
     if (is.null(a) || length(a) == 0) return(b)
@@ -54,8 +54,6 @@ source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
-if (!length(args)) stop("Usage: rebuild_report.R <project_root> [--open]")
-project_root <- normalizePath(decode_file_arg(args[[1]]), mustWork = FALSE)
 do_open <- "--open" %in% args
 
 suppressPackageStartupMessages({
@@ -63,15 +61,16 @@ suppressPackageStartupMessages({
     library(yaml); library(jsonlite); library(lubridate); library(tibble)
 })
 
-require_sync_folder_ready(project_root, skill)
+cfg_ctx <- require_fieldloop_config_ready(skill)
+cfg <- cfg_ctx$cfg
 
-role_map_path <- hfc_path(project_root, "config", "role_map.yaml")
-modules_path <- hfc_path(project_root, "config", "modules.yaml")
-proj_yaml_path <- hfc_path(project_root, "project.yaml")
+role_map_path <- hfc_path(cfg$code_output_dir, "config", "role_map.yaml")
+modules_path <- hfc_path(cfg$code_output_dir, "config", "modules.yaml")
+proj_yaml_path <- hfc_path(cfg$code_output_dir, "project.yaml")
 if (!file.exists(role_map_path) || !file.exists(modules_path) || !file.exists(proj_yaml_path)) {
     stop(
-    "No prior build found for this project (missing role_map.yaml / modules.yaml / project.yaml under hfc/config or hfc/) — ",
-    "run the setup build first: Rscript run_setup_build.R \"", project_root, "\""
+    "No prior build found (missing role_map.yaml / modules.yaml / project.yaml under hfc/config or hfc/) — ",
+    "run the setup build first: Rscript run_setup_build.R"
     )
 }
 
@@ -79,37 +78,45 @@ roles <- yaml::read_yaml(role_map_path)
 modules <- yaml::read_yaml(modules_path)
 proj_yaml <- yaml::read_yaml(proj_yaml_path)
 data_rel <- proj_yaml$data_file
-project_id <- proj_yaml$project_id %||% basename(project_root)
+project_id <- proj_yaml$project_id %||% derive_project_id(cfg$input_data_dir)
 entity_label <- roles$entity_label %||% NA_character_
 
-message("Loading latest data for: ", project_root)
-ds <- load_latest_dataset(project_root, data_rel)
+message("Loading latest data for: ", cfg$input_data_dir)
+ds <- load_latest_dataset(cfg$input_data_dir, data_rel)
 
-form_path <- hfc_path(project_root, "instruments", "form.xlsx")
+form_path <- hfc_path(cfg$code_output_dir, "instruments", "form.xlsx")
 if (file.exists(form_path) && exists("parse_form_relevance", mode = "function")) {
     attr(ds, "hfc_form_map") <- parse_form_relevance(form_path)
 }
 
-module_notes_path <- hfc_path(project_root, "config", "module_notes.yaml")
+module_notes_path <- hfc_path(cfg$code_output_dir, "config", "module_notes.yaml")
 module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes_path) else NULL
 
-res <- run_checks_and_write_registry(project_root, ds, roles, modules, skill)
+# When the confirmed completion signal is "roster", reload the target/sample
+# list so check_m1() can recompute target-vs-actual completion (read-only,
+# never mutated, never copied).
+target_ds <- NULL
+if (identical(roles$completion_primary_signal, "roster") &&
+    !is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
+    target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
+}
+res <- run_checks_and_write_registry(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
 
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
+ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label)
 if (is.null(ctx$tbl)) {
-    stop("No issue_tracking.xlsx found in the shared sync folder — nothing to filter the report against. Run the setup build first.")
+    stop("No issue_tracking.xlsx found in the configured OneDrive output folder — nothing to filter the report against. Run the setup build first.")
 }
 filtered <- filter_findings_by_tracking_status(res$findings, ctx$tbl)
 message("Findings after dropping Resolved/untracked: ", nrow(filtered), " of ", nrow(res$findings))
 
 report_cfg <- list(map_focus = roles$map_focus %||% "country")
 html_path <- write_html_report(
-    filtered, project_root, project_id, open = do_open,
+    filtered, cfg$code_output_dir, project_id, open = do_open,
     roles = roles, ds = ds, report_cfg = report_cfg, module_notes = module_notes,
     stats = res$stats, modules = modules
 )
 
-report_copy <- copy_report_to_sync_folder(project_root, project_id, skill_dir = skill, html_path)
+report_copy <- copy_report_to_sync_folder(project_id, skill_dir = skill, html_path)
 
 message("Done. HTML: ", html_path)
 message("Report copy: ", report_copy$status, " (", report_copy$reason %||% "", ") ", report_copy$dest_path %||% "(none)")

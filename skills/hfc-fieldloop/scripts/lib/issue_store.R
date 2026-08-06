@@ -1,9 +1,9 @@
 # Single source of truth for "where does issue_tracking.xlsx live, right now."
-# The configured shared sync folder (assets/lib/sync_folder.json, enabled:
-# true + local_path) is REQUIRED and is the SOLE store — there is no
-# separate local-only copy in the product. local_path points at a folder
-# something outside this skill (in practice, the OneDrive desktop app)
-# already keeps synced to the cloud, so every read/write here is plain
+# The configured OneDrive output folder (skills/hfc-fieldloop/config.json's
+# onedrive_output_dir) is REQUIRED and is the SOLE store — there is no
+# separate local-only copy in the product. onedrive_output_dir points at a
+# folder something outside this skill (in practice, the OneDrive desktop
+# app) already keeps synced to the cloud, so every read/write here is plain
 # filesystem I/O — see scripts/lib/sync_folder.R for the small amount of
 # primitive logic (config loading, folder creation, report copy) this file
 # builds on.
@@ -13,39 +13,40 @@
 #   resolutions/<YYYYMMDD>_issues_resolution.xlsx — one working clone per
 #                                                    "Process HFC feedback" day
 # NOTE naming collision: this "intermediate/" (tracking snapshots) is
-# unrelated to data/intermediate/ (fixed microdata, see write_intermediate()
-# in utils.R) — always use the qualified path when referring to either.
+# unrelated to data/intermediate/ (fixed microdata, sibling of the
+# configured input_data_dir — see write_intermediate() in utils.R) — always
+# use the qualified path when referring to either.
 
-# Resolve where the live file lives right now — the configured shared sync
-# folder — computed once per script invocation and threaded through the
-# read/write calls below so a script only resolves this once.
-resolve_tracking_ctx <- function(project_root, skill_dir = NULL) {
-  if (is.null(skill_dir) || is.na(skill_dir)) skill_dir <- skill_dir_guess(project_root)
-  cfg <- load_sync_folder_config(project_root, skill_dir)
+# Resolve where the live file lives right now — the configured OneDrive
+# output folder — computed once per script invocation and threaded through
+# the read/write calls below so a script only resolves this once.
+resolve_tracking_ctx <- function(skill_dir = NULL) {
+  if (is.null(skill_dir) || is.na(skill_dir)) skill_dir <- skill_dir_guess()
+  cfg <- load_fieldloop_config(skill_dir)
   if (!isTRUE(cfg$found)) {
-    return(list(ready = FALSE, cfg = cfg, local_dir = NA_character_, reason = cfg$reason %||% "sync_folder_unavailable"))
+    return(list(ready = FALSE, cfg = cfg, local_dir = NA_character_, reason = cfg$reason %||% "config_unavailable"))
   }
-  ensure_local_folder(cfg$local_path)
-  if (!dir.exists(cfg$local_path)) {
-    return(list(ready = FALSE, cfg = cfg, local_dir = NA_character_, reason = "local_path_not_creatable"))
+  ensure_local_folder(cfg$onedrive_output_dir)
+  if (!dir.exists(cfg$onedrive_output_dir)) {
+    return(list(ready = FALSE, cfg = cfg, local_dir = NA_character_, reason = "onedrive_output_dir_not_creatable"))
   }
-  list(ready = TRUE, cfg = cfg, local_dir = cfg$local_path, reason = "ok")
+  list(ready = TRUE, cfg = cfg, local_dir = cfg$onedrive_output_dir, reason = "ok")
 }
 
-#' Hard-require that a configured, reachable shared sync folder exists
-#' before doing any real work — the product has no local-only path. Every
-#' user-facing entry point (the CLI scripts under scripts/) calls this
-#' immediately after resolving project_root, before anything else. Returns
-#' the resolved ctx (always ready == TRUE) on success; stop()s with setup
-#' instructions otherwise.
-require_sync_folder_ready <- function(project_root, skill_dir = NULL) {
-  ctx <- resolve_tracking_ctx(project_root, skill_dir)
+#' Hard-require that config.json is fully configured and its OneDrive output
+#' folder is reachable before doing any real work — the product has no
+#' local-only path. Every user-facing entry point (the CLI scripts under
+#' scripts/) calls this immediately after resolving the skill dir, before
+#' anything else. Returns the resolved ctx (always ready == TRUE) on
+#' success; stop()s with setup instructions otherwise.
+require_fieldloop_config_ready <- function(skill_dir = NULL) {
+  ctx <- resolve_tracking_ctx(skill_dir)
   if (!isTRUE(ctx$ready)) {
     stop(
-      "A configured shared sync folder is required before running HFC FieldLoop — issue tracking has no local-only fallback.\n",
+      "skills/hfc-fieldloop/config.json must be fully configured before running HFC FieldLoop.\n",
       "  1. Rscript <skill_dir>/install.R\n",
       "  2. Make sure OneDrive's desktop app is installed and signed in on this machine, and note the local folder it syncs to.\n",
-      "  3. Edit <skill_dir>/assets/lib/sync_folder.json: set \"enabled\": true and \"local_path\" to that folder's absolute local path.\n",
+      "  3. Edit <skill_dir>/config.json: set input_data_dir, onedrive_output_dir, and code_output_dir (media_dir is optional).\n",
       "Reason it wasn't ready just now: ", ctx$reason %||% "unknown"
     )
   }
@@ -94,18 +95,18 @@ delete_named_tracking_file <- function(ctx, dest_name, subfolder = NULL) {
 
 #' Fetch the current live issue_tracking.xlsx into internal snake_case
 #' columns. `tbl` is NULL if it doesn't exist yet (first-ever run).
-fetch_issue_tracking <- function(project_root, skill_dir = NULL, entity_label = NA_character_) {
-  ctx <- resolve_tracking_ctx(project_root, skill_dir)
+fetch_issue_tracking <- function(skill_dir = NULL, entity_label = NA_character_) {
+  ctx <- resolve_tracking_ctx(skill_dir)
   dest_name <- ctx$cfg$main_file %||% "issue_tracking.xlsx"
   tbl <- read_named_tracking_file(ctx, dest_name, entity_label = entity_label)
   c(ctx, list(tbl = tbl, dest_name = dest_name))
 }
 
 #' Commit tbl as the live issue_tracking.xlsx. No local-only copy is written
-#' anywhere else — the configured OneDrive-synced folder is the sole store;
+#' anywhere else — the configured OneDrive output folder is the sole store;
 #' see the file header.
-commit_issue_tracking <- function(project_root, tbl, skill_dir = NULL, fetch_ctx = NULL, entity_label = NA_character_) {
-  ctx <- fetch_ctx %||% resolve_tracking_ctx(project_root, skill_dir)
+commit_issue_tracking <- function(tbl, skill_dir = NULL, fetch_ctx = NULL, entity_label = NA_character_) {
+  ctx <- fetch_ctx %||% resolve_tracking_ctx(skill_dir)
   dest_name <- ctx$cfg$main_file %||% "issue_tracking.xlsx"
   write_named_tracking_file(ctx, tbl, dest_name, entity_label = entity_label)
 }
@@ -137,8 +138,8 @@ read_resolution_clone <- function(ctx, date = Sys.Date(), entity_label = NA_char
 #' commit_merged_issue_tracking.R, merge_resolutions.R). Returns NA if the
 #' file or field is missing (reproduces the generic "Entity ID"/"Entity"
 #' header, same as today).
-load_entity_label <- function(project_root) {
-  path <- hfc_path(project_root, "config", "role_map.yaml")
+load_entity_label <- function(code_output_dir) {
+  path <- hfc_path(code_output_dir, "config", "role_map.yaml")
   if (!file.exists(path)) return(NA_character_)
   cfg <- tryCatch(yaml::read_yaml(path), error = function(e) NULL)
   lbl <- cfg$entity_label

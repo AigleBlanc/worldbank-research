@@ -1,11 +1,11 @@
-# Setup build for a drop-in project root.
-# Rscript run_setup_build.R <project_root> [--open] [--sample N]
-# A shared sync folder must already be configured (assets/lib/sync_folder.json's
-# local_path pointed at a folder the OneDrive desktop app is syncing) — there
-# is no local-only mode.
+# Setup build, driven entirely by skills/hfc-fieldloop/config.json.
+# Rscript run_setup_build.R [--open] [--sample N]
+# config.json must already be configured (input_data_dir, onedrive_output_dir,
+# code_output_dir required; media_dir optional) — there is no local-only mode.
 #
 # Reads optional hfc/config/modules.yaml; otherwise uses profile defaults.
-# All product artifacts land under <project_root>/hfc/.
+# All product artifacts land under <code_output_dir>/hfc/. Raw microdata is
+# read in place from input_data_dir and never copied anywhere.
 
 `%||%` <- function(a, b) {
     if (is.null(a) || length(a) == 0) return(b)
@@ -49,15 +49,9 @@ source(file.path(lib, "product_structure.R"))
 source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 
-# Step 2: parse CLI args — project root + flags.
+# Step 2: parse CLI flags — no positional args anymore, everything comes from config.json.
 args <- commandArgs(trailingOnly = TRUE)
-project_root <- if (length(args) && !startsWith(args[[1]], "--")) {
-    normalizePath(decode_file_arg(args[[1]]), mustWork = FALSE)
-} else {
-    project_root_from_skill(skill)
-}
-
-do_open <- "--open" %in% args || "--open" %in% commandArgs(trailingOnly = TRUE)
+do_open <- "--open" %in% args
 sample_n <- NA_integer_
 if ("--sample" %in% args) {
     i <- match("--sample", args)
@@ -69,38 +63,35 @@ suppressPackageStartupMessages({
     library(yaml); library(jsonlite); library(lubridate); library(tibble)
 })
 
-# Step 2b: a configured shared sync folder is required — no local fallback.
-# Fail fast, before any other work, with setup instructions rather than
-# silently proceeding.
-require_sync_folder_ready(project_root, skill)
+# Step 2b: config.json must be fully configured and its OneDrive output
+# folder reachable — no local fallback. Fail fast, before any other work,
+# with setup instructions rather than silently proceeding.
+cfg_ctx <- require_fieldloop_config_ready(skill)
+cfg <- cfg_ctx$cfg
 
-# Step 3: scaffold hfc/ and drop the skill-tree browser page.
-message("Project root: ", project_root)
-ensure_project_dirs(project_root)
-write_product_structure_html(project_root, open = FALSE)
+# Step 3: scaffold hfc/ under code_output_dir and drop the skill-tree browser page.
+message("Input data dir: ", cfg$input_data_dir)
+message("Code output dir: ", cfg$code_output_dir)
+ensure_project_dirs(cfg$code_output_dir)
+write_product_structure_html(cfg, open = FALSE)
 
-# Step 4: find the microdata (+ optional form) under data/raw/.
-disc <- discover_project(project_root, create_raw_if_missing = TRUE)
+# Step 4: find the microdata (+ optional form) inside the configured input_data_dir only.
+disc <- discover_project(cfg$input_data_dir)
+if (identical(disc$status, "missing_dir")) {
+    stop("input_data_dir does not exist: ", cfg$input_data_dir)
+}
 if (identical(disc$status, "missing_data")) {
-    stop("No microdata found under data/raw/. Drop a .dta/.csv/.xlsx and re-run.")
+    stop("No microdata found in input_data_dir (", cfg$input_data_dir, "). Drop a .dta/.csv/.xlsx there and re-run.")
 }
 
 data_path <- disc$data$path
 form_path <- if (!is.null(disc$form)) disc$form$path else NA_character_
 
-# Step 5: symlink/copy the data (+ form) into data/raw/ and hfc/instruments/
-# if they weren't already there (e.g. discovered elsewhere in the project).
-raw_dest <- file.path(project_root, "data", "raw", basename(data_path))
-if (!file.exists(raw_dest) || !identical(normalizePath(data_path), normalizePath(raw_dest, mustWork = FALSE))) {
-    if (!file.exists(raw_dest)) {
-    ok <- FALSE
-    try(ok <- file.symlink(normalizePath(data_path), raw_dest), silent = TRUE)
-    if (!isTRUE(ok) && !file.exists(raw_dest)) file.copy(data_path, raw_dest)
-    }
-    data_path <- raw_dest
-}
+# Step 5: copy the form (survey instrument, not respondent data) into
+# hfc/instruments/form.xlsx. Raw microdata is never copied — it's read in
+# place from input_data_dir below.
 if (!is.na(form_path) && file.exists(form_path)) {
-    form_dest <- hfc_path(project_root, "instruments", "form.xlsx")
+    form_dest <- hfc_path(cfg$code_output_dir, "instruments", "form.xlsx")
     if (!identical(normalizePath(form_path, mustWork = FALSE),
                     normalizePath(form_dest, mustWork = FALSE))) {
     file.copy(form_path, form_dest, overwrite = TRUE)
@@ -111,20 +102,17 @@ if (!is.na(form_path) && file.exists(form_path)) {
 message("Loading: ", data_path)
 ds <- load_microdata(data_path, sample_n = sample_n)
 
-# Step 7: locate the media folder for M12 on-disk audio/image checks.
-media_folder <- disc$media_folder %||% NA_character_
-if (is.null(media_folder) || (length(media_folder) == 1 && is.na(media_folder))) {
-    mf <- discover_media_folder(project_root, data_path)
-    media_folder <- mf$path
-}
-if (isTRUE(disc$media_folder_found) || (!is.na(media_folder) && nzchar(media_folder))) {
+# Step 7: media folder for M12 on-disk audio/image checks — configured
+# directly via config.json's media_dir, optional.
+media_folder <- cfg$media_dir %||% NA_character_
+if (!is.na(media_folder) && nzchar(media_folder)) {
     message("Media folder: ", media_folder)
 } else {
-    message("Media folder: (not found — M12 on-disk checks will be skipped if media cols exist)")
+    message("Media folder: (not configured — M12 on-disk checks will be skipped if media cols exist)")
 }
 
 # Step 8: heuristically detect column roles (id, group, gps, enum, …).
-roles <- profile_roles(ds, media_folder = media_folder)
+roles <- profile_roles(ds, media_folder = media_folder, roster_candidate = disc$roster_candidate)
 if (length(roles$entity_id_rationale)) {
     message("Entity ID shortlist:\n  ", paste(roles$entity_id_rationale, collapse = "\n  "))
 }
@@ -134,7 +122,7 @@ if (length(roles$entity_id_rationale)) {
 # are loaded/defaulted next — default_modules() reads roles$important_vars,
 # so this must happen first or a true first-ever build (no modules.yaml yet)
 # would silently ignore an already-confirmed important-variables shortlist.
-role_map_path <- hfc_path(project_root, "config", "role_map.yaml")
+role_map_path <- hfc_path(cfg$code_output_dir, "config", "role_map.yaml")
 role_map_existed <- file.exists(role_map_path)
 if (role_map_existed) {
     saved <- yaml::read_yaml(role_map_path)
@@ -175,19 +163,47 @@ if (role_map_existed) {
     if (!is.null(saved$important_vars) && length(saved$important_vars)) {
         roles$important_vars <- unlist(saved$important_vars)
     }
+    # Completion signal + grouping confirmations (SKILL.md A1's required-gate
+    # window / module-bundle tabs) persist here too; reload rather than
+    # re-deriving so a confirmed answer survives rebuilds.
+    if (!is.null(saved$completion_primary_signal) && nzchar(as.character(saved$completion_primary_signal))) {
+        roles$completion_primary_signal <- as.character(saved$completion_primary_signal)
+    }
+    if (!is.null(saved$completion_status_col) && nzchar(as.character(saved$completion_status_col))) {
+        roles$completion_status_col <- as.character(saved$completion_status_col)
+    }
+    if (!is.null(saved$completion_status_complete_values) && length(saved$completion_status_complete_values)) {
+        roles$completion_status_complete_values <- unlist(saved$completion_status_complete_values)
+    }
+    if (!is.null(saved$completion_roster_key_col) && nzchar(as.character(saved$completion_roster_key_col))) {
+        roles$completion_roster_key_col <- as.character(saved$completion_roster_key_col)
+    }
+    if (!is.null(saved$completion_primary_secondary_col) && nzchar(as.character(saved$completion_primary_secondary_col))) {
+        roles$completion_primary_secondary_col <- as.character(saved$completion_primary_secondary_col)
+    }
+    if (!is.null(saved$completion_primary_value) && nzchar(as.character(saved$completion_primary_value))) {
+        roles$completion_primary_value <- as.character(saved$completion_primary_value)
+    }
+    if (!is.null(saved$treatment_control_col) && nzchar(as.character(saved$treatment_control_col))) {
+        roles$treatment_control_col <- as.character(saved$treatment_control_col)
+    }
+    if (!is.null(saved$geo_group_col) && nzchar(as.character(saved$geo_group_col))) {
+        roles$geo_group_col <- as.character(saved$geo_group_col)
+    }
+    if (!is.null(saved$geo_group_opted_in)) {
+        roles$geo_group_opted_in <- isTRUE(saved$geo_group_opted_in)
+    }
+    if (!is.null(saved$qualitative_text_cols) && length(saved$qualitative_text_cols)) {
+        roles$qualitative_text_cols <- unlist(saved$qualitative_text_cols)
+    }
 }
 
 # Step 10: load confirmed module config if it exists (from a prior run /
 # AskUserQuestion confirm), else fall back to profiled defaults (now using
 # the possibly-reloaded roles above) and write it.
-modules_path <- hfc_path(project_root, "config", "modules.yaml")
+modules_path <- hfc_path(cfg$code_output_dir, "config", "modules.yaml")
 if (file.exists(modules_path)) {
     modules <- yaml::read_yaml(modules_path)
-    if (!is.null(modules$M12) &&
-        (is.null(modules$M12$media_folder) || is.na(modules$M12$media_folder) ||
-        !nzchar(as.character(modules$M12$media_folder[[1]])))) {
-    modules$M12$media_folder <- media_folder
-    }
 } else {
     modules <- default_modules(roles)
     yaml::write_yaml(modules, modules_path)
@@ -199,11 +215,11 @@ if (role_map_existed && !is.null(modules$M2)) {
 # Step 11: persist the (possibly reloaded) roles + a human-readable option-
 # card dump for reference.
 yaml::write_yaml(roles, role_map_path)
-writeLines(format_module_cards(roles), hfc_path(project_root, "config", "module_cards.txt"))
+writeLines(format_module_cards(roles), hfc_path(cfg$code_output_dir, "config", "module_cards.txt"))
 
 # Step 12: form relevance for nested skip-logic
 form_map <- parse_form_relevance(if (!is.na(form_path) && file.exists(form_path)) form_path else
-    hfc_path(project_root, "instruments", "form.xlsx"))
+    hfc_path(cfg$code_output_dir, "instruments", "form.xlsx"))
 attr(ds, "hfc_form_map") <- form_map
 
 # Step 13: report config (map focus etc.) — folded into role_map.yaml
@@ -213,29 +229,38 @@ report_cfg <- list(map_focus = roles$map_focus %||% "country")
 # Step 14: human-readable notes for custom/M11 checks (and optional per-module
 # description overrides), authored during the Additional-checks confirm step.
 # Optional file.
-module_notes_path <- hfc_path(project_root, "config", "module_notes.yaml")
+module_notes_path <- hfc_path(cfg$code_output_dir, "config", "module_notes.yaml")
 module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes_path) else NULL
 
 # Steps 15-16: the actual work — run every confirmed M1–M13 + custom check,
 # then write registry outputs (shared with scripts/rebuild_report.R).
-res <- run_checks_and_write_registry(project_root, ds, roles, modules, skill)
+# When the confirmed completion signal is "roster", load the target/sample
+# list (read-only, never mutated, never copied anywhere) so check_m1() can
+# compute target-vs-actual completion against it.
+target_ds <- NULL
+if (identical(roles$completion_primary_signal, "roster") &&
+    !is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
+    target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
+    if (is.null(target_ds)) message("Could not load roster/target file: ", roles$completion_roster_candidate$path)
+}
+res <- run_checks_and_write_registry(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
 findings <- res$findings
 stats <- res$stats
 
-# Step 17: fetch the live issue_tracking.xlsx from the shared sync folder
-# (see scripts/lib/issue_store.R), write this run's fresh findings as today's
-# intermediate/ snapshot, then either commit directly (first-ever run —
-# nothing to merge against) or merge and stop for the agent to confirm (a
-# prior file exists: merging must never silently overwrite field/RA/agent
-# work on the live shared file).
+# Step 17: fetch the live issue_tracking.xlsx from the configured OneDrive
+# output folder (see scripts/lib/issue_store.R), write this run's fresh
+# findings as today's intermediate/ snapshot, then either commit directly
+# (first-ever run — nothing to merge against) or merge and stop for the agent
+# to confirm (a prior file exists: merging must never silently overwrite
+# field/RA/agent work on the live shared file).
 entity_label <- roles$entity_label %||% NA_character_
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
+ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label)
 fb_new <- findings_to_issue_tracking(findings)
 write_tracking_snapshot(ctx, fb_new, entity_label = entity_label)
 
 merge_pending <- FALSE
 if (is.null(ctx$tbl)) {
-    commit_issue_tracking(project_root, fb_new, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
+    commit_issue_tracking(fb_new, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
     issue_tracking_status <- "created"
 } else {
     merged <- merge_preserve_existing(ctx$tbl, fb_new)
@@ -244,38 +269,35 @@ if (is.null(ctx$tbl)) {
     issue_tracking_status <- "merge_pending"
 }
 
-# Step 18: mirror the skill's sync-folder config into hfc/ for the record
-# (this copy is informational only — the live config always stays in the
-# skill's own assets/lib/sync_folder.json).
-drv_cfg <- load_sync_folder_config(project_root, skill)
-if (isTRUE(drv_cfg$found)) {
-    cfg_dest <- hfc_path(project_root, "config", "sync_folder.json")
-    dir.create(dirname(cfg_dest), showWarnings = FALSE, recursive = TRUE)
-    if (!identical(normalizePath(drv_cfg$path, mustWork = FALSE),
-                    normalizePath(cfg_dest, mustWork = FALSE))) {
-        file.copy(drv_cfg$path, cfg_dest, overwrite = TRUE)
-    }
+# Step 18: mirror config.json into hfc/ for the record (this copy is
+# informational only — the live config always stays at
+# skills/hfc-fieldloop/config.json).
+cfg_dest <- hfc_path(cfg$code_output_dir, "config", "config.json")
+dir.create(dirname(cfg_dest), showWarnings = FALSE, recursive = TRUE)
+if (!identical(normalizePath(cfg$path, mustWork = FALSE),
+                normalizePath(cfg_dest, mustWork = FALSE))) {
+    file.copy(cfg$path, cfg_dest, overwrite = TRUE)
 }
 
 # Step 19: assemble the project's own metadata file (data path, config
 # pointers) — written after the report copy is done below.
-project_id <- basename(project_root)
+project_id <- derive_project_id(cfg$input_data_dir)
 proj_yaml <- list(
     project_id = project_id,
-    data_file = file.path("data", "raw", basename(data_path)),
+    data_file = basename(data_path),
     instrument = if (!is.na(form_path)) "hfc/instruments/form.xlsx" else NULL,
     report_type = "html",
     map_focus = report_cfg$map_focus %||% "country",
     shiny_later = TRUE,
     issue_tracking_merge_pending = merge_pending,
-    sync_folder_config = "hfc-fieldloop/assets/lib/sync_folder.json",
+    config_file = "config.json",
     created = as.character(Sys.time()),
     n_findings = nrow(findings)
 )
 
 # Step 20: build the navigable HTML report (optionally auto-opened).
 html_path <- write_html_report(
-    findings, project_root, project_id, open = do_open,
+    findings, cfg$code_output_dir, project_id, open = do_open,
     roles = roles, ds = ds, report_cfg = report_cfg, module_notes = module_notes,
     stats = stats, modules = modules
 )
@@ -283,15 +305,15 @@ html_path <- write_html_report(
 # Step 21: copy the report into the OneDrive-synced folder (passive sharing
 # — OneDrive's own sync client propagates it to the cloud from there), then
 # finish + persist project.yaml.
-report_copy <- copy_report_to_sync_folder(project_root, project_id, skill_dir = skill, html_path)
-yaml::write_yaml(proj_yaml, hfc_path(project_root, "project.yaml"))
+report_copy <- copy_report_to_sync_folder(project_id, skill_dir = skill, html_path)
+yaml::write_yaml(proj_yaml, hfc_path(cfg$code_output_dir, "project.yaml"))
 
 message("Done. HTML: ", html_path)
-message("Product root: ", hfc_root(project_root))
+message("Product root: ", hfc_root(cfg$code_output_dir))
 message("Issue tracking folder: ", ctx$local_dir %||% "(unavailable)", " (", ctx$reason %||% "", ")")
 if (merge_pending) {
     message("MERGE_PENDING: review merged_issue_tracking.xlsx before overwriting issue_tracking.xlsx.")
-    message("  Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R \"<project_root>\" merged_issue_tracking.xlsx")
+    message("  Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merged_issue_tracking.xlsx")
 } else {
     message("issue_tracking.xlsx created fresh (first build).")
 }

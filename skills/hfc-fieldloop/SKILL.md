@@ -4,158 +4,173 @@ description: >-
   Drop-in HFC FieldLoop skill for a survey project folder in VS Code + Claude Code.
   Use when the user says "Run HFC FieldLoop", "Start FieldLoop", "Process HFC feedback",
   "Run FieldLoop fixes", or "Apply field feedback", or invokes /hfc-fieldloop. Discovers
-  data/form, confirms check modules with AskUserQuestion option cards, builds the HTML
-  report and checks under hfc/, and keeps one shared issue_tracking.xlsx in OneDrive
-  (required — no local fallback), or runs the post-feedback fix pipeline, writing
-  agent-authored fixes to data/intermediate/.
+  data/form, confirms setup with the agent's own best guess (never a long menu of
+  choices), builds the HTML report and checks under hfc/, and keeps one shared
+  issue_tracking.xlsx in OneDrive (required — no local fallback), or runs the
+  post-feedback fix pipeline, writing agent-authored fixes to a sibling intermediate/
+  folder next to the configured Input Data Directory.
 ---
 
 # HFC FieldLoop (drop-in project skill — Claude Code)
 
-Copy this folder into a survey project as **`.claude/skills/hfc-fieldloop/`** (Claude Code discovers skills there). The **survey project root** is the parent of `.claude/` (three levels above this skill directory). Product docs: `README.md`, skill tree map: `structure.html`, deps: `install.R`.
+Copy this folder anywhere as **`.claude/skills/hfc-fieldloop/`** (Claude Code discovers skills there), then configure **`config.json`** at this skill's root with four directories: **Input Data Directory** (survey microdata), **Media Folder Directory** (optional — audio/image attachments; reserved for future use, no check currently reads it), **OneDrive Folder Directory** (a OneDrive-synced folder for the shared `issue_tracking.xlsx`), and **Code Output Directory** (a git working copy the user manages themselves — World Bank practice prefers versioned code/config output; this skill only ever writes plain files there, never runs git). There is no "survey project root" concept — the skill never searches for data, and the built product is decoupled from wherever the raw data lives. Product docs: `README.md`, skill tree map: `hfc/structure.html` (generated), deps: `install.R`.
 
-Supporting files resolve via `${CLAUDE_SKILL_DIR}` (this skill directory) or relative paths from the survey root:
+Supporting files resolve via `${CLAUDE_SKILL_DIR}` (this skill directory); every script reads its paths from `config.json`, not from CLI arguments:
 
 ```bash
-Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R . --open
-Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" "<project_root>" --open
+Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R --open
+Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" --open
 ```
 
-**Built product** (`config/`, `instruments/`, `registry/`, `outputs/`, `code/` — with `code/checks/` and `code/resolutions/`) always lands under **`hfc/`** next to `data/raw/` and this skill. `issue_tracking.xlsx` itself lives entirely in OneDrive (required — see A0c), not under `hfc/`. Open `hfc/structure.html` in a browser and AskUserQuestion **Continue** before writing the full package.
+**Built product** (`config/`, `instruments/`, `registry/`, `outputs/`, `code/` — with `code/checks/` and `code/resolutions/`) always lands under **`hfc/`** inside the configured Code Output Directory. `issue_tracking.xlsx` itself lives entirely in the configured OneDrive Folder Directory (required — see A0), not under `hfc/`. Open `hfc/structure.html` in a browser and AskUserQuestion **Continue** before writing the full package.
 
 Two pipelines — choose by the user's prompt (see `references/prompts.md`):
 
 | Intent | Trigger examples | What you do |
 |---|---|---|
-| **A. Setup** | "Run HFC FieldLoop" (+ `for <project>` if workspace is a monorepo) | Discover → AskUserQuestion confirms → `hfc/` outline → build → open HTML |
-| **B. Post-feedback** | "Process HFC feedback" (+ `for <project>` when needed) | Clone → list Open+RIL-Comment rows → per row: read + write fix code → apply (single pass) → merge back → confirm → commit |
+| **A. Setup** | "Run HFC FieldLoop" | Discover → confirm (guess + corrections) → `hfc/` outline → build → open HTML |
+| **B. Post-feedback** | "Process HFC feedback" | Clone → list Open+RIL-Comment rows → per row: read + write fix code → apply (single pass) → merge back → confirm → commit |
 
 Authority (read; do not invent standards):
 
-- `references/interaction.md` — **AskUserQuestion** UX (required for all gates; multiple-choice, not typed mega-strings)
-- `references/check_modules.md` — M1–M13 option-card specs + required-fields gate + nested skip-logic
+- `references/interaction.md` — **AskUserQuestion** UX (required for all gates; guess-then-correct, not typed mega-strings)
+- `references/check_modules.md` — M1–M13 specs + the required-gate window + nested skip-logic
 - `references/issue_tracking_schema.md` — the issue-tracking file's schema, including the `Status` lifecycle
 - `references/checklist.md` — package completeness
-- `references/flags.md` — failure modes (incl. F19–F29)
+- `references/flags.md` — failure modes
 - `references/prompts.md` — exact trigger phrases
 - `references/ai_use.md` — no PII to commercial AI
 
 Helpers (prefer `Rscript` rather than reimplementing):
 
-- `scripts/lib/discover.R` — find/create `data/raw`, classify data vs form
-- `scripts/preview_modules.R` — build/open `hfc/check_modules.html`, a tree preview of proposed module defaults (run before the pace question, A2.3)
-- `scripts/run_setup_build.R` — build after modules confirmed (project root as arg); writes under `hfc/`
+- `scripts/lib/discover.R` — scan the configured Input Data Directory only, classify data vs. form vs. a candidate roster/target-sample file
+- `scripts/preview_modules.R` — build/open `hfc/check_modules.html`, a tree preview of proposed module defaults (run before A2's confirmation windows)
+- `scripts/run_setup_build.R` — build after modules confirmed (reads `config.json`, no positional args); writes under `hfc/` in the Code Output Directory
 - `scripts/rebuild_report.R` — post-resolution report refresh (Pipeline B step 7): re-runs checks against the latest data, drops Resolved/untracked findings from `report.html` only (`issue_tracking.xlsx` keeps full history)
 - `scripts/apply_feedback.R` — post-feedback CLI (`clone` / `list-open` / `apply` / `needs-review`); fix logic is agent-authored, see `scripts/lib/apply_feedback_helpers.R`
 - `scripts/merge_issues.R` / `scripts/merge_resolutions.R` — fold a dated snapshot / resolutions clone back into `issue_tracking.xlsx`, producing a `merged_*.xlsx` for the agent to review
 - `scripts/commit_merged_issue_tracking.R` — the only script that ever overwrites the live `issue_tracking.xlsx`, run only after explicit AskUserQuestion confirmation
 - `assets/issue_tracking_template.csv` — schema template
 - `assets/README_template.md` / `assets/README_example.md` — draft project README on setup
-- `assets/check_templates/` — M1–M13 real, runnable per-module scripts, copied into `hfc/code/checks/` at build time (same logic as `scripts/lib/run_checks.R`'s `check_mN()` functions, `scripts/lib/media.R` for M12)
-- `scripts/lib/media.R` — detect media cols, media folder, M12 file checks
-- `scripts/lib/geo_timezone.R` — country → IANA timezone lookup/resolver for M5
+- `assets/summary_message_example.md` — annotated calibration example for the A4 Summary narrative
+- `assets/check_templates/` — M1–M13 real, runnable per-module scripts, copied into `hfc/code/checks/` at build time (same logic as `scripts/lib/run_checks.R`'s `check_mN()` functions, `scripts/lib/media.R` for M12); the Input Data Directory is read live from `config.json` each time a copied script runs, not frozen at generation time
+- `scripts/lib/media.R` — detect media-indicating columns; M12 now flags only a column that's completely empty across every surveyed row, no on-disk file access
+- `scripts/lib/geo_timezone.R` — country → IANA timezone lookup/resolver for M5, and for the country-confirm tab in A1
 - `scripts/lib/form_logic.R` — SurveyCTO relevance / nested skip-logic helper + M4's group/section parsing
 - `scripts/lib/product_structure.R` — write `hfc/structure.html`
 - `scripts/lib/check_modules_preview.R` — write `hfc/check_modules.html`
 - `scripts/lib/module_desc.R` — per-module report descriptions computed from this project's actual configured thresholds
 - `scripts/lib/pipeline_core.R` — shared "run checks + write registry" step used by both `run_setup_build.R` and `rebuild_report.R`
 
-## Interactive confirms (AskUserQuestion)
+## Interactive confirms (AskUserQuestion) — guess first, correct if wrong
 
 **Required.** Read and follow `references/interaction.md`.
 
-- Use the **AskUserQuestion** tool for every gate (Claude Code multiple-choice UI). Do not ask the user to type `M1=Y M2=…` or similar mega-strings.
-- **2–4 options per question**; Claude Code supplies free-text **Other** automatically — do **not** add an explicit `Other` option.
-- **1–4 questions** per AskUserQuestion call; one call per assistant turn when sequencing gates.
-- Fallback only if AskUserQuestion is unavailable: short numbered list with the same options; user replies with a single number/letter — still not long free-form module strings.
+The core pattern for every confirm in this skill: **the agent always states its own best guess first, in plain language, then gives the user one free-text way to correct anything wrong** — never a long menu of options to choose between. Two structural terms used throughout this doc:
+
+- **Window** = one `AskUserQuestion` tool call.
+- **Tab** = one `question` entry inside that call. A window can hold up to 4 tabs, all shown to the user together as a single interaction.
+
+Rules:
+
+- Every tab's message states the agent's guess(es) as plain declarative sentences (e.g. "The entity here is: Household. I will use this name across the reports in place of hhld_id."), not a question the user has to interpret or a list of options to pick between.
+- Every tab has exactly one non-`Other` option along the lines of **"Looks right (recommended)"** — Claude Code supplies free-text **Other** automatically, and that IS the correction box; do not add a separate explicit "Corrections" option.
+- Bundle related confirms into the same tab (never more than one tab per check module) and the same window wherever this doc says so — the goal is the fewest possible windows, not the fewest words per tab.
+- Fallback only if AskUserQuestion is unavailable: state the guesses as a numbered list in chat and ask the user to reply "looks right" or describe corrections — still not a typed mega-string like `M1=Y M2=N`.
 
 ## Operating principles
 
 1. Phases that write files wait for explicit AskUserQuestion confirmation (no silent proceed).
-2. Never mutate original microdata in `data/raw/` — agent-authored fixes write to `data/intermediate/<stem>.<ext>` instead (one evolving file, sibling of `data/raw/`).
-3. Confirm via **option cards**, not free-text module strings. Max ~8–12 cards after data confirm — never 100 per-column questions.
-4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). OneDrive is **required** (no local fallback in the product — see A0c): once `assets/lib/sync_folder.json` has `"enabled": true` and `"local_path"` pointed at a folder the OneDrive desktop app is syncing, that folder is the **sole store** — every read/write is plain file I/O against it, and OneDrive's own sync client (not this skill) propagates changes to the cloud, so there is never a separate local-only copy. Two dated-snapshot subfolders live alongside it, inside the same synced folder: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. Folder location lives in the skill's own `assets/lib/sync_folder.json` — the only file that matters, edited directly, no per-project override, no auth step or secrets in this package. The folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
+2. Never mutate original microdata in the configured Input Data Directory — agent-authored fixes write to `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` instead (one evolving file, never inside the git-tracked Code Output Directory).
+3. **Guess first, correct if wrong** (see Interactive confirms above) — every setup confirm states the agent's own best guess and gives one free-text correction option, never a long menu of choices. This applies to every window in A1 and A2 below.
+4. Feedback: **one shared file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same file (RIL Comment/Corrections/Status all live in the same sheet; no separate audit twin). OneDrive is **required** (no local fallback in the product — see A0): once `config.json`'s **OneDrive Folder Directory** points at a folder the OneDrive desktop app is syncing, that folder is the **sole store** — every read/write is plain file I/O against it, and OneDrive's own sync client (not this skill) propagates changes to the cloud, so there is never a separate local-only copy. Two dated-snapshot subfolders live alongside it, inside the same synced folder: `intermediate/<YYYYMMDD>_issue_tracking.xlsx` (one per setup-build run) and `resolutions/<YYYYMMDD>_issues_resolution.xlsx` (the agent's working clone during a "Process HFC feedback" pass) — see `references/issue_tracking_schema.md`. All four directories live in the skill's own `config.json` — the only file that matters, edited directly, no per-project override, no auth step or secrets in this package. The OneDrive folder is then shared manually (by whoever owns it) with collaborators via OneDrive's "Specific people" sharing UI.
 5. After HTML build, auto-open with `utils::browseURL()` (or OS `open`).
-6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **selected** options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed (step 9 below), and `role_map.yaml`'s `important_vars` from the confirmed shortlist (step 10 below).
-7. M11 (Survey-Specific) has no built-in checks and defaults to **off / empty** — every M11 finding comes from a custom check the agent writes for this survey's specific content, driven entirely by what the user describes at the Additional-checks gate (step 8).
-8. **Additional-checks gate is mandatory, every run (F23):** immediately after module cards/Accept-all, always run the "Additional checks?" AskUserQuestion (`No additional checks` recommended / Other automatic). Never infer "no" silently, never fold it into the pace question, never skip it because Accept-all was chosen. If Other, also write the custom check's ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (see step A2.9).
-9. Draft project-root `README.md` from `assets/README_template.md`; confirm with AskUserQuestion once. Point to `references/ai_use.md`.
-10. **M12 media:** if audio/image filename columns exist, propose M12 ON. AskUserQuestion for media folder if not discovered. Proceed with column-only checks if folder missing. Never put filename cols under M13.
-11. **Required-fields hard gate:** after data confirm, and before any module cards, confirm FIVE fields in sequence — (a) Entity ID (single column, or a confirmed multi-column composite key; shortlist ≤3/≤4 candidates, F20) — the analysis-unit identifier, not necessarily row-unique, (b) Entity Label — what to call it in the HTML report (e.g. "Student ID"), display-only, (c) the duplicate-check key (Entity ID alone, auto-resolved when already unique, or Entity ID + confirmed extra column(s) like round/wave, F27), (d) country/countries of data collection + resolved timezone, always shown back for confirmation, never trusted silently (F24), and (e) last date of data collection, used for report-wide bold-highlighting and the Last Day tab (F25). Persist all five to `hfc/config/role_map.yaml`.
-12. **Nested questions:** when form `relevant` says a child item is skipped, do not flag blanks as missing (F22).
-13. All product code/artifacts under **`hfc/`** (F21).
-14. **Report-wide sort & highlight:** every table sorts by enumerator, then unique ID, then date (most recent first); every finding matching the confirmed last date renders bold, and appears in the dedicated Last Day tab.
+6. **Must** write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from the user's **confirmed** (guessed-then-corrected) options **before** calling the builder; also write `hfc/config/module_notes.yaml` whenever a custom check was confirmed, and `role_map.yaml`'s `important_vars` from the confirmed shortlist.
+7. M11 (Survey-Specific) has no built-in checks and defaults to **off / empty** — every M11 finding comes from a custom check the agent writes for this survey's specific content, driven entirely by what the user describes in the Extra-checks tab (A2, Window C).
+8. **Extra-checks confirm is mandatory, every run:** part of Window C (A2) — always state "No additional checks" as the guess, with Other available for the user to describe a custom need. Never skip this tab, never treat silence elsewhere as an implicit "no."
+9. Draft `<Code Output Directory>/README.md` from `assets/README_template.md`; confirm with AskUserQuestion once. Point to `references/ai_use.md`.
+10. **M12 media, redesigned:** the ONLY thing to flag is a media-indicating column that is completely empty across every surveyed row (a form/coding problem — the field isn't showing up in the enumerator's app, or the question is misconfigured) — never per-row file hygiene, and no on-disk file access at all. Confirm which columns indicate media presence (audio/image filename columns, plus any qualitative open-text columns the agent itself identifies) in the GPS+Media tab (A2, Window B). Never put filename cols under M13.
+11. **Completion is redefined:** it means whether all PLANNED surveys were conducted, not whether a started survey finished. The agent detects a completion signal (a status column, a target/roster file, or a primary/secondary sample column) and confirms it in the required-gate window's Tab 2 (A1) — only when a signal is actually found; if none is found, M1 falls back to its original row-missingness heuristic and nothing else changes. Once confirmed, if a "status" signal shows some rows were not completed, EVERY other check module (M2–M13, M10) runs only on the completed/surveyed subset — incomplete rows are filtered out before any other check sees them. M1 itself always sees the full picture (the complete dataset, or the roster/target list).
+12. **Grouping defaults to Treatment/Control**, not geography — M1's completion-by-group stats table groups by a detected Treatment/Control column first. Geography is only used when no Treatment/Control column exists, or the user explicitly opts in to it alongside Treatment/Control (default: declined — ask about this only when a Treatment/Control column was actually found).
+13. **Redundant/near-duplicate variables** (e.g. `treat` vs. `treat_ext`, `age` vs. `age_calc`): always silently keep the single most reasonable one in every shortlist you propose — never present both as if independently meaningful, and never ask the user to pick between them.
+14. **Country inference must come from geography in the data** (district/region/village/site names, or a GPS bounding box), never from the input folder's name/basename — that's a report-title convenience only, not a location signal.
+15. **Be careful about assent vs. consent** — they are different concepts (assent = the child/minor's own agreement; consent = the parent/guardian's, or an adult respondent's own). Confirm the column mapping explicitly, naming which column maps to which concept, in its own tab (A2, Window C) — never bundled with anything else.
+16. **Nested questions:** when form `relevant` says a child item is skipped, do not flag blanks as missing.
+17. All product code/artifacts under **`hfc/`**.
+18. **Report-wide sort & highlight:** every table sorts by enumerator, then unique ID, then date (most recent first); every finding matching the confirmed last date renders bold, and appears in the dedicated Last Day tab.
 
 ---
 
 ## Pipeline A — Setup
 
-### A0. Resolve project root
+### A0. Config pre-flight (mandatory, every run)
 
-**Survey project root** = folder containing `data/raw/` for *this* survey, and `.claude/skills/hfc-fieldloop/` when this skill is installed as a drop-in. Not the VS Code workspace root when that workspace is a monorepo.
+There is no "survey project root" and no local-only mode — everything is driven by `skills/hfc-fieldloop/config.json`, naming four directories: **Input Data Directory**, **Media Folder Directory** (optional), **OneDrive Folder Directory**, **Code Output Directory** (Input Data Directory, OneDrive Folder Directory, Code Output Directory are required). Before proceeding to A0b/A1, verify `config.json` is fully configured — real paths, not the shipped `<...>` placeholders (this is exactly what `require_fieldloop_config_ready()` in `scripts/lib/issue_store.R` checks — every CLI script in this skill calls it automatically and `stop()`s with the same instructions below, naming the specific missing field, so this gate is also enforced in code, not just in this doc).
 
-Resolution order:
-
-1. **Named in the prompt** — e.g. `for test/malawi1`, `project: malawi1`, `@test/malawi1` → use that path.
-2. **Skill lives at `<survey>/.claude/skills/hfc-fieldloop/`** — `project_root = dirname(dirname(dirname(skill_dir)))` (parent of `.claude/`).
-3. Otherwise **AskUserQuestion**: list up to 4 candidate project folders (Other is automatic).
-
-Never run discover/build against the monorepo root when a nested survey project was named or chosen.
-
-If packages may be missing: `Rscript <project_root>/.claude/skills/hfc-fieldloop/install.R` (or `Rscript "${CLAUDE_SKILL_DIR}/install.R"`).
+- **If it's already fully configured:** say so briefly in chat (name the three configured directories) and continue to A0b — no AskUserQuestion needed, there's no choice to make.
+- **If any required field is missing or still a placeholder:** stop here. Tell the user, in this order: (1) run `Rscript <skill_dir>/install.R` if packages might be missing, (2) make sure the OneDrive desktop app is installed and signed in on this machine, and note the local folder it syncs to, (3) edit `<skill_dir>/config.json` — set Input Data Directory, OneDrive Folder Directory, and Code Output Directory to real absolute paths (Media Folder Directory optional) — this is skill-level config, applies to every run using this skill copy. Do not proceed with Pipeline A or B until they confirm this is done and the pre-flight succeeds.
 
 ### A0b. Config-reuse gate
 
-Immediately after project root is resolved, check whether `hfc/config/role_map.yaml` **and** `hfc/config/modules.yaml` already exist (a prior run). If neither exists, skip straight to A1 — nothing to reuse yet. If they exist, **AskUserQuestion** before touching anything else:
+Immediately after the config pre-flight passes, check whether `hfc/config/role_map.yaml` **and** `hfc/config/modules.yaml` already exist under the configured Code Output Directory (a prior run). If neither exists, skip straight to A1 — nothing to reuse yet. If they exist, **AskUserQuestion** before touching anything else:
 
-- **Reuse existing configuration and rebuild** (recommended) — proceed straight to A4 build with the saved configs; skip A1's required-fields gate and A2's module cards (the existing reload logic in `run_setup_build.R` already handles this — no new code needed).
+- **Reuse existing configuration and rebuild** (recommended) — proceed straight to A4 build with the saved configs; skip A1 and A2 entirely (the existing reload logic in `run_setup_build.R` already handles this — no new code needed).
 - **Start fresh** — delete `hfc/config/role_map.yaml` and `hfc/config/modules.yaml` (only those two files), then run A1–A4 normally as a first-ever setup.
 - **Open the config files for me to edit, then continue** — tell the user the paths (`hfc/config/role_map.yaml`, `hfc/config/modules.yaml`), wait for them to confirm they're done editing, then proceed straight to A4 build; the existing reload logic picks up their hand-edited values automatically.
 
-### A0c. OneDrive pre-flight (mandatory, every run)
+### A1. Discover + confirm setup (one window)
 
-OneDrive is required — there is no local-only mode. It's accessed as a plain local folder that the OneDrive desktop app keeps synced to the cloud, not via any API/sign-in — so before proceeding to A1, verify it's configured and reachable: `assets/lib/sync_folder.json` must have `"enabled": true` with a real `local_path` pointing at an existing (or creatable) local directory (this is exactly what `require_sync_folder_ready()` in `scripts/lib/issue_store.R` checks — every CLI script in this skill calls it automatically and `stop()`s with the same instructions below, so this gate is also enforced in code, not just in this doc).
+1. Run discovery in the configured Input Data Directory only — no searching elsewhere (`discover_project()`). This also surfaces a `roster_candidate` — a second file that looks like a target/planned-sample list, distinct from the main data file — used by the completion-signal detection in step 6.
+2. **If nothing is found:** tell the user to drop files into the configured Input Data Directory, then try again. Do not proceed without data.
+3. Form optional: proceed data-only; note M11 / M3 / nested logic weaker.
+4. Profile roles automatically — none of the following are separately confirmed; they surface only through Tab 1's guess text below, correctable via its free-text box:
+   - **Entity ID**: `shortlist_entity_ids()`'s top candidate.
+   - **Entity Label**: a Title-Case guess for what to call the entity (e.g. "Household" for a column named `hhld_id`) — used everywhere the entity is displayed: the HTML report's findings tables *and* the xlsx/csv issue-tracking export.
+   - **Duplicate-check key**: auto-resolved — Entity ID alone if already 100% unique in the raw data, else Entity ID + the top `detect_duplicate_key_candidates()` hit.
+   - **Media-indicating columns**: `detect_media_vars()` for audio/image filename columns, plus any qualitative/open-text columns the agent itself identifies as capturing qualitative data — name these explicitly in the message, don't silently invent a list with no basis in the data.
+5. **Country**: if an explicit country-name/code column exists (`shortlist_country_columns()`), use it directly and resolve its timezone(s) via `resolve_country_timezone_column()` (`scripts/lib/geo_timezone.R`). If not, read the sampled values from `shortlist_geography_signal_cols()` (district/region/village/site-name-like columns, plus a GPS bounding box if coordinates exist) and use your own general-knowledge judgment to state a best-guess country — **never infer this from the input folder's name/basename**, that's a report-title convenience only. Resolve the guessed country's timezone via `resolve_country_timezone()` and state it in the same message — a resolved timezone is always shown back for confirmation, never trusted silently.
+6. **Detect the completion signal** (`detect_completion_signal()` in `scripts/lib/profile_roles.R`) — up to three types, and more than one can be present at once:
+   - **status** — an explicit per-row outcome column (e.g. `result`: Complete/Incomplete/Refused) with both complete- and non-complete-looking values.
+   - **roster** — the `roster_candidate` from step 1: a second file that looks like a target/planned-sample list.
+   - **primary_secondary** — a column within the surveyed data marking each row Primary or Secondary sample (no separate roster).
+   If **none** are detected, there's nothing to confirm here — proceed without Tab 2, and M1 falls back to its original row-missingness heuristic.
+   If **exactly one** is detected, state it as a normal guess in Tab 2.
+   If **more than one** is detected, do NOT silently pick — Tab 2's message must explicitly name the conflict (e.g. *"I found both a status column (`result`) and what looks like a roster file (`sample_list.csv`) — I'll use the status column by default since it's the most direct signal, but tell me if the roster should take priority instead."*) and flag it as needing a closer look, not a routine guess.
+7. **One `AskUserQuestion` window, 1–2 tabs:**
 
-- **If it's already configured and reachable:** say so briefly in chat (name the configured folder) and continue to A1 — no AskUserQuestion needed, there's no choice to make.
-- **If it isn't configured, or the path isn't reachable:** stop here. Tell the user, in this order: (1) run `Rscript <skill_dir>/install.R` if packages might be missing, (2) make sure the OneDrive desktop app is installed and signed in on this machine, and note the local folder it syncs to, (3) edit `assets/lib/sync_folder.json` — set `"enabled": true` and `"local_path"` to that folder's absolute path — this is skill-level config, applies to every project using this skill copy. Do not proceed with Pipeline A or B until they confirm this is done and the pre-flight succeeds.
+   **Tab 1 ("Confirm setup", always present):**
+   ```
+   Discovered project details: <one-line summary>. Type a text to tell me what to correct if my guesses are inaccurate.
+   - Data and media files: <path to data file>; audio files are in <column/description>; photos are in <column/description> (only mention modalities that actually exist)
+   - The entity here is: <Entity Label>. I will use this name across the reports in place of <raw column name>.
+   - Data Collection Country: <Country>. I will check time zones using <IANA tz>.
+   ```
+   Options: `Looks right (recommended)` (Other supplies the correction box).
 
-### A1. Discover data + survey
+   **Tab 2 ("Completion", only when step 6 found at least one signal):** states the agent's interpretation (or the explicit conflict framing from step 6), same `Looks right (recommended)` / Other pattern.
+8. Persist everything confirmed (including any corrections from step 7) to `hfc/config/role_map.yaml`: `entity_id`, `entity_id_sep`, `entity_label`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `qualitative_text_cols`, `completion_primary_signal`, `completion_status_col`, `completion_status_complete_values`, `completion_roster_candidate`, `completion_roster_key_col`, `completion_primary_secondary_col`, `completion_primary_value`.
 
-1. Run discovery under `project_root` (not workspace root unless they are the same).
-2. Search `data/raw/`, `data/`, `instrument/`, project root for microdata and optional form.
-3. **If found:** show path, size, nrow/ncol (data) or sheet names (form). **AskUserQuestion** (≤4 options; Other automatic):
-   - Use discovered paths (recommended)
-   - Pick different paths
-   - Wait — I will upload / drop files
-4. **If not found / Wait:** create `data/raw/` if missing; tell user to drop files; AskUserQuestion again after they continue. Do not proceed without data.
-5. Form optional: proceed data-only; note M11 / M3 / nested logic weaker.
-6. **Required-fields gate (mandatory, immediately after data confirm, before any module cards) — five sequential AskUserQuestion sub-gates, in this order:**
-   1. **Entity ID:** the analysis-unit identifier (person/household/school/whatever level the user wants) — ask single column vs. combine multiple columns (e.g. household_id + member_id). If single: shortlist ≤3 candidates (name/label/uniqueness rationale via `shortlist_entity_ids()`). If composite: `multiSelect: true` over ≤4 candidates from `shortlist_composite_entity_ids()`; after selection, report joint uniqueness inline in chat. Note: Entity ID is **not** necessarily row-unique (e.g. a household surveyed across multiple rounds keeps the same Entity ID) — that's what the next sub-gate is for. Do not proceed without a choice (F20).
-   2. **Entity Label:** ask what to call the Entity ID (e.g. "Student ID", "Household ID") — offer "Entity ID" (generic, recommended) vs. Other (free text). Applies everywhere the entity is displayed: the HTML report's findings tables *and* the xlsx/csv issue-tracking export (its paired plain-name column, e.g. "Entity", becomes "Student Name").
-   3. **Duplicate-check key:** check whether Entity ID (as just confirmed) is already 100% unique per row in the raw data. If yes, auto-resolve to "Entity ID alone" and say so inline in chat — do **not** fire an AskUserQuestion for this common case. If Entity ID repeats, ask: *"Entity ID repeats in your data — does that reflect real duplicates, or do you need extra columns (e.g. round/wave) to check for true duplicates?"* — options: Entity ID alone / add detected candidate column(s) (`detect_duplicate_key_candidates()`, `multiSelect: true`, ≤4) / Other. Do not skip when Entity ID repeats (F27).
-   4. **Country(ies) + timezone:** ask single vs. multiple countries. If multiple, shortlist a country-indicator column (`shortlist_country_columns()`), resolve each value's timezone (`resolve_country_timezone_column()` in `scripts/lib/geo_timezone.R`), and **always show the resolved timezone back for confirmation/override** — never treat an unconfirmed lookup as live (F24). If single, confirm one country → one global timezone.
-   5. **Last date of data collection:** offer the detected max date from the data (recommended) vs. a different date (Other). Do not skip this gate (F25) — it drives report-wide bold-highlighting and the Last Day tab.
-   Persist all five to `hfc/config/role_map.yaml` (`entity_id`, `entity_id_sep`, `entity_label`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `last_date`).
-7. If media filename columns exist: **AskUserQuestion** for media folder (use discovered / column-only; Other automatic).
-
-### A2. Audit + module confirmation
+### A2. Module confirmation (two windows)
 
 1. Read `references/check_modules.md` and `references/interaction.md`.
-2. Profile columns (names/types/labels only — no PII row dumps). Use `format_module_cards` / profile for recommended defaults.
+2. Profile columns (names/types/labels only — no PII row dumps) and compute proposed defaults for every module (`default_modules()`), now using the roles confirmed in A1 — including the completion-aware M1 group source (Treatment/Control by default, via `detect_treatment_control_vars()`, falling back to geography only when no Treatment/Control column exists).
 3. **Build and open the check-modules preview:**
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/preview_modules.R "<project_root>" --open
+   Rscript .claude/skills/hfc-fieldloop/scripts/preview_modules.R --open
    ```
-   Writes/opens `hfc/check_modules.html` — a tree view of every M1–M13 module's *proposed default* (on/off, rationale, thresholds/variables), so the user has something concrete to look at while deciding the pace question next. Nothing here is written to `hfc/config/*.yaml` yet.
-4. **AskUserQuestion (pace):**
-   - Accept all recommended defaults (recommended)
-   - Review module-by-module
-5. If **Accept all**: apply starred defaults from profile; skip per-module cards unless M3 (Form Version)/M7 (Missingness)/M9 (Straightlining)/M11/M12 need a quick confirm.
-6. If **Review**: AskUserQuestion cards per `check_modules.md` (on/off, key columns, thresholds). Respect 2–4 options per question; split into sequential asks. Do not ask for typed `M1=Y M2=…`. **M7 Missingness is a genuine sequential dependency:** confirm the variable shortlist first, then confirm sentinel missing-codes in a follow-up question that names those specific confirmed variables — the second question cannot be authored as a static card ahead of time.
-7. Never one free-text question per variable.
-8. **Additional checks — mandatory, every run, cannot be skipped (F23):** immediately after steps 4–7, always run a separate AskUserQuestion — `No additional checks` (recommended) (Other automatic for custom). This fires regardless of whether the user picked Accept-all or Review in step 4; do not treat Accept-all as an implicit "no" here.
-9. **If the user answers Other in step 8:** propose a check name + `hfc/code/checks/<name>.R`, confirm via AskUserQuestion, implement and register under M11/`custom`, **and** write its ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.label` / `.description`) so `hfc/outputs/report.html` can show it under the M11 section (schema in `references/check_modules.md`).
-10. **Important variables shortlist (unified for M6/M9/M10) — mandatory, every run (F31):** propose up to 10 variables using your own judgment about what's contextually important to this survey — read column names/labels/content, informed by (not limited to) the profile's numeric/ordinal candidate pools, not driven by numeric-ness alone. Post them in chat as a **plain numbered list, 3 per line**, clearly structured (not an AskUserQuestion card — the tool's 4-option cap doesn't fit 10 items), then a single AskUserQuestion: *Use this list as-is (recommended)* / *I'll reply with edits*. Write the confirmed list to `hfc/config/role_map.yaml`'s `important_vars:` key. M6 (outliers) and M10 (summary stats) use it directly; M9 (straightlining) further filters it to the ordinal-shaped subset, falling back to its own automatic ordinal pool if that intersection is empty (never silently turns a whole module off over a variable-selection choice).
+   Writes/opens `hfc/check_modules.html` — a tree view of every M1–M13 module's *proposed default* (on/off, rationale, thresholds/variables), so the user has something concrete to look at while the tabs below ask for confirmation. Nothing here is written to `hfc/config/*.yaml` yet.
+4. **Important variables shortlist (unified for M6/M9/M10/M7) — mandatory, every run:** propose up to 10 variables using your own judgment about what's contextually important to this survey — read column names/labels/content, informed by (not limited to) the profile's numeric/ordinal candidate pools, not driven by numeric-ness alone. When two or more candidates are near-duplicates of each other (e.g. `treat` vs. `treat_ext`), silently keep only the single most reasonable one — never present both, never ask the user to pick between them. Post the list in chat as a **plain numbered list, 3 per line** (not squeezed into an AskUserQuestion card — the 4-option cap doesn't fit 10 items); it's referenced, not repeated, inside Window B's Variables tab below. `guess_sentinel_codes()` scans these variables' value distributions for likely sentinel/missing codes (99, -99, -9999, …) — state that guess in the same Variables tab; no separate follow-up question needed even though the codes depend on the variable list, since both are guessed together and corrected together.
+5. **Window B — 4 tabs, one `AskUserQuestion` call:**
+   - **(a) "Dupes+Version":** restate the auto-resolved duplicate-check key from A1 (for visibility); if a form with more than one detected version exists, guess the version column + a date-range↔version mapping.
+   - **(b) "Timing":** guess the duration column + SD rule (M4); guess the work-hours window + weekend flag (M5); guess the last date of data collection (the detected max date from the data) — this used to be a separate required-fields sub-gate, it's just another guessed value here now.
+   - **(c) "Variables":** reference the numbered list posted in step 4, plus state M6's SD threshold guess, M7's sentinel-code guess (from step 4), and M9's straightlining threshold — **fixed at 90%, stated as a default, not asked** (say so plainly: *"I'll flag an enumerator who gives the same answer 90%+ of the time, and any submission that's 90%+ identical answers — this is a fixed default."*).
+   - **(d) "GPS+Media":** guess the GPS distance threshold (M8, default 300m); restate the media-indicating columns from A1 (M12) for visibility; state the map focus default (Country); if a Treatment/Control column was found in A2 step 2, ask whether to ALSO group by the best available geographic column — **default declined** (only surface this question when a Treatment/Control column actually exists; when it doesn't, geography just becomes the default automatically, no question needed).
+   All four tabs: `Looks right (recommended)` / Other for corrections.
+6. **Window C — 2 tabs, one `AskUserQuestion` call:**
+   - **(e) "Consent" — its own tab, never bundled with anything else:** state which column maps to assent, consent, and audio-consent, explicitly naming each, e.g. *"I found: `assent` → child's own agreement, `consent` → guardian consent, `audio_consent_flag` → recorded-audio consent. Tell me if any of these are swapped."* — assent and consent are different concepts (minor's own agreement vs. guardian/adult consent); get this right.
+   - **(f) "Extra checks":** `No additional checks` (recommended) / Other (free text) for a custom M11 check. Mandatory every run — never skip, never treat silence elsewhere as an implicit "no."
+7. **If the user answers Other in tab (f):** propose a check name + `hfc/code/checks/<name>.R`, confirm briefly in chat, implement and register under M11/`custom`, and write its ≤3-sentence plain-English description to `hfc/config/module_notes.yaml` (`custom.<name>.label` / `.description`) so `hfc/outputs/report.html` can show it under the M11 section (schema in `references/check_modules.md`).
+8. Write all confirmed values (including any corrections from Windows B/C) to `hfc/config/modules.yaml` and the remaining `hfc/config/role_map.yaml` fields: `important_vars`, `last_date`, `treatment_control_col`, `geo_group_col`, `geo_group_opted_in`, `map_focus`.
 
 ### A3. Outline + product structure
 
@@ -165,30 +180,36 @@ OneDrive is required — there is no local-only mode. It's accessed as a plain l
 
 ### A4. Build
 
-1. **OneDrive — informational, not a gate here:** A0c already confirmed OneDrive is configured and reachable before A1 even started, so there's no choice left to make. State the configured folder inline in chat ("Using your configured OneDrive folder: `<local_path>`") and move on — no AskUserQuestion.
+1. **OneDrive — informational, not a gate here:** A0 already confirmed `config.json` (incl. OneDrive Folder Directory) is fully configured and reachable before A1 even started, so there's no choice left to make. State the configured folder inline in chat ("Using your configured OneDrive folder: `<path>`") and move on — no AskUserQuestion.
 2. **AskUserQuestion — Issue tracking columns:** Keep the standard columns (recommended) / Modify columns. Schema: `Status` (Open default; any Open row with a non-empty RIL Comment is eligible for the agent to interpret and resolve in Pipeline B — Accepted/Revise are advisory triage values the field/RA can still set, not a hard gate; Resolved/Needs Review are set by the agent, always in the resolutions clone first, never written straight to the live file — see `references/issue_tracking_schema.md`).
-3. **AskUserQuestion — Map focus** (if GPS on): Country / City / World. Store in `hfc/config/role_map.yaml` (`map_focus`).
-4. **AskUserQuestion — Report:** HTML (recommended).
-5. Write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from confirmed options.
-6. Run builder:
+3. Report is always HTML — no separate gate, nothing else is implemented.
+4. Write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from confirmed options (A1 + A2).
+5. Run builder:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>" --open
+   Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R --open
    # equivalently:
-   Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" "<project_root>" --open
+   Rscript "${CLAUDE_SKILL_DIR}/scripts/run_setup_build.R" --open
    ```
-   (No `--no-onedrive` flag exists — the builder itself calls `require_sync_folder_ready()` and stops with setup instructions if OneDrive isn't reachable, same as A0c.)
+   (No `--no-onedrive` flag exists — the builder itself calls `require_fieldloop_config_ready()` and stops with setup instructions if `config.json` isn't fully configured, same as A0.)
    On a rebuild (an `issue_tracking.xlsx` already exists), the builder does **not** overwrite it — it writes `merged_issue_tracking.xlsx` and prints `MERGE_PENDING`. Show the user what changed (preserved rows unchanged, genuinely-new findings appended, nothing dropped), **AskUserQuestion** to confirm, then run:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_tracking.xlsx
+   Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merged_issue_tracking.xlsx
    ```
    Warn the user first that this replaces the live shared file — this is the only script that ever does so.
-7. **Draft the Summary narrative:** read `hfc/registry/findings.csv` (or the just-built report) and draft a short, terse Slack-register message — the "pressing issues" a field team should notice and respond to first thing in the morning. Focus on M1 (completion gaps), M2 (duplicates), M5 (irregular timing), and M11 (custom checks); ignore modules with nothing notable. PII is fine — the point is fast, specific action, not anonymized reporting. Write it to `hfc/config/summary_message.md` (plain text, overwritten each time — not `module_notes.yaml`), post it in chat as an FYI, then rebuild the report so it's folded in before the final open:
+6. **Draft the Summary narrative** — see `assets/summary_message_example.md` for the calibration target (a real, annotated example). Read `hfc/registry/findings.csv` and draft a short Slack-register message that:
+   1. Names real places/entities/numbers with specificity — never "several schools," always "17 schools" / "School ID 4 Gashanga."
+   2. Leads with completion status vs. target, using M1's completion accounting (target-vs-actual, or primary/secondary composition — whichever signal applies; see A1).
+   3. Reports completion % by group, defaulting to Treatment/Control when that grouping exists.
+   4. Calls out M2 duplicates by name with the real `issue_tracking.xlsx` path and an `@mention`-style placeholder for follow-up.
+   5. Reports M4 duration as mean **and** median, in minutes.
+   6. Closes with a data/media-presence gap statement at entity/group granularity — read `findings.csv`'s M12/M7 rows and translate into "were not available in N schools — schools X, Y, Z," not merely restating M12's raw one-line finding.
+   Write it to `hfc/config/summary_message.md` (plain text, overwritten each time — not `module_notes.yaml`), post it in chat as an FYI, then rebuild the report so it's folded in before the final open:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R "<project_root>"
+   Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R
    ```
-   (No `--open` needed here — step 9 opens it once, after the README is drafted.)
-8. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
-9. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and a copy of the report itself now live in the shared OneDrive-synced folder (access already granted via the one-time manual folder share) — it'll sync to the cloud automatically. Later: **Process HFC feedback** (+ project path if monorepo).
+   (No `--open` needed here — step 8 opens it once, after the README is drafted.)
+7. Draft project `README.md`; **AskUserQuestion:** Write this README (recommended).
+8. Auto-open `hfc/outputs/report.html`. Tell user: `issue_tracking.xlsx` and a copy of the report itself now live in the shared OneDrive-synced folder (access already granted via the one-time manual folder share) — it'll sync to the cloud automatically. Later: **Process HFC feedback**.
 
 ---
 
@@ -198,12 +219,12 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
 
 1. Create (or reuse) today's resolutions clone:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R clone "<project_root>"
+   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R clone
    ```
    Copies the current `issue_tracking.xlsx` to `resolutions/<YYYYMMDD>_issues_resolution.xlsx`. A same-day second pass reuses the existing clone rather than discarding in-progress work.
 2. List eligible rows:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R list-open "<project_root>"
+   Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R list-open
    ```
    Writes `hfc/registry/fix_candidates.csv` — one row per `Status=Open` + non-empty RIL Comment finding in today's clone, with full context (Issue, RIL Comment, Entity ID, Variable, Value, Issue Category, Issue ID).
 3. **AskUserQuestion:** Proceed with these N rows (recommended).
@@ -212,28 +233,28 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
    b. Write `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds` that implements it.
    c. Apply it:
       ```bash
-      Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R apply "<project_root>" --finding-id "<Issue ID>" --corrections "<what you did>"
+      Rscript .claude/skills/hfc-fieldloop/scripts/apply_feedback.R apply --finding-id "<Issue ID>" --corrections "<what you did>"
       ```
-      This loads `data/intermediate/<stem>.<ext>` if a prior fix already exists (else the original `data/raw/` file — never mutated), applies your `fix(ds)`, saves the result back to `data/intermediate/<stem>.<ext>` (one evolving file, so fixes accumulate), and writes the Corrections text + `Status = Resolved` into today's resolutions clone **only** — `issue_tracking.xlsx` is never touched by this step.
-   d. If you can't confidently resolve a row, run `apply_feedback.R needs-review "<project_root>" --finding-id "<Issue ID>"` instead — sets `Status = Needs Review` in the clone.
+      This loads `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` if a prior fix already exists (else the original file in the Input Data Directory — never mutated), applies your `fix(ds)`, saves the result back to `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` (one evolving file, so fixes accumulate), and writes the Corrections text + `Status = Resolved` into today's resolutions clone **only** — `issue_tracking.xlsx` is never touched by this step.
+   d. If you can't confidently resolve a row, run `apply_feedback.R needs-review --finding-id "<Issue ID>"` instead — sets `Status = Needs Review` in the clone.
 5. Once all rows are handled, fold the clone back into the live file:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/merge_resolutions.R "<project_root>"
+   Rscript .claude/skills/hfc-fieldloop/scripts/merge_resolutions.R
    ```
    Writes `merged_issue_resolutions.xlsx` next to `issue_tracking.xlsx` — for matched Issue IDs, Status/Corrections/Correction Author come from today's clone, every other column (in case the field/RA edited something concurrently) comes from the live file untouched; unmatched live rows pass through unchanged.
 6. Show the user a summary of what changed (which rows go Resolved/Needs Review), **AskUserQuestion** to confirm, warning that this replaces the live shared file, then commit:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R "<project_root>" merged_issue_resolutions.xlsx
+   Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merged_issue_resolutions.xlsx
    ```
-7. **Rebuild the report — mandatory, every pass (F30):**
+7. **Rebuild the report — mandatory, every pass:**
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/rebuild_report.R "<project_root>"
+   Rscript .claude/skills/hfc-fieldloop/scripts/rebuild_report.R
    ```
-   Re-runs M1–M13 against the latest data (`data/intermediate/` if any fixes were applied, else `data/raw/`) using the project's stored config, then drops any finding from the report whose live-tracking Status is now `Resolved`, or whose Issue ID no longer appears in `issue_tracking.xlsx` at all — display-only: the xlsx itself keeps full history unchanged, this only affects what `report.html` shows. Re-read `hfc/registry/findings.csv` and redraft the Summary narrative (`hfc/config/summary_message.md`, same approach as A4.7) against these fresh findings, then re-run with `--open`:
+   Re-runs M1–M13 against the latest data (`<sibling of Input Data Directory>/intermediate/` if any fixes were applied, else the original file in the Input Data Directory) using the project's stored config, then drops any finding from the report whose live-tracking Status is now `Resolved`, or whose Issue ID no longer appears in `issue_tracking.xlsx` at all — display-only: the xlsx itself keeps full history unchanged, this only affects what `report.html` shows. Re-read `hfc/registry/findings.csv` and redraft the Summary narrative (`hfc/config/summary_message.md`, same approach as A4 step 6) against these fresh findings, then re-run with `--open`:
    ```bash
-   Rscript .claude/skills/hfc-fieldloop/scripts/rebuild_report.R "<project_root>" --open
+   Rscript .claude/skills/hfc-fieldloop/scripts/rebuild_report.R --open
    ```
-8. Tell the user which rows were Resolved vs. Needs Review, and that `data/intermediate/<stem>.<ext>` now holds the latest fixed data (raw unchanged).
+8. Tell the user which rows were Resolved vs. Needs Review, and that `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` now holds the latest fixed data (raw unchanged).
 
 ---
 
@@ -242,12 +263,17 @@ There is no built-in fix-classification engine. **You (the agent) read and inter
 - Do not overwrite the original microdata file.
 - Do not start Pipeline A when the user clearly asked for post-feedback (and vice versa).
 - Do not invent access dates, exhibit IDs, or column names that are not in the data.
-- Do not skip or silently bypass the OneDrive pre-flight check (A0c) — if `local_path` isn't configured or isn't reachable, stop and direct the user to `install.R` + confirming OneDrive desktop sync is running + editing `assets/lib/sync_folder.json`, never proceed with a build that has nowhere to write `issue_tracking.xlsx` (F29).
+- Do not skip or silently bypass the config pre-flight check (A0) — if Input Data Directory, OneDrive Folder Directory, or Code Output Directory isn't configured or isn't reachable, stop and direct the user to `install.R` + confirming OneDrive desktop sync is running + editing `config.json`, never proceed with a build that has nowhere to write `issue_tracking.xlsx`.
 - Do not require monorepo gold data, `eval/`, `verify_all`, or SimUser for product runs.
-- Do not use typed mega-replies (`M1=Y M2=…`) as the primary confirmation UX when AskUserQuestion is available (F19).
-- Do not skip the unique-ID AskUserQuestion gate (F20).
-- Do not scatter product dirs at project root — use `hfc/` (F21).
-- Do not flag expected skip-logic blanks as missing (F22).
-- Do not skip or silently auto-answer the Additional-checks AskUserQuestion gate after module confirmation (F23).
-- Do not skip the country/timezone confirm gate, or trust a resolved country→timezone lookup without showing it back for confirmation (F24).
-- Do not skip the last-collection-date AskUserQuestion gate (F25).
+- Do not use typed mega-replies (`M1=Y M2=…`) or long option menus as the primary confirmation UX — always guess first, correct if wrong (see Interactive confirms above).
+- Do not silently guess the Entity ID without naming the underlying column in Tab 1's message — a wrong pick must be visibly correctable.
+- Do not scatter product dirs outside the Code Output Directory — everything lands under `<Code Output Directory>/hfc/`.
+- Do not flag expected skip-logic blanks as missing.
+- Do not skip or silently auto-answer the Extra-checks tab (A2, Window C) after module confirmation.
+- Do not skip the country/timezone confirm in Tab 1, or trust a resolved country→timezone lookup without showing it back for confirmation.
+- Do not infer the data-collection country from the input folder's name/basename — read geography from the data itself.
+- Do not skip stating the last date of data collection in the Timing tab (A2, Window B) — it drives report-wide bold-highlighting and the Last Day tab.
+- Do not let incomplete/non-surveyed rows leak into M2–M13 or M10 once a "status" completion signal has confirmed which rows to filter out.
+- Do not run per-row file-hygiene checks for M12 — the only check is a media-indicating column that's completely empty across every surveyed row.
+- Do not confuse assent and consent, and do not bundle the Consent tab (A2, Window C) with any other module.
+- Do not present two near-duplicate variables (e.g. `treat` vs. `treat_ext`) as if they were independently meaningful — silently keep the one most reasonable one.

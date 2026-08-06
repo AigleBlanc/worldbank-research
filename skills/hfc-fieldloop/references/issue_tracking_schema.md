@@ -1,6 +1,6 @@
 # Issue tracking schema
 
-Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (RIL Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in a folder the OneDrive desktop app keeps synced to the cloud — **required, no local-only fallback**: `local_path` in `assets/lib/sync_folder.json` points at that folder, and every read/write is plain file I/O against it; OneDrive's own sync client (not this skill) is what propagates changes to/from the cloud. There is never a separate local-only copy anywhere under `hfc/`. Every user-facing script calls `require_sync_folder_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if the folder isn't configured/reachable — see `SKILL.md`'s A0c.
+Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (RIL Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in a folder the OneDrive desktop app keeps synced to the cloud — **required, no local-only fallback**: `onedrive_output_dir` in `skills/hfc-fieldloop/config.json` points at that folder, and every read/write is plain file I/O against it; OneDrive's own sync client (not this skill) is what propagates changes to/from the cloud. There is never a separate local-only copy anywhere under `hfc/`. Every user-facing script calls `require_fieldloop_config_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if `config.json` isn't fully configured/reachable — see `SKILL.md`'s A0.
 
 Two dated-snapshot subfolders live alongside the live file, inside the same synced folder:
 
@@ -9,7 +9,7 @@ Two dated-snapshot subfolders live alongside the live file, inside the same sync
 | `intermediate/` | `<YYYYMMDD>_issue_tracking.xlsx` | every `run_setup_build.R` run | this run's freshly computed findings, before merging into the live file |
 | `resolutions/` | `<YYYYMMDD>_issues_resolution.xlsx` | `apply_feedback.R clone` | the agent's working clone for one day's "Process HFC feedback" pass |
 
-**Naming note:** this `intermediate/` (tracking snapshots, next to `issue_tracking.xlsx`) is unrelated to `data/intermediate/` (fixed microdata, see `write_intermediate()` in `scripts/lib/utils.R`) — always use the qualified path when referring to either.
+**Naming note:** this `intermediate/` (tracking snapshots, next to `issue_tracking.xlsx`) is unrelated to `<sibling of input_data_dir>/intermediate/` (fixed microdata, see `write_intermediate()` in `scripts/lib/utils.R`) — always use the qualified path when referring to either.
 
 A same-day rerun overwrites that day's snapshot/clone rather than creating a second dated file (so an in-progress "Process HFC feedback" pass isn't discarded by a second look the same day).
 
@@ -28,14 +28,14 @@ Template: `assets/issue_tracking_template.csv`. Column order in every written fi
 | Enumerator | detected name field | enumerator's name — empty when not found |
 | Startdate / Enddate | `start_date` / `end_date` | |
 | Issue | `issue` | plain-English issue label |
-| Value | `value` | the flagged value itself |
+| Value | `value` | the flagged value itself — continuous measurements (duration, GPS distance, outlier deviation, straightlining share, media duration) are rounded to 3 decimal places; percentages (completion, missingness) stay whole-number `%`, unchanged |
 | RIL Comment | — | field team text (was `field_comment`) |
 | Corrections | — | proposed/applied solution — written by field/RA when proposing a fix, or by the agent (`apply_feedback.R apply --corrections`) describing what it actually did |
 | Correction Author | — | RA/field initials, or the agent |
 | **Status** | — | see below |
-| Issue Category | `category` | which check category flagged this |
+| Issue Category | `category` | which check category flagged this — written as a **human-readable label** (e.g. "Low completion", not `low_completion`), via `category_label()`/`CATEGORY_LABELS` in `scripts/lib/build_outputs.R`; an unmapped category (e.g. an M11 custom check) falls back to a Title-Case-from-snake_case transform of the raw value |
 | Variable (DIME use) | — | the survey column the check evaluated (e.g. `income`, `duration`) — distinct from `Unique Submission ID`, populated by `mk_findings(..., variable_name = )` |
-| Unique Submission ID | `key` | the machine-unique key (SurveyCTO uuid/instanceid) |
+| Unique Submission ID | `key` | the machine-unique key (SurveyCTO `key`/uuid/instanceid) — `detect_unique_key_column()` (`scripts/lib/profile_roles.R`) checks the exact-name pattern against the **full** column set before Entity-ID exclusion is applied, so a column literally named `key` still populates this even when it was also picked as Entity ID (the two can legitimately coincide) |
 | **Issue ID** | findings | last column. Content-derived, stable key: `<check_module lowercase>:<Entity ID>[:<Variable>][:N]` (e.g. `m3:90992`, `m6:90992:income`; a trailing `:2`/`:3` only for genuine same-module/same-entity/no-variable collisions, e.g. M2 duplicate rows). Not part of the literal template, but required — `Unique Submission ID` alone isn't unique per row (one submission can produce several findings), and this key must survive reruns so merging can preserve human/agent edits. See `mk_findings()`/`dedupe_finding_ids()` in `scripts/lib/utils.R`. |
 
 **Removed from `issue_tracking.xlsx`:** `check_module` (kept only on internal `findings` for the HTML report).
@@ -75,15 +75,17 @@ The live `issue_tracking.xlsx` is never overwritten silently — two different m
 
 ## Config
 
-One file, one rule: `hfc-fieldloop/assets/lib/sync_folder.json` — the only config that matters, edited directly. No per-project override; every project using this skill copy shares it. Ships `"enabled": false` by default — must be turned on before first use:
+One file, one rule: `hfc-fieldloop/config.json` — the only config that matters, edited directly. No per-project override; every run using this skill copy shares it. Ships with `<...>`-wrapped placeholder values by default — the three required fields must be filled in with real absolute paths before first use:
 ```json
 {
-  "enabled": true,
-  "local_path": "/Users/you/OneDrive - Your Org/HFC Reports",
-  "main_file": "issue_tracking.xlsx"
+  "Input Data Directory": "/Users/you/Documents/my_survey/data",
+  "Media Folder Directory": "",
+  "OneDrive Folder Directory": "/Users/you/OneDrive - Your Org/HFC Reports",
+  "Code Output Directory": "/Users/you/code/my_survey_hfc",
+  "Main Tracking Filename": "issue_tracking.xlsx"
 }
 ```
-`local_path` must be an absolute path to a folder the OneDrive desktop app is already syncing on this machine (it's created automatically if the sync client hasn't materialized it yet). `"enabled": false` (or the file missing, or `local_path` empty) → every user-facing script's `require_sync_folder_ready()` pre-flight `stop()`s with setup instructions rather than proceeding.
+**OneDrive Folder Directory** must be an absolute path to a folder the OneDrive desktop app is already syncing on this machine (it's created automatically if the sync client hasn't materialized it yet). A missing or still-placeholder **Input Data Directory**, **OneDrive Folder Directory**, or **Code Output Directory** → every user-facing script's `require_fieldloop_config_ready()` pre-flight `stop()`s, naming the specific field, rather than proceeding. **Media Folder Directory** is optional — no check module reads it (see `references/check_modules.md`'s M12 section); it's kept in `config.json` only in case a future check needs on-disk media access.
 
 Share the OneDrive **folder** (not the individual file) with collaborators via the normal OneDrive "Specific people" sharing UI, once, before relying on this — this skill never mints its own share links, it just reads/writes whatever folder access has already been configured.
 
@@ -97,6 +99,6 @@ There's no built-in fix-classification engine — the agent reads each eligible 
 
 1. `apply_feedback.R clone` — creates (or reuses, if already run today) today's resolutions clone from the current live file.
 2. `apply_feedback.R list-open` — filters today's clone to `Status = Open` + non-empty RIL Comment, writes `hfc/registry/fix_candidates.csv` with full row context.
-3. Per row, in a single pass: the agent interprets the RIL Comment, writes `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds`, then calls `apply_feedback.R apply --finding-id <id> --corrections "<what it did>"` — loads `data/intermediate/<stem>.<ext>` if it exists (else `data/raw/`), applies `fix(ds)`, writes back to `data/intermediate/` (one evolving file), and sets `Corrections` + `Status = Resolved` in the clone only.
+3. Per row, in a single pass: the agent interprets the RIL Comment, writes `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds`, then calls `apply_feedback.R apply --finding-id <id> --corrections "<what it did>"` — loads `<sibling of input_data_dir>/intermediate/<stem>.<ext>` if it exists (else the original file in `input_data_dir`), applies `fix(ds)`, writes back to `<sibling of input_data_dir>/intermediate/` (one evolving file), and sets `Corrections` + `Status = Resolved` in the clone only.
 4. `apply_feedback.R needs-review --finding-id <id>` — sets `Status = Needs Review` in the clone for rows the agent can't confidently handle.
 5. `merge_resolutions.R` folds the clone back into a `merged_issue_resolutions.xlsx`; after AskUserQuestion confirmation, `commit_merged_issue_tracking.R` applies it to the live file.

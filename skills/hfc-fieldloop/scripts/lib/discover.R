@@ -1,32 +1,25 @@
-# Discover microdata + SurveyCTO-like form under a project root.
+# Discover microdata + SurveyCTO-like form inside the configured input data
+# directory — and only there (config.json's input_data_dir). No searching
+# across multiple locations; media resolution lives entirely in config.json
+# (cfg$media_dir) now, not here.
 # Usage:
-#   Rscript discover.R <project_root>
-#   source(); res <- discover_project(project_root)
+#   Rscript discover.R <input_data_dir>
+#   source(); res <- discover_project(input_data_dir)
 
-discover_project <- function(project_root, create_raw_if_missing = TRUE) {
-    project_root <- normalizePath(project_root, mustWork = FALSE)
-    # The data and survey instruments MUST live in data/raw/ 
-    raw_dir <- file.path(project_root, "data", "raw")
-    if (create_raw_if_missing && !dir.exists(raw_dir)) {
-        dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
-    }
-
-    search_dirs <- unique(c(
-        raw_dir,
-        file.path(project_root, "data"),
-        file.path(project_root, "instrument"),
-        file.path(project_root, "data", "surveys"),
-        project_root
-    ))
-    search_dirs <- search_dirs[dir.exists(search_dirs)]
-
-    candidates <- character()
-    for (d in search_dirs) {
-        candidates <- c(candidates, list.files(
-        d, pattern = "\\.(dta|csv|xlsx|xls)$", full.names = TRUE,
-        ignore.case = TRUE, recursive = FALSE
+discover_project <- function(input_data_dir) {
+    input_data_dir <- normalizePath(input_data_dir, mustWork = FALSE)
+    if (!dir.exists(input_data_dir)) {
+        return(list(
+            input_data_dir = input_data_dir, data = NULL, form = NULL,
+            all_data_candidates = character(), all_form_candidates = character(),
+            status = "missing_dir"
         ))
     }
+
+    candidates <- list.files(
+        input_data_dir, pattern = "\\.(dta|csv|xlsx|xls)$", full.names = TRUE,
+        ignore.case = TRUE, recursive = FALSE
+    )
     candidates <- unique(normalizePath(candidates, mustWork = FALSE))
     # Exclude resolved outputs and feedback/tracking workbooks by name
     bn <- tolower(basename(candidates))
@@ -57,8 +50,6 @@ discover_project <- function(project_root, create_raw_if_missing = TRUE) {
         info <- list(path = path, size_bytes = file.info(path)$size, nrow = NA, ncol = NA, error = NULL)
         tryCatch({
         if (grepl("\\.dta$", path, ignore.case = TRUE)) {
-            ds <- haven::read_dta(path, n_max = 5)
-            # full nrow via cheaper approach when possible
             full <- haven::read_dta(path)
             info$nrow <- nrow(full)
             info$ncol <- ncol(full)
@@ -80,35 +71,29 @@ discover_project <- function(project_root, create_raw_if_missing = TRUE) {
         list(path = forms[[1]], sheets = tryCatch(readxl::excel_sheets(forms[[1]]), error = function(e) character()))
     } else NULL
 
-    data_path <- if (!is.null(data_info)) data_info$path else NULL
-    media <- if (exists("discover_media_folder", mode = "function")) {
-        discover_media_folder(project_root, data_path)
-    } else {
-        # Fallback when media.R not sourced yet
-        cands <- c(
-        file.path(project_root, "data", "raw", "media"),
-        file.path(project_root, "data", "media"),
-        file.path(project_root, "media")
-        )
-        hit <- cands[dir.exists(cands)]
-        list(
-        path = if (length(hit)) normalizePath(hit[[1]]) else NA_character_,
-        found = length(hit) > 0,
-        candidates = cands
-        )
+    # Roster/target-sample-list candidate — a second data file, distinct
+    # from the main microdata file, that looks like a planned/target sample
+    # list rather than actual survey responses (used by the completion
+    # signal detector, profile_roles.R's detect_completion_signal()). Never
+    # blocks the single-file happy path: roster_candidate is NULL whenever
+    # there's no second file, which is the common case.
+    is_roster_like <- function(path) {
+        grepl("roster|sample.?frame|sample.?list|target.?list|listing", tolower(basename(path)))
     }
+    roster_pool <- if (length(data_files) > 1) data_files[-1] else character()
+    roster_named <- roster_pool[vapply(roster_pool, is_roster_like, logical(1))]
+    roster_path <- if (length(roster_named)) roster_named[[1]] else if (length(roster_pool)) roster_pool[[1]] else NA_character_
+    roster_candidate <- if (!is.na(roster_path)) {
+        list(path = roster_path, confidence = if (length(roster_named)) "name_match" else "second_file")
+    } else NULL
 
     list(
-        project_root = project_root,
-        raw_dir = raw_dir,
-        raw_dir_exists = dir.exists(raw_dir),
+        input_data_dir = input_data_dir,
         data = data_info,
         form = form_info,
-        media_folder = media$path,
-        media_folder_found = isTRUE(media$found),
-        media_folder_candidates = media$candidates,
         all_data_candidates = data_files,
         all_form_candidates = forms,
+        roster_candidate = roster_candidate,
         status = if (!is.null(data_info)) "found" else "missing_data"
     )
 }
@@ -121,15 +106,14 @@ is_main <- length(file_arg) > 0 && grepl("discover\\.R$", file_arg[[1]])
 if (is_main) {
     this <- sub("^--file=", "", file_arg[[1]])
     source(file.path(dirname(this), "utils.R"), local = TRUE)
-    source(file.path(dirname(this), "media.R"), local = TRUE)
     args <- commandArgs(trailingOnly = TRUE)
-    root <- if (length(args)) args[[1]] else getwd()
+    dir_arg <- if (length(args)) args[[1]] else getwd()
     suppressPackageStartupMessages({
         library(jsonlite)
         if (requireNamespace("haven", quietly = TRUE)) library(haven)
         if (requireNamespace("readr", quietly = TRUE)) library(readr)
         if (requireNamespace("readxl", quietly = TRUE)) library(readxl)
     })
-    res <- discover_project(root)
+    res <- discover_project(dir_arg)
     cat(toJSON(res, auto_unbox = TRUE, pretty = TRUE, null = "null"), "\n")
 }

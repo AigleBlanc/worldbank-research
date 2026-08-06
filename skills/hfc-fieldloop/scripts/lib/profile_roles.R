@@ -171,15 +171,181 @@ shortlist_country_columns <- function(ds, n = 3L) {
 #' Candidate completion-indicator columns (M1).
 detect_completion_candidates <- function(ds, n = 3L) {
     nms <- names(ds)
-    hit <- grep("complete|submitted|finished", nms, ignore.case = TRUE, value = TRUE)
+    hit <- grep("complete|submitted|finished|^result$|^status$|^outcome$|disposition|interview_status", nms, ignore.case = TRUE, value = TRUE)
     utils::head(hit, n)
 }
 
-#' Candidate grouping columns for completion-by-group (M1): low-cardinality
-#' columns matching common study-design terms (treatment arm, admin unit).
-detect_grouping_vars <- function(ds, n = 4L) {
+#' Candidate primary/secondary sample-designation columns (M1's fallback
+#' completion signal, when there's no roster and no explicit status column —
+#' every row IS a completed survey, but composed of a primary + secondary
+#' pool). Requires a name-pattern hit AND a plausible 2-value shape.
+PRIMARY_SECONDARY_NAME_PATTERN <- "sample_type|^primary$|resp_type|respondent_type|sample_status"
+PRIMARY_SECONDARY_VALUE_PATTERN <- "^(primary|secondary|1|2)$"
+detect_primary_secondary_col <- function(ds) {
     nms <- names(ds)
-    hit <- grep("treat|arm|group|state|region|district|stratum", nms, ignore.case = TRUE, value = TRUE)
+    name_hit <- nms[grepl(PRIMARY_SECONDARY_NAME_PATTERN, nms, ignore.case = TRUE)]
+    hit <- name_hit[vapply(name_hit, function(col) {
+        x <- tolower(trimws(as.character(ds[[col]])))
+        vals <- unique(x[!is.na(x) & nzchar(x)])
+        length(vals) == 2 && all(grepl(PRIMARY_SECONDARY_VALUE_PATTERN, vals, ignore.case = TRUE))
+    }, logical(1))]
+    if (length(hit)) hit[[1]] else NA_character_
+}
+
+#' Values in a completion-status column that read as "this survey happened."
+#' Matched against the column's own distinct values (not a fixed vocabulary
+#' alone), so e.g. "Submitted" or "Yes" are recognized even though they
+#' aren't literally "Complete".
+COMPLETION_COMPLETE_VALUE_PATTERN <- "^(complete|completed|yes|submitted|finished|success|successful|1)$"
+
+#' Detect which completion-signal type(s) are present in this dataset. The
+#' agent surfaces ALL types found — this function does NOT silently
+#' prioritize when more than one applies; the required-gate window's
+#' completion tab (SKILL.md A1) is responsible for flagging that as a
+#' special case rather than picking for the user.
+#' `roster_candidate`: passed through from discover_project()'s roster
+#' detection (NULL in the common single-file case).
+#' Returns list(types = character() subset of "status"/"primary_secondary"/
+#' "roster", status_col=, status_complete_values=, ps_col=, primary_value=,
+#' roster_candidate=).
+detect_completion_signal <- function(ds, roster_candidate = NULL) {
+    status_col <- pick_first(names(ds), c(
+        "^result$", "^status$", "^outcome$", "disposition", "interview_status",
+        "^complete$", "^completed$", "submitted", "finished"
+    ))
+    status_complete_values <- character()
+    if (!is.na(status_col)) {
+        vals <- unique(trimws(as.character(ds[[status_col]])))
+        vals <- vals[!is.na(vals) & nzchar(vals)]
+        status_complete_values <- vals[grepl(COMPLETION_COMPLETE_VALUE_PATTERN, vals, ignore.case = TRUE)]
+        # A status-like column only counts as a real signal if it actually
+        # has BOTH complete-looking and non-complete-looking values — a
+        # column where every value reads as "complete" carries no
+        # filtering information (nothing to distinguish).
+        if (!length(status_complete_values) || length(status_complete_values) == length(vals)) {
+            status_col <- NA_character_
+        }
+    }
+
+    ps_col <- detect_primary_secondary_col(ds)
+    primary_value <- NA_character_
+    if (!is.na(ps_col)) {
+        vals <- unique(trimws(as.character(ds[[ps_col]])))
+        vals <- vals[!is.na(vals) & nzchar(vals)]
+        hit <- vals[grepl("primary|^1$", vals, ignore.case = TRUE)]
+        primary_value <- if (length(hit)) hit[[1]] else vals[[1]]
+    }
+
+    types <- c(
+        if (!is.na(status_col)) "status",
+        if (!is.na(ps_col)) "primary_secondary",
+        if (!is.null(roster_candidate)) "roster"
+    )
+
+    list(
+        types = types,
+        status_col = status_col, status_complete_values = status_complete_values,
+        ps_col = ps_col, primary_value = primary_value,
+        roster_candidate = roster_candidate
+    )
+}
+
+#' Surfaces raw material for the AGENT to infer a country from when no
+#' explicit country column exists — district/region/village/site-name-like
+#' columns' sample values, plus a GPS bounding box if x/y columns exist.
+#' Does NOT resolve a country itself: country inference from place names or
+#' a GPS bounding box is agent judgment (documented in SKILL.md), the same
+#' treatment as M11 custom-check authorship and redundant-variable
+#' de-duplication — a regex/lookup table can't reliably map "Bujumbura" or
+#' "Gashanga" to a country the way a general-knowledge reader can.
+GEOGRAPHY_SIGNAL_NAME_PATTERN <- "district|region|province|county|village|ward|site_name|school_name|community|admin[1-4]"
+shortlist_geography_signal_cols <- function(ds, x_col = NA_character_, y_col = NA_character_, n = 4L) {
+    nms <- names(ds)
+    hit <- grep(GEOGRAPHY_SIGNAL_NAME_PATTERN, nms, ignore.case = TRUE, value = TRUE)
+    hit <- hit[vapply(hit, function(col) {
+        x <- as.character(ds[[col]])
+        nu <- length(unique(x[!is.na(x) & nzchar(x)]))
+        nu >= 1 && nu <= 200
+    }, logical(1))]
+    hit <- utils::head(hit, n)
+    samples <- lapply(hit, function(col) {
+        x <- as.character(ds[[col]])
+        x <- x[!is.na(x) & nzchar(x)]
+        utils::head(unique(x), 10)
+    })
+    names(samples) <- hit
+
+    gps_bbox <- NULL
+    if (!is.na(x_col) && !is.na(y_col) && x_col %in% nms && y_col %in% nms) {
+        xv <- safe_num(ds[[x_col]]); yv <- safe_num(ds[[y_col]])
+        xv <- xv[is.finite(xv)]; yv <- yv[is.finite(yv)]
+        if (length(xv) && length(yv)) {
+        gps_bbox <- list(lon_min = min(xv), lon_max = max(xv), lat_min = min(yv), lat_max = max(yv))
+        }
+    }
+
+    list(geo_col_options = hit, geo_col_samples = samples, gps_bbox = gps_bbox)
+}
+
+#' Scan a shortlisted set of numeric-ish variables' value distributions for
+#' common sentinel/missing-code patterns (99/-99/-9999/999/88 etc.)
+#' appearing disproportionately relative to the variable's apparent scale —
+#' a speculative guess, always shown with a correction box, never trusted
+#' silently. Lets the sentinel-code guess be stated in the SAME message as
+#' the variable shortlist (SKILL.md's Variables bundle tab) instead of
+#' requiring a separate follow-up question once the variables are confirmed.
+SENTINEL_CANDIDATES <- c(-9999, -999, -99, -88, -9, 99, 88, 999, 9999)
+guess_sentinel_codes <- function(ds, vars) {
+    vars <- vars[!is.na(vars) & vars %in% names(ds)]
+    if (!length(vars)) return(integer())
+    hits <- integer()
+    for (vc in vars) {
+        v <- safe_num(ds[[vc]])
+        v <- v[is.finite(v)]
+        if (length(v) < 10) next
+        core <- v[!v %in% SENTINEL_CANDIDATES]
+        if (!length(core)) next
+        core_range <- range(core)
+        for (cand in SENTINEL_CANDIDATES) {
+        n_cand <- sum(v == cand)
+        # A sentinel candidate is "plausible" if it appears at least a
+        # couple of times AND sits well outside the variable's normal
+        # (non-sentinel) range — i.e. looks like an out-of-band code, not
+        # a genuine data value.
+        if (n_cand >= 2 && (cand < core_range[1] - 1 || cand > core_range[2] + 1)) {
+            hits <- c(hits, cand)
+        }
+        }
+    }
+    sort(unique(hits))
+}
+
+#' Candidate Treatment/Control-like columns for completion-by-group (M1) —
+#' the DEFAULT grouping. Requires BOTH a name-pattern hit AND a plausible
+#' value shape (2-3 distinct values that look like Treatment/Control/T/C/1/0)
+#' together, so an unrelated 0/1 flag that merely shares a name fragment
+#' (e.g. a "group" column that's actually a household roster grouping) isn't
+#' mistaken for a study arm.
+TREAT_NAME_PATTERN <- "treat|^arm$|condition|^tx$|^grp$|assignment"
+TREAT_VALUE_PATTERN <- "^(treatment|control|treat|ctrl|t|c|1|0)$"
+detect_treatment_control_vars <- function(ds, n = 2L) {
+    nms <- names(ds)
+    name_hit <- nms[grepl(TREAT_NAME_PATTERN, nms, ignore.case = TRUE)]
+    hit <- name_hit[vapply(name_hit, function(col) {
+        x <- toupper(trimws(as.character(ds[[col]])))
+        vals <- unique(x[!is.na(x) & nzchar(x)])
+        length(vals) %in% 2:3 && all(grepl(TREAT_VALUE_PATTERN, vals, ignore.case = TRUE))
+    }, logical(1))]
+    utils::head(hit, n)
+}
+
+#' Candidate geographic-unit columns for completion-by-group (M1) — the
+#' OPT-IN secondary grouping, only offered when no Treatment/Control column
+#' exists, or the user explicitly asks for it in addition.
+GEO_GROUP_NAME_PATTERN <- "state|region|district|stratum|province|county|admin[1-4]"
+detect_geographic_group_vars <- function(ds, n = 4L) {
+    nms <- names(ds)
+    hit <- grep(GEO_GROUP_NAME_PATTERN, nms, ignore.case = TRUE, value = TRUE)
     hit <- hit[vapply(hit, function(col) {
         x <- as.character(ds[[col]])
         nu <- length(unique(x[!is.na(x) & nzchar(x)]))
@@ -272,16 +438,23 @@ detect_ordinal_vars <- function(ds, exclude = character(), n = 20L) {
 #' is. Fully automatic — no user confirmation (contrast with the Entity ID /
 #' duplicate-check-key gates, which are explicit AskUserQuestion steps).
 detect_unique_key_column <- function(ds, exclude = character()) {
-    nms <- setdiff(names(ds), exclude)
     is_fully_unique <- function(col) {
         x <- ds[[col]]
         x_chr <- as.character(x)
         if (any(is.na(x) | !nzchar(x_chr))) return(FALSE)
         length(unique(x_chr)) == nrow(ds)
     }
-    name_cand <- pick_first(nms, c("^key$", "uuid", "instanceid"))
+    # Exact-name pattern (key/uuid/instanceid) is checked against the FULL
+    # column set first, before `exclude` is applied — a column can
+    # legitimately serve as both Entity ID and the unique submission key at
+    # once (e.g. SurveyCTO's `key`), so it being excluded because it was
+    # already picked as Entity ID must not block it from also being
+    # recognized here. Only fall through to the exclude-filtered scan below
+    # if no exact-name match exists.
+    name_cand <- pick_first(names(ds), c("^key$", "uuid", "instanceid"))
     if (!is.na(name_cand) && is_fully_unique(name_cand)) return(name_cand)
 
+    nms <- setdiff(names(ds), exclude)
     candidates <- nms[vapply(nms, is_fully_unique, logical(1))]
     if (!length(candidates)) return(NA_character_)
     pref <- candidates[grepl(ID_NAME_PATTERN, candidates, ignore.case = TRUE)]
@@ -289,8 +462,11 @@ detect_unique_key_column <- function(ds, exclude = character()) {
     candidates[[1]]
 }
 
-# Profile roles. Optional media_folder from discover_media_folder().
-profile_roles <- function(ds, media_folder = NA_character_) {
+# Profile roles. Optional media_folder from config.json's Media Folder
+# Directory. Optional roster_candidate from discover_project()'s roster/
+# target-file detection (NULL in the common single-file case) — threaded
+# into detect_completion_signal() below.
+profile_roles <- function(ds, media_folder = NA_character_, roster_candidate = NULL) {
     nms <- names(ds)
 
     id_info <- shortlist_entity_ids(ds, n = 3L)
@@ -346,9 +522,39 @@ profile_roles <- function(ds, media_folder = NA_character_) {
         NA_character_
         },
         completion_var_candidates = detect_completion_candidates(ds, n = 3L),
-        group_var_candidates = detect_grouping_vars(ds, n = 4L),
+        treatment_control_candidates = detect_treatment_control_vars(ds, n = 2L),
+        geo_group_candidates = detect_geographic_group_vars(ds, n = 4L),
         form_version_col = detect_form_version_col(ds)
     )
+    # Deprecated alias: default_modules()/check_modules_preview.R read
+    # group_var_candidates as their M1$group_vars source, now preferring
+    # Treatment/Control over geography (see default_modules() below).
+    roles$group_var_candidates <- roles$treatment_control_candidates %||% roles$geo_group_candidates
+
+    # Completion signal (status column / roster-file / primary-secondary
+    # column) — see SKILL.md A1's required-gate window Tab 2.
+    completion_signal <- detect_completion_signal(ds, roster_candidate = roster_candidate)
+    roles$completion_signal_types <- completion_signal$types
+    roles$completion_status_col <- completion_signal$status_col
+    roles$completion_status_complete_values <- completion_signal$status_complete_values
+    roles$completion_primary_secondary_col <- completion_signal$ps_col
+    roles$completion_primary_value <- completion_signal$primary_value
+    roles$completion_roster_candidate <- completion_signal$roster_candidate
+    # Tentative default when exactly one signal type is detected; when more
+    # than one is found this is only a starting point — SKILL.md A1's
+    # completion tab must flag the conflict explicitly rather than silently
+    # trusting this pick, and role_map.yaml's saved value (once the agent
+    # confirms) always wins on a rebuild. NA when no signal at all.
+    roles$completion_primary_signal <- if (length(completion_signal$types) >= 1) completion_signal$types[[1]] else NA_character_
+
+    # Country-from-geography raw material — only useful when no explicit
+    # country column exists; the agent reads geo_col_samples/gps_bbox and
+    # states its own best-guess country (SKILL.md A1), this function does
+    # not resolve a country itself.
+    geo_signal <- shortlist_geography_signal_cols(ds, x_col = roles$x %||% NA_character_, y_col = roles$y %||% NA_character_, n = 4L)
+    roles$geo_signal_col_options <- geo_signal$geo_col_options
+    roles$geo_signal_col_samples <- geo_signal$geo_col_samples
+    roles$geo_signal_gps_bbox <- geo_signal$gps_bbox
 
     # Human-readable name fields for the issue-tracking Entity/Group/Enumerator
     # columns — distinct from their ID/code roles above. NA (blank) when no
@@ -460,11 +666,27 @@ default_modules <- function(roles) {
     } else character()
     if (!length(m9_ordinal)) m9_ordinal <- roles$ordinal_vars %||% character()
 
+    # M1's completion-by-group breakdown defaults to Treatment/Control;
+    # geography is only added when there's no Treatment/Control column at
+    # all, or the user explicitly opted in to it alongside T/C (default:
+    # declined — see roles$geo_group_opted_in, confirmed in the GPS+Media
+    # module-bundle tab).
+    m1_tc <- roles$treatment_control_col %||%
+        (if (length(roles$treatment_control_candidates)) roles$treatment_control_candidates[[1]] else NA_character_)
+    m1_geo <- roles$geo_group_col %||%
+        (if (length(roles$geo_group_candidates)) roles$geo_group_candidates[[1]] else NA_character_)
+    m1_group_vars <- if (!is.na(m1_tc)) {
+        c(m1_tc, if (isTRUE(roles$geo_group_opted_in)) m1_geo else NA_character_)
+    } else {
+        m1_geo
+    }
+    m1_group_vars <- m1_group_vars[!is.na(m1_group_vars)]
+
     list(
         M1 = list(
         on = TRUE,
         completion_var = if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else NA_character_,
-        group_vars = roles$group_var_candidates %||% character(),
+        group_vars = m1_group_vars,
         by_enum = TRUE,
         by_date = TRUE,
         low_completion_on = isTRUE(roles$has_unit),
@@ -501,8 +723,8 @@ default_modules <- function(roles) {
         M9 = list(
         on = length(m9_ordinal) > 0,
         ordinal_vars = utils::head(m9_ordinal, 15),
-        enum_threshold_pct = 0.8,
-        survey_threshold_pct = 0.8
+        enum_threshold_pct = 0.9,
+        survey_threshold_pct = 0.9
         ),
         M10 = list(on = TRUE, vars = utils::head(m10_vars, 10), by_enum = TRUE, max_n = 10L),
         M11 = list(on = FALSE, enabled = character(), custom = character()),
@@ -510,13 +732,7 @@ default_modules <- function(roles) {
         on = isTRUE(roles$has_media),
         audio_cols = audio_cols,
         image_cols = image_cols,
-        media_folder = roles$media_folder %||% NA_character_,
-        min_audio_bytes = 1024L,
-        min_image_bytes = 2048L,
-        min_duration_sec = 5,
-        max_duration_sec = 3600,
-        audio_flag = roles$audio_flag %||% NA_character_,
-        flag_file_col = if (length(audio_cols)) audio_cols[[1]] else NA_character_
+        other_cols = roles$qualitative_text_cols %||% character()
         ),
         M13 = list(
         on = isTRUE(roles$has_consentish),
@@ -537,13 +753,11 @@ format_module_cards <- function(roles) {
 
     audio_f <- roles$audio_file_cols %||% character()
     image_f <- roles$image_file_cols %||% character()
-    mf <- roles$media_folder %||% NA_character_
     m12_line <- if (isTRUE(roles$has_media)) {
         sprintf(
-        "M12 Media files [Y*]  audio: %s  images: %s  media_folder=%s  duration=[5*,3600]s",
+        "M12 Media files [Y*]  audio: %s  images: %s  (flags a column only if it's completely empty across every surveyed row)",
         opt_letters(utils::head(audio_f, 5)),
-        opt_letters(utils::head(image_f, 5)),
-        if (!is.na(mf) && nzchar(mf)) mf else "(missing - column-only checks)"
+        opt_letters(utils::head(image_f, 5))
         )
     } else {
         "M12 Media files [skip*]  (no audio/image filename columns detected)"
@@ -593,11 +807,11 @@ format_module_cards <- function(roles) {
         sprintf("M6 Numeric Outliers [Y*]  pick (up to 10): %s  rule=3SD*",
                 paste(sprintf("%s* %s", LETTERS[seq_along(utils::head(roles$numeric_shortlist, 10))],
                             utils::head(roles$numeric_shortlist, 10)), collapse = "  ")),
-        sprintf("M7 Missingness [Y*]  pick (up to 10): %s  by_enum=Y*  sentinel codes: (confirm after vars)",
+        sprintf("M7 Missingness [Y*]  pick (up to 10): %s  by_enum=Y*  sentinel codes: (guessed alongside the variable list — see guess_sentinel_codes())",
                 paste(utils::head(roles$missingness_var_candidates %||% character(), 10), collapse = ", ")),
         sprintf("M8 GPS [%s]  pair=%s/%s  threshold=300*",
                 if (roles$has_gps) "Y*" else "N*", roles$x %||% "?", roles$y %||% "?"),
-        sprintf("M9 Straightlining [%s]  ordinal vars: %s  enum_threshold=80%%*  survey_threshold=80%%*",
+        sprintf("M9 Straightlining [%s]  ordinal vars: %s  enum_threshold=90%%*  survey_threshold=90%%*",
                 if (length(roles$ordinal_vars %||% character())) "Y*" else "skip*",
                 paste(utils::head(roles$ordinal_vars %||% character(), 10), collapse = ", ")),
         sprintf("M10 Summary Stats [Y*]  pick (up to 10, expandable): %s",

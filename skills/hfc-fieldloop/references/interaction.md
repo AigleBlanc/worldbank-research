@@ -1,59 +1,48 @@
 # Interactive confirms (AskUserQuestion)
 
 Authority for how FieldLoop asks the user during setup and post-feedback in **Claude Code** (VS Code).
-**Primary UX is always multiple-choice AskUserQuestion cards** — never typed mega-strings in the chat box.
+**Primary UX is always guess-first-then-correct** — the agent states its own best guess in plain language, then gives one free-text way to fix anything wrong. Never a long menu of options to choose between, and never typed mega-strings in the chat box.
+
+## Two structural terms
+
+- **Window** = one `AskUserQuestion` tool call.
+- **Tab** = one `question` entry inside that call. A window can hold up to 4 tabs, all shown to the user together as a single interaction.
 
 ## Rules
 
 1. **Use the AskUserQuestion tool** for every interactive gate (Claude Code multiple-choice UI).
-2. **2–4 options per question.** Each option has a `label` and short `description`. Put the **recommended** choice first (label may say “recommended”).
-3. **Do not add an explicit “Other” option** — Claude Code always offers free-text Other.
-4. If the user picks **Other**, use their free text for **that gate only**.
+2. **State the guess, not a menu.** Each tab's `question` text is the agent's plain-language best guess for the relevant field(s) — not a question the user has to interpret. The tab needs exactly one non-`Other` option, along the lines of **"Looks right (recommended)"**.
+3. **Do not add an explicit "Corrections" option** — Claude Code always offers free-text Other, and that IS the correction box.
+4. If the user picks **Other**, use their free text to correct whatever that tab covered.
 5. **`header`** on each question: short label, max **12 characters**.
-6. **1–4 questions** per AskUserQuestion call. One call per assistant turn when sequencing unrelated gates; related gates may share one call.
-7. **`multiSelect: true`** only when several options can apply together (e.g. composite-ID columns, or a variable shortlist for M6/M7/M9/M10). Mutually exclusive choices stay single-select.
-8. **Never** ask the user to type mega-strings such as `M1=Y M2=Y M8=none` as the primary UX (F19).
-9. Do **not** dump numbered menus in plain chat when AskUserQuestion is available.
-10. **Fallback** (AskUserQuestion unavailable): same options as a short numbered list; user replies with a single number/letter — still not long free-form module strings.
-11. Max ~8–12 cards for module setup; never one free-text question per column.
-12. **Required-fields gate** is mandatory after data confirm, before any module cards — five sequential sub-gates: Entity ID (single or composite; shortlist ≤3/≤4 candidates, Other automatic; do not proceed without a choice, F20), Entity Label (display-only name for the HTML report and xlsx/csv export, e.g. "Student ID"; "Entity ID" recommended), duplicate-check key (auto-skip only when Entity ID is already unique; otherwise offer Entity ID alone / detected round-wave-like candidates, F27), country(ies) + timezone (always show the resolved timezone back for confirmation, F24), and last date of data collection (F25).
-13. Some gates are genuinely sequential — a later question's options or wording depend on an earlier answer (e.g. M7 Missingness: sentinel-code question must name the variables just confirmed). Author the dependent question after the prior answer resolves; do not pre-write it as a static card.
-14. Agent note: AskUserQuestion is unavailable inside Agent-tool subagents — run these confirms in the main chat.
+6. **1–4 tabs per window**, bundled by relatedness (see the Gate map below for exactly which tabs share a window) — never more than one tab per check module, and bundle related modules into a shared tab wherever the map says so.
+7. **`multiSelect: true`** only when several options can genuinely apply together (rare under the guess-first pattern — most tabs are single-select "Looks right" / Other).
+8. **Never** ask the user to type mega-strings such as `M1=Y M2=Y M8=none`, and never present a long menu of choices in place of a stated guess.
+9. Do **not** dump numbered menus in plain chat when AskUserQuestion is available — the one exception is the up-to-10-item important-variables shortlist (A2 step 4), which is posted as a numbered list because the tool's 4-option cap can't hold 10 items; it's still referenced (not re-listed) inside its AskUserQuestion tab.
+10. **Fallback** (AskUserQuestion unavailable): state the guesses as a numbered list in chat and ask the user to reply "looks right" or describe corrections — still not long free-form module strings.
+11. Some tabs speculatively guess more than one thing at once even when they're logically dependent (e.g. Window B's Variables tab guesses both the variable shortlist AND the sentinel-missing-codes for those variables, together) — this is intentional under the guess-first pattern: a wrong guess on either is corrected via the same free-text box, so there's no need to sequence them into separate questions the way a menu-based UI would have required.
+12. Agent note: AskUserQuestion is unavailable inside Agent-tool subagents — run these confirms in the main chat.
 
 ## Gate map (Pipeline A)
 
-| Gate | When | Example options (Other is automatic — do not list it) |
-|---|---|---|
-| Project folder | Workspace has multiple surveys / path unclear | up to 4 candidates |
-| Data files | After discover | Use discovered paths (recommended) / Pick different paths / Wait — I will upload |
-| **Entity ID** | **Immediately after data confirm** | Single column vs. combine multiple; up to 3 (single) or 4 (composite, `multiSelect`) shortlisted candidates |
-| **Entity Label** | **Right after Entity ID** | "Entity ID" (generic, recommended) / Other (free text, e.g. "Student ID") — display-only, applies to the HTML report and the xlsx/csv export |
-| **Duplicate-check key** | **Right after Entity Label** | Auto-skipped when Entity ID is already unique; otherwise Entity ID alone / add detected round-wave-like column(s), up to 4 (`multiSelect`) (F27) |
-| **Country(ies) + timezone** | **Right after duplicate-check key** | Single country vs. multiple (+ country column if multiple); resolved timezone always shown back for confirmation (F24) |
-| **Last date of data collection** | **Right after country/timezone** | Use detected max date (recommended) / a different date (F25) |
-| Media folder | Media filename cols found | Use discovered folder (recommended) / Column-only checks (no folder) |
-| Check-modules preview | Right before the pace question | Not a choice — build/open `hfc/check_modules.html` (tree of proposed defaults) for the user to review |
-| Module pace | After profile (and the preview above) | Accept all recommended defaults / Review module-by-module |
-| M1–M13 | If reviewing (or sub-picks after Accept all) | See `check_modules.md` option cards |
-| **M3 Form Version mapping** | If reviewing M3, or a version column/inference is found | Use detected/inferred version↔date mapping (recommended) / Edit mapping |
-| **M7 Missingness variables** | If reviewing M7 | Use recommended shortlist (≤10) (recommended) / Edit list |
-| **M7 Missingness codes** | **After M7 variables confirmed — question must name those variables** | No special codes (recommended) / Same code(s) for all / Different codes per variable |
-| **M7 Missingness threshold** | After M7 codes | 2 SD (recommended) / 1.5 SD / 2.5 SD |
-| **M9 Straightlining thresholds** | If reviewing M9 | Enumerator threshold 80% (recommended) / 70% / 90%; Survey threshold 80% (recommended) / 70% / 90% (confirmed independently) |
-| **Additional checks** | After proposed modules reviewed — **always fires, even under Accept-all pace; never skip or auto-answer (F23)** | No additional checks (recommended) |
-| **Important variables shortlist** | After Additional checks, before build — **unified for M6/M9/M10, always fires (F31)** | Posted as a plain numbered chat list (not a card, doesn't fit the 4-option cap), then: Use this list as-is (recommended) / I'll reply with edits |
-| Custom check name | If user requested an extra check | Confirm proposed name + `hfc/code/checks/<name>.R` |
-| **Product structure** | After modules + extras; before build | Continue with this structure (recommended) |
-| OneDrive pre-flight (A0c) | Before Pipeline A/B start, every run | Mandatory — not a choice; if unreachable, stop and direct the user to set it up (no AskUserQuestion, just an inline message) |
-| **Issue tracking columns** | Before writing `issue_tracking.xlsx` | Keep the standard columns (recommended) / Modify columns |
-| Map focus | If GPS / M8 on | Country / City / World |
-| Report type | Before build | HTML (recommended) |
-| Project README | After draft | Write this README (recommended) |
-| Pipeline B proceed | After listing Open + RIL-Comment rows | Proceed with these N rows (recommended) |
-| Pipeline B commit | After all rows handled, before the live file changes | Confirm the merged resolutions file — warn this replaces the live shared `issue_tracking.xlsx` (recommended) |
+| Window | Tabs | When | What each tab states |
+|---|---|---|---|
+| Data files | — | After discovery | Not a choice — tell the user inline if nothing was found and to drop files in; no AskUserQuestion needed for the found case, it's confirmed as part of the Setup window below |
+| **Setup** (A1) | Tab 1 "Confirm setup" (always), Tab 2 "Completion" (only if a completion signal was detected) | Immediately after data discovery, before any module work | Tab 1: discovered data/media files, the Entity Label (+ which column it replaces), and the data-collection country (+ timezone) — all three guessed at once, one shared correction box. Tab 2: the detected completion signal (status column / roster file / primary-secondary column) — flags a conflict explicitly if more than one signal was found |
+| Check-modules preview | — | Right before Window B | Not a choice — build/open `hfc/check_modules.html` (tree of proposed defaults) for the user to review while answering the tabs below |
+| **Module config B** (A2) | (a) "Dupes+Version", (b) "Timing", (c) "Variables", (d) "GPS+Media" | After the preview is open | (a): duplicate-check key restated + form version guess. (b): duration column/SD rule, work-hours window/weekend flag, and last date of data collection, all guessed together. (c): references the posted important-variables list, plus M6 SD threshold, M7 sentinel-code guess, and M9's fixed 90% threshold (stated, not asked). (d): GPS distance threshold, media-indicating columns restated, map focus default, and (only if a Treatment/Control column exists) an opt-in ask for an additional geographic grouping, default declined |
+| **Module config C** (A2) | (e) "Consent", (f) "Extra checks" | Same call as Window B's follow-up, or immediately after | (e): assent/consent/audio-consent column mapping, explicitly named — never bundled with anything else. (f): "No additional checks" (recommended) / Other for a custom M11 check — mandatory every run |
+| Custom check name | — | If the user requested an extra check in tab (f) | Confirm proposed name + `hfc/code/checks/<name>.R` |
+| **Product structure** | — | After A2, before build | Continue with this structure (recommended) |
+| Config pre-flight (A0) | — | Before Pipeline A/B start, every run | Mandatory — not a choice; if unreachable, stop and direct the user to set it up (no AskUserQuestion, just an inline message) |
+| **Issue tracking columns** | — | Before writing `issue_tracking.xlsx` | Keep the standard columns (recommended) / Modify columns |
+| Report type | — | Before build | Not a choice — always HTML, no AskUserQuestion |
+| Project README | — | After draft | Write this README (recommended) |
+| Pipeline B proceed | — | After listing Open + RIL-Comment rows | Proceed with these N rows (recommended) |
+| Pipeline B commit | — | After all rows handled, before the live file changes | Confirm the merged resolutions file — warn this replaces the live shared `issue_tracking.xlsx` (recommended) |
 
-When a review card would need more than 4 choices, split into sequential AskUserQuestion calls.
+Gates removed from the old per-module-card flow entirely (no longer separate confirms — see the Setup/Module-config windows above for where they now live as guessed values): Entity ID (auto-resolved, surfaces only via the Setup tab's "in place of `<col>`" phrasing), duplicate-check key (auto-resolved, restated in tab (a)), last date of data collection (moved into tab (b)), the module pace question (Accept-all vs. Review — collapsed entirely into the guess-first pattern, there's no separate "review" path anymore), and map focus (moved into tab (d)).
 
 ## After choices
 
-Write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from **selected** options, then run builders. Do not silently overwrite user picks with profile defaults. All built product lands under `hfc/` (not project root).
+Write `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` from **confirmed** (guessed-then-corrected) options, then run builders. Do not silently overwrite user corrections with profile defaults. All built product lands under `hfc/` inside the configured Code Output Directory.

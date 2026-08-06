@@ -6,11 +6,11 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 | Item | Required |
 |---|---|
-| `data/raw/` microdata (immutable) | yes |
-| Instrument / form | optional (preferred for M11 / M3 / nested skip-logic) |
-| Media folder (`data/raw/media/` or discovered) | optional (M12 on-disk checks; column checks still run) |
+| Microdata in the configured Input Data Directory (immutable) | yes |
+| Instrument / form (also in the Input Data Directory) | optional (preferred for M11 / M3 / nested skip-logic) |
 | `hfc/structure.html` reviewed + Continue confirmed | yes |
-| Required-fields gate: Entity ID, Entity Label, duplicate-check key, country(ies)/timezone, last date | yes (F20, F27, F24, F25) |
+| Setup window (A1): data/media files, Entity Label, country/timezone confirmed (+ completion signal, if detected) | yes |
+| Module-config windows (A2): Dupes+Version, Timing (incl. last date), Variables, GPS+Media, Consent, Extra checks all confirmed | yes |
 | `hfc/project.yaml` | yes |
 | `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` | yes (agent writes from confirmed options before build) |
 | `hfc/code/main.R` (one path global) | yes |
@@ -24,8 +24,8 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 | Item | Notes |
 |---|---|
-| `assets/lib/sync_folder.json` with `"enabled": true` + `local_path` | Skill-level config, no per-project override — `local_path` is the OneDrive desktop app's synced local folder |
-| OneDrive pre-flight (A0c) passes before any real work starts | No local-only mode — `require_sync_folder_ready()` stops the build otherwise |
+| `config.json` with Input Data Directory, OneDrive Folder Directory, Code Output Directory all set to real paths (Media Folder Directory optional) | Skill-level config, no per-project override — OneDrive Folder Directory is the OneDrive desktop app's synced local folder |
+| Config pre-flight (A0) passes before any real work starts | No local-only mode — `require_fieldloop_config_ready()` stops the build otherwise |
 | Folder shared with collaborators via OneDrive's own "Specific people" UI (once, by hand) | Code never mints its own share links |
 
 ## After post-feedback
@@ -33,7 +33,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | Item | Required |
 |---|---|
 | `hfc/code/resolutions/<Issue ID>.R` per resolved/reviewed finding, defining `fix(ds)` | yes |
-| `data/intermediate/<stem>.<ext>` updated (raw unchanged) | yes |
+| `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` updated (raw unchanged) | yes |
 | Today's `resolutions/<date>_issues_resolution.xlsx` clone has `Status` updated (`Resolved` / `Needs Review`) + `Corrections` — live `issue_tracking.xlsx` untouched until merge+commit | yes |
 | `merge_resolutions.R` run, merged file reviewed with the user (AskUserQuestion), then `commit_merged_issue_tracking.R` run to update the live file | yes |
 
@@ -45,5 +45,8 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 - [ ] Every table sorted by enumerator, then unique ID, then date (most recent first)
 - [ ] `issue_tracking.xlsx`, plus a copy of the report, present in the shared OneDrive-synced folder
 - [ ] Grep: no hardcoded user home paths outside `hfc/code/main.R`
-- [ ] If survey has pictures/audio: M12 on; filename cols not mis-filed under M13
+- [ ] If survey has pictures/audio: M12 on; filename cols not mis-filed under M13; M12 findings are dataset-level (one per fully-empty column), never per-row file-hygiene findings
 - [ ] Nested skip-logic blanks not flagged as missing when form available
+- [ ] If a completion signal was confirmed: M1 reports target-vs-actual (or primary/secondary composition) by group (Treatment/Control by default) and by enumerator; a "status" signal's Incomplete/Refused rows do not appear in any M2-M13/M10 finding
+- [ ] M9 straightlining fires at the 90% default unless explicitly overridden
+- [ ] Country was inferred from data content (or an explicit column), not the input folder's name

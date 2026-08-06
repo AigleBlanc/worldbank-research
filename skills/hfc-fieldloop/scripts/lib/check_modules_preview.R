@@ -40,22 +40,21 @@
         M7 = .preview_leaves(list("Variables" = m$vars, "SD multiplier" = m$sd_multiplier)),
         M8 = .preview_leaves(list("Coordinates" = c(m$x, m$y), "Threshold (m)" = m$threshold_m)),
         M9 = .preview_leaves(list("Ordinal variables" = m$ordinal_vars,
-                                    "Enumerator threshold" = sprintf("%.0f%%", 100 * (m$enum_threshold_pct %||% 0.8)),
-                                    "Survey threshold" = sprintf("%.0f%%", 100 * (m$survey_threshold_pct %||% 0.8)))),
+                                    "Enumerator threshold" = sprintf("%.0f%%", 100 * (m$enum_threshold_pct %||% 0.9)),
+                                    "Survey threshold" = sprintf("%.0f%%", 100 * (m$survey_threshold_pct %||% 0.9)))),
         M10 = .preview_leaves(list("Variables" = m$vars)),
         M11 = "",
-        M12 = .preview_leaves(list("Media folder" = m$media_folder, "Audio cols" = m$audio_cols, "Image cols" = m$image_cols,
-                                     "Min duration (s)" = m$min_duration_sec, "Max duration (s)" = m$max_duration_sec)),
+        M12 = .preview_leaves(list("Audio cols" = m$audio_cols, "Image cols" = m$image_cols, "Other/qualitative cols" = m$other_cols)),
         M13 = .preview_leaves(list("Assent col" = m$assent, "Consent col" = m$consent, "Audio col" = m$audio)),
         ""
     )
 }
 
-write_check_modules_preview_html <- function(project_root, roles, modules, open = FALSE) {
-    hfc <- hfc_root(project_root)
+write_check_modules_preview_html <- function(cfg, roles, modules, open = FALSE) {
+    hfc <- hfc_root(cfg$code_output_dir)
     dir.create(hfc, recursive = TRUE, showWarnings = FALSE)
     html_path <- file.path(hfc, "check_modules.html")
-    proj_name <- basename(normalizePath(project_root, mustWork = FALSE))
+    proj_name <- derive_project_id(cfg$input_data_dir)
 
     esc <- function(x) {
         x <- as.character(x)

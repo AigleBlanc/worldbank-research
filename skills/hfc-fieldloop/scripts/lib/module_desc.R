@@ -67,8 +67,8 @@ m8_desc <- function(modules) {
 }
 
 m9_desc <- function(modules) {
-    enum_pct <- round(100 * (modules$M9$enum_threshold_pct %||% 0.8))
-    survey_pct <- round(100 * (modules$M9$survey_threshold_pct %||% 0.8))
+    enum_pct <- round(100 * (modules$M9$enum_threshold_pct %||% 0.9))
+    survey_pct <- round(100 * (modules$M9$survey_threshold_pct %||% 0.9))
     sprintf(
         "Flags enumerators who gave the same answer on a question in %s%%+ of their interviews, and submissions where %s%%+ of ordinal/Likert-style answers are identical.",
         enum_pct, survey_pct
@@ -76,14 +76,7 @@ m9_desc <- function(modules) {
 }
 
 m12_desc <- function(modules) {
-    min_dur <- modules$M12$min_duration_sec %||% 5
-    max_dur <- modules$M12$max_duration_sec %||% 3600
-    min_audio <- modules$M12$min_audio_bytes %||% 1024L
-    min_image <- modules$M12$min_image_bytes %||% 2048L
-    sprintf(
-        "Flags problems with recorded audio/photo files: missing files, empty filename cells, files below %s bytes (audio) / %s bytes (image), audio duration outside [%s, %s]s, wrong file types, or duplicates.",
-        min_audio, min_image, min_dur, max_dur
-    )
+    "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row — usually a form/coding problem (the field isn't showing up in the enumerator's app, or the question is misconfigured), not a per-row file-hygiene issue."
 }
 
 DYNAMIC_MODULE_DESC <- list(

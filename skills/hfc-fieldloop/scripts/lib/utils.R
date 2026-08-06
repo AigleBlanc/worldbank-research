@@ -18,19 +18,23 @@ safe_num <- function(x) {
     suppressWarnings(as.numeric(x))
 }
 
-# The survey project root is the skill's parent directory.
-project_root_from_skill <- function(skill_dir) {
-    normalizePath(file.path(skill_dir, ".."))
+# Product root: all built artifacts live under <code_output_dir>/hfc/ — the
+# git-tracked folder named in config.json's code_output_dir, decoupled from
+# wherever the input microdata actually lives.
+hfc_root <- function(code_output_dir) {
+    file.path(code_output_dir, "hfc")
 }
 
-# Product root: all built artifacts live under <project>/hfc/
-hfc_root <- function(project_root) {
-    file.path(project_root, "hfc")
+# Build a path under the configured code_output_dir's hfc/ product root.
+hfc_path <- function(code_output_dir, ...) {
+    file.path(hfc_root(code_output_dir), ...)
 }
 
-# Build a path under the project's hfc/ product root.
-hfc_path <- function(project_root, ...) {
-    file.path(hfc_root(project_root), ...)
+# A short, stable label for this survey — used in the HTML report title, the
+# structure/check-modules preview pages, and the OneDrive report-copy
+# filename. Just the basename of the configured input data directory.
+derive_project_id <- function(input_data_dir) {
+    basename(normalizePath(input_data_dir, mustWork = FALSE))
 }
 
 # Read survey microdata (.dta/.csv/.xlsx), optionally subsampled with a fixed seed.
@@ -55,18 +59,20 @@ load_microdata <- function(path, sample_n = NA_integer_) {
     ds
 }
 
-# Write agent-fixed data to data/intermediate/<stem>.<ext> — a sibling of
-# data/raw/, never inside it, so raw stays untouched/immutable. Each fix pass
-# overwrites this one evolving file (not a new file per pass), so later fixes
-# build on top of earlier ones.
-write_intermediate <- function(ds, project_root, stem, ext) {
+# Write agent-fixed data to <sibling of input_data_dir>/intermediate/<stem>.<ext>
+# — never inside input_data_dir itself, so raw stays untouched/immutable, and
+# never under code_output_dir either (full microdata, agent-fixed or not,
+# carries the same privacy sensitivity as raw data and shouldn't land in a
+# git-tracked folder). Each fix pass overwrites this one evolving file (not
+# a new file per pass), so later fixes build on top of earlier ones.
+write_intermediate <- function(ds, input_data_dir, stem, ext) {
     suppressPackageStartupMessages({ library(haven); library(readr); library(openxlsx) })
     # Drop labels that block character mutations / write
     ds <- as.data.frame(lapply(ds, function(col) {
         if (inherits(col, "haven_labelled")) return(as.vector(col))
         col
     }), stringsAsFactors = FALSE)
-    dir <- file.path(project_root, "data", "intermediate")
+    dir <- file.path(dirname(normalizePath(input_data_dir, mustWork = FALSE)), "intermediate")
     dir.create(dir, recursive = TRUE, showWarnings = FALSE)
     ext <- tolower(ext)
     out <- file.path(dir, paste0(stem, ".", ext))
@@ -86,13 +92,16 @@ write_intermediate <- function(ds, project_root, stem, ext) {
     normalizePath(out)
 }
 
-# Load the latest fixed version from data/intermediate/ if a prior fix pass
-# wrote one, else fall back to the original file under data/raw/.
-load_latest_dataset <- function(project_root, data_rel, sample_n = NA_integer_) {
-    stem <- tools::file_path_sans_ext(basename(data_rel))
-    ext <- tolower(tools::file_ext(data_rel))
-    intermediate_path <- file.path(project_root, "data", "intermediate", paste0(stem, ".", ext))
-    path <- if (file.exists(intermediate_path)) intermediate_path else file.path(project_root, data_rel)
+# Load the latest fixed version from <sibling of input_data_dir>/intermediate/
+# if a prior fix pass wrote one, else fall back to the original file in
+# input_data_dir. `data_file` is always a bare filename (project.yaml stores
+# it that way — the file lives directly in the configured input_data_dir,
+# never copied elsewhere).
+load_latest_dataset <- function(input_data_dir, data_file, sample_n = NA_integer_) {
+    stem <- tools::file_path_sans_ext(basename(data_file))
+    ext <- tolower(tools::file_ext(data_file))
+    intermediate_path <- file.path(dirname(normalizePath(input_data_dir, mustWork = FALSE)), "intermediate", paste0(stem, ".", ext))
+    path <- if (file.exists(intermediate_path)) intermediate_path else file.path(input_data_dir, basename(data_file))
     load_microdata(path, sample_n = sample_n)
 }
 

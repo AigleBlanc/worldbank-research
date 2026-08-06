@@ -8,11 +8,11 @@
 # directly (see scripts/merge_resolutions.R for how the clone gets folded
 # back into the live file, after AskUserQuestion confirmation).
 #
-# Usage (a shared sync folder must already be configured — no local mode):
-#   Rscript apply_feedback.R clone <project_root>
-#   Rscript apply_feedback.R list-open <project_root>
-#   Rscript apply_feedback.R apply <project_root> --finding-id <id> --corrections "<text>"
-#   Rscript apply_feedback.R needs-review <project_root> --finding-id <id>
+# Usage (skills/hfc-fieldloop/config.json must already be configured — no local mode):
+#   Rscript apply_feedback.R clone
+#   Rscript apply_feedback.R list-open
+#   Rscript apply_feedback.R apply --finding-id <id> --corrections "<text>"
+#   Rscript apply_feedback.R needs-review --finding-id <id>
 
 `%||%` <- function(a, b) {
   if (is.null(a) || length(a) == 0) return(b)
@@ -43,18 +43,13 @@ suppressPackageStartupMessages({
   library(dplyr); library(readr); library(yaml)
 })
 
-# Step 2: parse CLI args — subcommand, project root, --finding-id, --corrections.
+# Step 2: parse CLI args — subcommand + --finding-id/--corrections.
 args <- commandArgs(trailingOnly = TRUE)
 if (!length(args)) {
-  stop("Usage: apply_feedback.R <clone|list-open|apply|needs-review> <project_root> [--finding-id <id>] [--corrections <text>]")
+  stop("Usage: apply_feedback.R <clone|list-open|apply|needs-review> [--finding-id <id>] [--corrections <text>]")
 }
 mode <- args[[1]]
 rest <- args[-1]
-project_root <- if (length(rest) && !startsWith(rest[[1]], "--")) {
-  normalizePath(decode_file_arg(rest[[1]]))
-} else {
-  project_root_from_skill(skill)
-}
 opt_val <- function(flag) {
   i <- match(flag, rest)
   if (!is.na(i) && i < length(rest)) rest[[i + 1]] else NA_character_
@@ -62,28 +57,29 @@ opt_val <- function(flag) {
 finding_id <- opt_val("--finding-id")
 corrections_text <- opt_val("--corrections")
 
-# Step 2b: a configured shared sync folder is required — no local fallback.
-require_sync_folder_ready(project_root, skill)
+# Step 2b: config.json must be fully configured — no local fallback.
+cfg_ctx <- require_fieldloop_config_ready(skill)
+cfg <- cfg_ctx$cfg
 
 # Step 3: dispatch.
 if (mode == "clone") {
-  res <- clone_for_resolution_pass(project_root, skill_dir = skill)
+  res <- clone_for_resolution_pass(cfg, skill_dir = skill)
   message("Resolutions clone ", res$status, " (", res$n, " rows).")
 } else if (mode == "list-open") {
-  open_rows <- list_open_commented_rows(project_root, skill_dir = skill)
-  out_path <- hfc_path(project_root, "registry", "fix_candidates.csv")
+  open_rows <- list_open_commented_rows(cfg, skill_dir = skill)
+  out_path <- hfc_path(cfg$code_output_dir, "registry", "fix_candidates.csv")
   write_csv(open_rows, out_path)
   message("Open + commented rows: ", nrow(open_rows))
   message("Wrote ", out_path)
 } else if (mode == "apply") {
   if (is.na(finding_id)) stop("apply requires --finding-id <id>")
   if (is.na(corrections_text)) stop("apply requires --corrections \"<text>\"")
-  res <- apply_one_fix(project_root, finding_id, corrections_text, skill_dir = skill)
+  res <- apply_one_fix(cfg, finding_id, corrections_text, skill_dir = skill)
   message("Fixed ", finding_id, " -> ", res$intermediate_path)
   message("Status set to Resolved in today's resolutions clone.")
 } else if (mode == "needs-review") {
   if (is.na(finding_id)) stop("needs-review requires --finding-id <id>")
-  mark_needs_review(project_root, finding_id, skill_dir = skill)
+  mark_needs_review(cfg, finding_id, skill_dir = skill)
   message("Status set to Needs Review for ", finding_id, " in today's resolutions clone.")
 } else {
   stop("Unknown mode: ", mode, " (expected clone | list-open | apply | needs-review)")

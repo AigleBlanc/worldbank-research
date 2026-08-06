@@ -1,9 +1,9 @@
 # Test folders
 scratch/
 malawi2/
-tests/
+test/
 
-# Date files
+# Data files
 data/
 
 # Claude specs

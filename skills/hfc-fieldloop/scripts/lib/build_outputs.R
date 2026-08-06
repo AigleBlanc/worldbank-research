@@ -99,7 +99,7 @@ findings_to_issue_tracking <- function(findings) {
             corrections = "",
             correction_author = "",
             status = "Open",
-            issue_category = category,
+            issue_category = category_label(category),
             variable,
             unique_submission_id = key,
             finding_id
@@ -338,13 +338,14 @@ module_desc <- function(code, modules = NULL) {
     if (is.na(dyn) || !nzchar(dyn)) static_desc else dyn
 }
 
-# Human-readable labels for findings$category values, for the "By category"
-# report table only — the underlying `category` field and the xlsx/csv
-# "Issue Category" export always keep the raw machine value (same
-# HTML-display-only pattern as roles$entity_label). M11 custom checks use
-# arbitrary per-project category strings that can't be pre-mapped here; any
-# unmapped value falls back to a Title-Case-from-snake_case transform,
-# mirroring module_label()'s graceful fallback to the raw code.
+# Human-readable labels for findings$category values — used both by the "By
+# category" report table and the xlsx/csv "Issue Category" export
+# (findings_to_issue_tracking()). The underlying `category` field itself
+# stays the raw machine value throughout findings processing; only display
+# surfaces apply this. M11 custom checks use arbitrary per-project category
+# strings that can't be pre-mapped here; any unmapped value falls back to a
+# Title-Case-from-snake_case transform, mirroring module_label()'s graceful
+# fallback to the raw code.
 CATEGORY_LABELS <- c(
     low_completion = "Low completion",
     duplicates = "Duplicate submission",
@@ -358,14 +359,7 @@ CATEGORY_LABELS <- c(
     gps_distance = "GPS distance outlier",
     straightlining_enum = "Straightlining (by enumerator)",
     straightlining_survey = "Straightlining (within submission)",
-    media_folder_missing = "Media folder missing",
-    media_missing_cell = "Missing media filename",
-    media_bad_ext = "Unexpected media file type",
-    media_file_absent = "Media file not found on disk",
-    media_tiny = "Media file too small",
-    media_duration = "Media duration out of range",
-    media_dup = "Duplicate media file",
-    media_flag_mismatch = "Media consent flag mismatch",
+    media_column_empty = "Media column empty (all rows)",
     assent = "Missing assent",
     consent = "Missing consent",
     audio = "Missing audio consent flag"
@@ -396,8 +390,7 @@ FINDING_SORT_DIRECTION <- c(
     age_outlier = "desc", numeric_outlier = "desc",
     high_missingness = "desc",
     gps_distance = "desc",
-    straightlining_enum = "desc", straightlining_survey = "desc",
-    media_tiny = "asc", media_duration = "desc", media_dup = "desc"
+    straightlining_enum = "desc", straightlining_survey = "desc"
 )
 
 # Order findings by module (M1..M13, in MODULE_ORDER), then "worst first"
@@ -594,19 +587,19 @@ SUMMARY_PLACEHOLDER_TEXT <- "Summary not yet drafted — findings are listed bel
 # this is a different kind of content (a narrative message, not a per-module
 # description). Falls back to a placeholder when absent/empty (e.g. the very
 # first build, before the agent has seen any findings yet).
-read_summary_message <- function(project_root) {
-    path <- hfc_path(project_root, "config", "summary_message.md")
+read_summary_message <- function(code_output_dir) {
+    path <- hfc_path(code_output_dir, "config", "summary_message.md")
     if (!file.exists(path)) return(NA_character_)
     txt <- paste(readLines(path, warn = FALSE), collapse = "\n")
     if (!nzchar(trimws(txt))) return(NA_character_)
     txt
 }
 
-write_html_report <- function(findings, project_root, project_id, open = FALSE,
+write_html_report <- function(findings, code_output_dir, project_id, open = FALSE,
                                 roles = NULL, ds = NULL, report_cfg = NULL,
                                 module_notes = NULL, stats = NULL, modules = NULL) {
     suppressPackageStartupMessages({ library(dplyr) })
-    report_dir <- hfc_path(project_root, "outputs")
+    report_dir <- hfc_path(code_output_dir, "outputs")
     dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
     html_path <- file.path(report_dir, "report.html")
 
@@ -661,7 +654,7 @@ write_html_report <- function(findings, project_root, project_id, open = FALSE,
         )
     } else ""
 
-    summary_msg <- read_summary_message(project_root)
+    summary_msg <- read_summary_message(code_output_dir)
     summary_msg_html <- if (!is.na(summary_msg)) {
         paste0("<div class='summary-narrative'>", gsub("\n", "<br/>", esc(summary_msg), fixed = TRUE), "</div>")
     } else {
@@ -932,7 +925,7 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     map_html,
     "<section id='all' class='card'><h2>All findings</h2>", all_tbl, "</section>",
     "<p class='note footer'>Field edits go in the shared <code>issue_tracking.xlsx</code> in your ",
-    "OneDrive-synced folder (see <code>hfc-fieldloop/assets/lib/sync_folder.json</code>). When ready, say ",
+    "OneDrive-synced folder (see <code>hfc-fieldloop/config.json</code>). When ready, say ",
     "<strong>Process HFC feedback</strong>.</p>",
     "</main>",
     "<script>
@@ -1006,11 +999,8 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
   normalizePath(html_path)
 }
 
-ensure_project_dirs <- function(project_root) {
-    # Raw data at project root; everything else under hfc/
-    dir.create(file.path(project_root, "data", "raw"), recursive = TRUE, showWarnings = FALSE)
-    dir.create(file.path(project_root, "data", "intermediate"), recursive = TRUE, showWarnings = FALSE)
-    hfc <- hfc_root(project_root)
+ensure_project_dirs <- function(code_output_dir) {
+    hfc <- hfc_root(code_output_dir)
     for (d in c("config", "instruments", "registry", "outputs", "code")) {
         dir.create(file.path(hfc, d), recursive = TRUE, showWarnings = FALSE)
     }
@@ -1031,11 +1021,11 @@ CHECK_TEMPLATE_FILES <- c(
 #' script into hfc/code/checks/<name>.R with the project path substituted —
 #' same copy-and-substitute convention as write_main_r()/assets/main.R.
 #' Running the copied file standalone reproduces that module's findings.
-write_check_scripts <- function(project_root, modules, skill_dir = NULL) {
-    checks_dir <- hfc_path(project_root, "code", "checks")
+write_check_scripts <- function(code_output_dir, modules, skill_dir = NULL) {
+    checks_dir <- hfc_path(code_output_dir, "code", "checks")
     dir.create(checks_dir, showWarnings = FALSE, recursive = TRUE)
     if (is.null(skill_dir) || is.na(skill_dir)) {
-        skill_dir <- file.path(project_root, ".claude", "skills", "hfc-fieldloop")
+        stop("write_check_scripts() requires skill_dir — the caller must resolve it (see .resolve_skill() in each CLI script).")
     }
     tmpl_dir <- file.path(skill_dir, "assets", "check_templates")
 
@@ -1061,42 +1051,38 @@ write_check_scripts <- function(project_root, modules, skill_dir = NULL) {
         tmpl <- file.path(tmpl_dir, fname)
         if (!file.exists(tmpl)) next
         lines <- readLines(tmpl, warn = FALSE)
-        lines <- sub(
-        'path <- "your/path/to/survey_project/"',
-        sprintf('path <- "%s"', normalizePath(project_root)),
-        lines,
-        fixed = TRUE
-        )
+        lines <- sub('skill <- "your/path/to/hfc-fieldloop/"',
+        sprintf('skill <- "%s"', normalizePath(skill_dir)), lines, fixed = TRUE)
+        lines <- sub('code_output_dir <- "your/path/to/hfc/output/"',
+        sprintf('code_output_dir <- "%s"', normalizePath(code_output_dir)), lines, fixed = TRUE)
         writeLines(lines, file.path(checks_dir, fname))
     }
 }
 
-write_main_r <- function(project_root, skill_dir = NULL) {
-    dir.create(hfc_path(project_root, "code"), showWarnings = FALSE, recursive = TRUE)
-    dest <- hfc_path(project_root, "code", "main.R")
+write_main_r <- function(code_output_dir, skill_dir = NULL) {
+    dir.create(hfc_path(code_output_dir, "code"), showWarnings = FALSE, recursive = TRUE)
+    dest <- hfc_path(code_output_dir, "code", "main.R")
     if (is.null(skill_dir) || is.na(skill_dir)) {
-        skill_dir <- file.path(project_root, ".claude", "skills", "hfc-fieldloop")
+        stop("write_main_r() requires skill_dir — the caller must resolve it (see .resolve_skill() in each CLI script).")
     }
     tmpl <- file.path(skill_dir, "assets", "main.R")
     if (file.exists(tmpl)) {
         lines <- readLines(tmpl, warn = FALSE)
-        lines <- sub(
-        'path <- "your/path/to/survey_project/"',
-        sprintf('path <- "%s"', normalizePath(project_root)),
-        lines,
-        fixed = TRUE
-        )
+        lines <- sub('skill <- "your/path/to/hfc-fieldloop/"',
+        sprintf('skill <- "%s"', normalizePath(skill_dir)), lines, fixed = TRUE)
+        lines <- sub('code_output_dir <- "your/path/to/hfc/output/"',
+        sprintf('code_output_dir <- "%s"', normalizePath(code_output_dir)), lines, fixed = TRUE)
         writeLines(lines, dest)
     } else {
         # Defensive fallback only — assets/main.R should always exist; this
         # path is effectively unreachable in a normal install.
         writeLines(c(
-        "# HFC FieldLoop — one path global",
-        sprintf('path <- "%s"', normalizePath(project_root)),
-        'skill <- file.path(path, ".claude", "skills", "hfc-fieldloop")',
-        'hfc <- file.path(path, "hfc")',
-        "# Rscript file.path(skill, \"scripts\", \"run_setup_build.R\") path --open",
-        "# Rscript file.path(skill, \"scripts\", \"apply_feedback.R\") \"clone\" path"
+        "# HFC FieldLoop — two path globals",
+        sprintf('skill <- "%s"', normalizePath(skill_dir)),
+        sprintf('code_output_dir <- "%s"', normalizePath(code_output_dir)),
+        'hfc <- file.path(code_output_dir, "hfc")',
+        "# Rscript file.path(skill, \"scripts\", \"run_setup_build.R\")",
+        "# Rscript file.path(skill, \"scripts\", \"apply_feedback.R\") \"clone\""
         ), dest)
     }
 }

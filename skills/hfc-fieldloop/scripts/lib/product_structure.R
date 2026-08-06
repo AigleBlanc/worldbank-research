@@ -1,10 +1,14 @@
 # Write hfc/structure.html — product tree map for user review before Continue.
+# `cfg`: the loaded config.json (see scripts/lib/sync_folder.R) — its four
+# configured directories are shown directly, since they're no longer siblings
+# under one project_root.
 
-write_product_structure_html <- function(project_root, open = FALSE) {
-  hfc <- hfc_root(project_root)
+write_product_structure_html <- function(cfg, open = FALSE) {
+  hfc <- hfc_root(cfg$code_output_dir)
   dir.create(hfc, recursive = TRUE, showWarnings = FALSE)
   html_path <- file.path(hfc, "structure.html")
-  proj_name <- basename(normalizePath(project_root, mustWork = FALSE))
+  proj_name <- derive_project_id(cfg$input_data_dir)
+  media_line <- if (!is.na(cfg$media_dir) && nzchar(cfg$media_dir)) cfg$media_dir else "(not configured)"
 
   html <- paste0(
 '<!DOCTYPE html>
@@ -75,14 +79,15 @@ write_product_structure_html <- function(project_root, open = FALSE) {
 <body>
   <main>
     <h1>FieldLoop product — ', proj_name, '</h1>
-    <p class="lede">Built artifacts for this survey live under <code>hfc/</code>. Raw microdata stays in <code>data/raw/</code>; the skill stays in <code>hfc-fieldloop/</code>. The shared <code>issue_tracking.xlsx</code> — and its dated snapshot/resolutions subfolders — live entirely in your configured OneDrive folder, not shown in this local tree.</p>
+    <p class="lede">Built artifacts for this survey live under <code>hfc/</code>, inside your configured code output directory — decoupled from wherever the raw data actually lives. Raw microdata is read in place and never copied. The shared <code>issue_tracking.xlsx</code> — and its dated snapshot/resolutions subfolders — live entirely in your configured OneDrive folder, not shown in this local tree.</p>
     <p class="note"><strong>Review in browser, then Continue.</strong> Confirm this layout via AskUserQuestion before the full build writes checks, the report, and the shared issue tracking file.</p>
-    <div class="tree" aria-label="Product folder tree">
+    <div class="tree" aria-label="Configured directories">
       <ul class="tree-root">
-        <li class="dir"><span class="name">', proj_name, '/</span>
+        <li class="dir"><span class="name">input_data_dir</span><span class="meta">', cfg$input_data_dir, ' — read in place, never copied</span></li>
+        <li class="dir"><span class="name">media_dir</span><span class="meta">', media_line, '</span></li>
+        <li class="dir"><span class="name">onedrive_output_dir</span><span class="meta">', cfg$onedrive_output_dir, ' — issue_tracking.xlsx + snapshots</span></li>
+        <li class="dir"><span class="name">code_output_dir</span><span class="meta">', cfg$code_output_dir, '</span>
           <ul>
-            <li class="dir"><span class="name">data/raw/</span><span class="meta">originals (never mutated)</span></li>
-            <li class="dir"><span class="name">hfc-fieldloop/</span><span class="meta">skill (drop-in)</span></li>
             <li class="dir"><span class="name">hfc/</span>
               <ul>
                 <li><span class="name">structure.html</span><span class="meta">this map</span></li>
@@ -90,7 +95,7 @@ write_product_structure_html <- function(project_root, open = FALSE) {
                 <li class="dir"><span class="name">config/</span>
                   <ul>
                     <li>modules.yaml · role_map.yaml</li>
-                    <li>sync_folder.json · module_cards.txt</li>
+                    <li>config.json · module_cards.txt</li>
                   </ul>
                 </li>
                 <li class="dir"><span class="name">instruments/</span><span class="meta">optional form copy</span></li>

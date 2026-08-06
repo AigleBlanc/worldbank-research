@@ -5,10 +5,10 @@
 # file and gotten explicit AskUserQuestion confirmation, with a warning that
 # this replaces the shared live file.
 #
-# Usage: Rscript commit_merged_issue_tracking.R <project_root> <merged_filename>
-#   (a shared sync folder must already be configured)
-#   e.g. Rscript commit_merged_issue_tracking.R . merged_issue_tracking.xlsx
-#        Rscript commit_merged_issue_tracking.R . merged_issue_resolutions.xlsx
+# Usage: Rscript commit_merged_issue_tracking.R <merged_filename>
+#   (skills/hfc-fieldloop/config.json must already be configured)
+#   e.g. Rscript commit_merged_issue_tracking.R merged_issue_tracking.xlsx
+#        Rscript commit_merged_issue_tracking.R merged_issue_resolutions.xlsx
 
 `%||%` <- function(a, b) {
   if (is.null(a) || length(a) == 0) return(b)
@@ -34,17 +34,17 @@ source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
-if (length(args) < 2) stop("Usage: commit_merged_issue_tracking.R <project_root> <merged_filename>")
-project_root <- normalizePath(decode_file_arg(args[[1]]))
-merged_filename <- args[[2]]
+if (length(args) < 1) stop("Usage: commit_merged_issue_tracking.R <merged_filename>")
+merged_filename <- args[[1]]
 
-require_sync_folder_ready(project_root, skill)
-entity_label <- load_entity_label(project_root)
-ctx <- fetch_issue_tracking(project_root, skill_dir = skill, entity_label = entity_label)
+cfg_ctx <- require_fieldloop_config_ready(skill)
+cfg <- cfg_ctx$cfg
+entity_label <- load_entity_label(cfg$code_output_dir)
+ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label)
 merged <- read_named_tracking_file(ctx, merged_filename, entity_label = entity_label)
 if (is.null(merged)) stop("No such merged file found: ", merged_filename)
 
-commit_issue_tracking(project_root, merged, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
+commit_issue_tracking(merged, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
 delete_named_tracking_file(ctx, merged_filename)
 
 message("Committed ", merged_filename, " -> issue_tracking.xlsx (", nrow(merged), " rows). ", merged_filename, " deleted.")

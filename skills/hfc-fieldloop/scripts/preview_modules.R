@@ -6,7 +6,8 @@
 # writes either file itself, that only happens once the user actually
 # confirms in chat.
 #
-# Usage: Rscript preview_modules.R <project_root> [--open]
+# Usage: Rscript preview_modules.R [--open]
+# Reads skills/hfc-fieldloop/config.json for input_data_dir/media_dir/code_output_dir.
 
 `%||%` <- function(a, b) {
     if (is.null(a) || length(a) == 0) return(b)
@@ -46,11 +47,6 @@ source(file.path(lib, "sync_folder.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
-project_root <- if (length(args) && !startsWith(args[[1]], "--")) {
-    normalizePath(decode_file_arg(args[[1]]), mustWork = FALSE)
-} else {
-    project_root_from_skill(skill)
-}
 do_open <- "--open" %in% args
 
 suppressPackageStartupMessages({
@@ -58,32 +54,29 @@ suppressPackageStartupMessages({
     library(yaml); library(jsonlite); library(lubridate); library(tibble)
 })
 
-require_sync_folder_ready(project_root, skill)
+ctx <- require_fieldloop_config_ready(skill)
+cfg <- ctx$cfg
 
-disc <- discover_project(project_root, create_raw_if_missing = TRUE)
-if (identical(disc$status, "missing_data")) {
-    stop("No microdata found under data/raw/. Drop a .dta/.csv/.xlsx and re-run.")
+disc <- discover_project(cfg$input_data_dir)
+if (!identical(disc$status, "found")) {
+    stop("No microdata found in input_data_dir (", cfg$input_data_dir, "). Drop a .dta/.csv/.xlsx there and re-run.")
 }
 data_path <- disc$data$path
 
 message("Loading: ", data_path)
 ds <- load_microdata(data_path)
 
-media_folder <- disc$media_folder %||% NA_character_
-if (is.null(media_folder) || (length(media_folder) == 1 && is.na(media_folder))) {
-    mf <- discover_media_folder(project_root, data_path)
-    media_folder <- mf$path
-}
+media_folder <- cfg$media_dir %||% NA_character_
 
-roles <- profile_roles(ds, media_folder = media_folder)
+roles <- profile_roles(ds, media_folder = media_folder, roster_candidate = disc$roster_candidate)
 
-modules_path <- hfc_path(project_root, "config", "modules.yaml")
+modules_path <- hfc_path(cfg$code_output_dir, "config", "modules.yaml")
 modules <- if (file.exists(modules_path)) yaml::read_yaml(modules_path) else default_modules(roles)
 
 # Overlay any already-confirmed required-fields-gate answers (A1 runs before
 # A2, so role_map.yaml may already hold a partial config) — read-only, never
 # written back here.
-role_map_path <- hfc_path(project_root, "config", "role_map.yaml")
+role_map_path <- hfc_path(cfg$code_output_dir, "config", "role_map.yaml")
 if (file.exists(role_map_path)) {
     saved <- yaml::read_yaml(role_map_path)
     if (!is.null(saved$entity_label) && nzchar(as.character(saved$entity_label))) {
@@ -92,7 +85,16 @@ if (file.exists(role_map_path)) {
     if (!is.null(saved$important_vars) && length(saved$important_vars)) {
         roles$important_vars <- unlist(saved$important_vars)
     }
+    if (!is.null(saved$completion_primary_signal) && nzchar(as.character(saved$completion_primary_signal))) {
+        roles$completion_primary_signal <- as.character(saved$completion_primary_signal)
+    }
+    if (!is.null(saved$treatment_control_col) && nzchar(as.character(saved$treatment_control_col))) {
+        roles$treatment_control_col <- as.character(saved$treatment_control_col)
+    }
+    if (!is.null(saved$geo_group_col) && nzchar(as.character(saved$geo_group_col))) {
+        roles$geo_group_col <- as.character(saved$geo_group_col)
+    }
 }
 
-out <- write_check_modules_preview_html(project_root, roles, modules, open = do_open)
+out <- write_check_modules_preview_html(cfg, roles, modules, open = do_open)
 message("Wrote ", out)

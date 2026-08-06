@@ -1,0 +1,7 @@
+{
+    "Input Data Directory": "<absolute path to the folder containing your survey microdata export>",
+    "Media Folder Directory": "",
+    "OneDrive Folder Directory": "<absolute path to your OneDrive-synced folder>",
+    "Code Output Directory": "<absolute path to a git working copy you manage yourself>",
+    "Main Tracking Filename": "issue_tracking.xlsx"
+}

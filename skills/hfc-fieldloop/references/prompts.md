@@ -1,10 +1,10 @@
 # Trigger phrases
 
-After the trigger, the agent confirms via **AskUserQuestion** option cards (Claude Code supplies free-text **Other** automatically). See `interaction.md`. Users should not need to type `M1=Y M2=…`.
+After the trigger, the agent confirms via **AskUserQuestion** windows that state the agent's own best guess and offer one free-text correction (Claude Code supplies free-text **Other** automatically). See `interaction.md`. Users should not need to type `M1=Y M2=…`, and should never see a long menu of choices — just a guess to confirm or correct.
 
 Also invokable as `/hfc-fieldloop` in Claude Code.
 
-Built product lands under **`hfc/`**. Unique submission ID is a hard gate (≤3 shortlist) right after data confirm.
+Built product lands under **`hfc/`**. Right after data discovery, one required-gate window confirms the discovered files, the entity label, and the data-collection country — see `SKILL.md`'s A1.
 
 ## Pipeline A — Setup
 
@@ -16,15 +16,7 @@ Use setup flow when the user says (case-insensitive, paraphrase OK):
 - Set up FieldLoop
 - Build HFC checks / HFC report (when no feedback file exists yet)
 
-**Project path (required when workspace ≠ survey root):** include the survey folder in the prompt, e.g.:
-
-- Run HFC FieldLoop for `test/malawi1`
-- Run HFC FieldLoop for malawi1
-- Run HFC FieldLoop project: `path/to/survey`
-
-`project_root` = that folder (must contain `.claude/skills/hfc-fieldloop/` when using this drop-in, and usually `data/raw/`). Do **not** treat the monorepo / workspace root as the survey project unless the user said so or that root itself holds the skill + data.
-
-If the path is still ambiguous, AskUserQuestion with up to 4 candidate folders (Other automatic).
+No project path needed — every script reads its four directories (Input Data Directory, Media Folder Directory, OneDrive Folder Directory, Code Output Directory) from `skills/hfc-fieldloop/config.json`. If `config.json` isn't fully configured yet, the config pre-flight (`SKILL.md`'s A0) stops and tells the user what to edit before proceeding.
 
 ## Pipeline B — Post-feedback
 
@@ -36,7 +28,4 @@ Use post-feedback flow when the user says:
 - Apply HFC fixes
 - Process feedback sheet
 
-Prefer the same project naming: `Process HFC feedback for test/malawi1`.
-
-If ambiguous, AskUserQuestion: Setup new HFC package / Process existing feedback.  
-If multiple survey folders and no path given, AskUserQuestion: up to 4 candidate folders.
+If ambiguous, AskUserQuestion: Setup new HFC package / Process existing feedback.

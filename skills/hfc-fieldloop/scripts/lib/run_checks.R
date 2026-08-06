@@ -1,6 +1,6 @@
 # Run M1-M13 checks given ds, roles, modules config.
 # Returns list(findings = <tibble>, stats = <named list of data.frames per module>).
-# Optional project_root: sources custom checks from hfc/code/checks/*.R (run_<name>).
+# Optional code_output_dir: sources custom checks from hfc/code/checks/*.R (run_<name>).
 #
 # Each module's check logic lives in its own check_mN(ds, roles, modules)
 # function, returning list(findings = <tibble>, stats = <df or list-of-df>)
@@ -9,7 +9,7 @@
 # wrapping each in the same per-module tryCatch() as before. This same
 # check_mN()/prepare_ds_for_checks() pair is what a standalone
 # hfc/code/checks/Mx_y.R script calls to reproduce one module's findings in
-# isolation: `ds <- prepare_ds_for_checks(ds, roles, project_root);
+# isolation: `ds <- prepare_ds_for_checks(ds, roles, code_output_dir);
 # res <- check_mN(ds, roles, modules); res$findings <- dedupe_finding_ids(res$findings)`
 # — safe because dedupe_finding_ids() only ever disambiguates collisions
 # *within* a module (finding_id is always module-prefixed), so deduping one
@@ -117,19 +117,43 @@ completion_summary <- function(complete_flag, group_vec = NULL) {
         )
 }
 
+#' TRUE for rows that belong in the M2-M13/M10 "surveyed subset". Only the
+#' "status" completion signal actually removes rows — an explicit
+#' Incomplete/Refused-style status means that row wasn't really surveyed.
+#' The "roster" and "primary_secondary" signals never remove rows from ds:
+#' every row in ds IS a completed survey by construction under those two
+#' signal types; they only change what M1 itself reports (target-vs-actual,
+#' or primary/secondary composition), not which rows the other modules see.
+#' No signal detected at all -> unchanged from pre-completion-redesign
+#' behavior (every row counts).
+compute_completed_flag <- function(ds, roles) {
+    if (identical(roles$completion_primary_signal, "status")) {
+        col <- roles$completion_status_col
+        if (!is.null(col) && !is.na(col) && col %in% names(ds)) {
+        complete_values <- roles$completion_status_complete_values %||% c("complete", "completed")
+        return(tolower(trimws(as.character(ds[[col]]))) %in% tolower(complete_values))
+        }
+    }
+    rep(TRUE, nrow(ds))
+}
+
 #' Shared per-run setup: one-time library loads, form-map resolution (read
 #' from an existing attribute, or freshly parsed and written back onto that
 #' same attribute so every check_mN() call — including from a standalone
 #' generated script — can read it via attr(ds, "hfc_form_map") without
-#' needing its own project_root parameter), and the two derived columns
-#' every module can rely on (.hfc_row, .hfc_id_display).
-prepare_ds_for_checks <- function(ds, roles, project_root = NULL) {
+#' needing its own code_output_dir parameter), and the derived columns
+#' every module can rely on (.hfc_row, .hfc_id_display, .hfc_completed).
+#' `target_ds`: the loaded roster/target-sample tibble, only when
+#' roles$completion_primary_signal == "roster" (NULL otherwise) — attached
+#' as an attribute so check_m1() alone can read it without every other
+#' check_mN() needing to know it exists.
+prepare_ds_for_checks <- function(ds, roles, code_output_dir = NULL, target_ds = NULL) {
     suppressPackageStartupMessages({
         library(dplyr); library(lubridate); library(tibble)
     })
     form_map <- attr(ds, "hfc_form_map")
-    if (is.null(form_map) && !is.null(project_root)) {
-        fp <- hfc_path(project_root, "instruments", "form.xlsx")
+    if (is.null(form_map) && !is.null(code_output_dir)) {
+        fp <- hfc_path(code_output_dir, "instruments", "form.xlsx")
         if (file.exists(fp) && exists("parse_form_relevance", mode = "function")) {
         form_map <- parse_form_relevance(fp)
         }
@@ -137,37 +161,99 @@ prepare_ds_for_checks <- function(ds, roles, project_root = NULL) {
     attr(ds, "hfc_form_map") <- form_map
     ds$.hfc_row <- seq_len(nrow(ds))
     ds$.hfc_id_display <- composite_id_string(ds, roles$entity_id, roles$entity_id_sep %||% " / ")
+    ds$.hfc_completed <- compute_completed_flag(ds, roles)
+    attr(ds, "hfc_target_ds") <- target_ds
     ds
 }
 
 # ---- M1 Completion ---------------------------------------------------------
+# Redesigned around three possible completion signals (roles$completion_
+# primary_signal, set from role_map.yaml once the agent confirms it in
+# SKILL.md A1's required-gate window):
+#   "status"           - complete_flag = ds$.hfc_completed (already computed
+#                         in prepare_ds_for_checks()); this IS the classic
+#                         "did this row finish" signal.
+#   "roster"           - complete_flag is defined over the ROSTER
+#                         (attr(ds, "hfc_target_ds")) rows, not ds: TRUE =
+#                         this target entity's key appears in the surveyed
+#                         ds. Overall/by-group rates describe "planned vs.
+#                         actually surveyed" (by-enumerator naturally comes
+#                         out empty, since a roster has no enumerator
+#                         column — nothing surveyed a row that was never
+#                         surveyed).
+#   "primary_secondary" - every surveyed row counts; complete_flag instead
+#                         marks "is this the primary-sample designation",
+#                         so the SAME overall/by-group/by-enumerator
+#                         completion_summary() plumbing reports composition
+#                         (% primary vs secondary) rather than a rate.
+#   NA (no signal)      - unchanged fallback: today's row-missingness
+#                         heuristic, for surveys with none of the three
+#                         signals.
+# The separate "low completion by site" FINDING below (flagging specific
+# under-enrolled sites via roles$group, the site/cluster ID) is orthogonal
+# to all of this and always operates on the actual surveyed ds.
 check_m1 <- function(ds, roles, modules) {
-    completion_var <- modules$M1$completion_var %||% NA_character_
-    complete_flag <- if (!is.na(completion_var) && completion_var %in% names(ds)) {
-        is_complete_value(ds[[completion_var]])
-    } else {
-        row_missing_ratio(ds, setdiff(names(ds), c(".hfc_row", ".hfc_id_display"))) <= 0.1
+    sig <- roles$completion_primary_signal %||% NA_character_
+    target_ds <- attr(ds, "hfc_target_ds")
+    group_source_ds <- ds
+
+    if (identical(sig, "roster") && !is.null(target_ds) && !is.na(roles$entity_id[[1]] %||% NA_character_)) {
+        entity_col <- roles$entity_id[[1]]
+        roster_key_col <- roles$completion_roster_key_col %||% entity_col
+        if (roster_key_col %in% names(target_ds) && entity_col %in% names(ds)) {
+        surveyed_keys <- as.character(ds[[entity_col]])
+        target_keys <- as.character(target_ds[[roster_key_col]])
+        complete_flag <- target_keys %in% surveyed_keys
+        group_source_ds <- target_ds
+        } else {
+        sig <- NA_character_
+        }
     }
+    if (identical(sig, "primary_secondary")) {
+        ps_col <- roles$completion_primary_secondary_col
+        primary_value <- roles$completion_primary_value %||% NA_character_
+        complete_flag <- if (!is.na(ps_col) && ps_col %in% names(ds) && !is.na(primary_value)) {
+        tolower(trimws(as.character(ds[[ps_col]]))) == tolower(primary_value)
+        } else {
+        rep(TRUE, nrow(ds))
+        }
+    } else if (identical(sig, "status")) {
+        complete_flag <- ds$.hfc_completed
+    } else if (!identical(sig, "roster")) {
+        completion_var <- modules$M1$completion_var %||% NA_character_
+        complete_flag <- if (!is.na(completion_var) && completion_var %in% names(ds)) {
+        is_complete_value(ds[[completion_var]])
+        } else {
+        row_missing_ratio(ds, setdiff(names(ds), c(".hfc_row", ".hfc_id_display", ".hfc_completed"))) <= 0.1
+        }
+    }
+
     stats_overall <- completion_summary(complete_flag)
     group_vars <- modules$M1$group_vars %||% character()
-    by_group <- lapply(group_vars[group_vars %in% names(ds)], function(gv) {
-        completion_summary(complete_flag, ds[[gv]]) %>%
+    by_group <- lapply(group_vars[group_vars %in% names(group_source_ds)], function(gv) {
+        completion_summary(complete_flag, group_source_ds[[gv]]) %>%
         mutate(group_var = gv, .before = 1) %>%
         rename(value = group)
     })
     by_group_df <- if (length(by_group)) bind_rows(by_group) else tibble()
-    by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
-        completion_summary(complete_flag, ds[[roles$enum]]) %>% rename(enumerator = group)
+    by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(group_source_ds)) {
+        completion_summary(complete_flag, group_source_ds[[roles$enum]]) %>% rename(enumerator = group)
     } else tibble()
-    by_date_df <- if (isTRUE(modules$M1$by_date %||% TRUE) && !is.na(roles$start) && roles$start %in% names(ds)) {
-        d <- suppressWarnings(as.Date(as.character(ds[[roles$start]])))
+    by_date_df <- if (isTRUE(modules$M1$by_date %||% TRUE) && !is.na(roles$start) && roles$start %in% names(group_source_ds)) {
+        d <- suppressWarnings(as.Date(as.character(group_source_ds[[roles$start]])))
         completion_summary(complete_flag, as.character(d)) %>% rename(date = group) %>% arrange(desc(date))
     } else tibble()
     stats <- list(overall = stats_overall, by_group = by_group_df,
                     by_enumerator = by_enum_df, by_date = by_date_df)
 
     findings <- empty_findings()
-    if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$group) && roles$group %in% names(ds)) {
+    # complete_flag is only row-aligned with `ds` for "status"/"primary_
+    # secondary"/no-signal — under "roster" it's aligned with target_ds
+    # instead (see above), so this ds-based site-level finding is skipped
+    # in that case (every ds row is, by construction, a completed survey
+    # under "roster", so there's nothing row-level to flag here anyway).
+    if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$group) && roles$group %in% names(ds) &&
+        length(complete_flag) == nrow(ds)) {
         pct_median <- modules$M1$pct_median %||% 0.5
         counts <- ds %>% mutate(.complete = complete_flag) %>%
         filter(.complete, !is.na(.data[[roles$group]])) %>%
@@ -285,10 +371,10 @@ check_m4 <- function(ds, roles, modules) {
     ok <- is.finite(dur)
     stat_row <- function(label, vals) {
       tibble(level = label, n = sum(is.finite(vals)),
-            mean = round(mean(vals, na.rm = TRUE), 1), median = round(stats::median(vals, na.rm = TRUE), 1),
-            sd = round(stats::sd(vals, na.rm = TRUE), 1),
-            min = round(suppressWarnings(min(vals, na.rm = TRUE)), 1),
-            max = round(suppressWarnings(max(vals, na.rm = TRUE)), 1))
+            mean = round(mean(vals, na.rm = TRUE), 3), median = round(stats::median(vals, na.rm = TRUE), 3),
+            sd = round(stats::sd(vals, na.rm = TRUE), 3),
+            min = round(suppressWarnings(min(vals, na.rm = TRUE)), 3),
+            max = round(suppressWarnings(max(vals, na.rm = TRUE)), 3))
     }
     stats_overall <- stat_row("Overall", dur[ok])
     # Per-section duration requires the data to carry its own per-section
@@ -306,8 +392,8 @@ check_m4 <- function(ds, roles, modules) {
     stats_by_enum <- if (isTRUE(modules$M4$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
       ds %>% mutate(.dur = dur) %>% filter(is.finite(.dur)) %>%
         group_by(enumerator = as.character(.data[[roles$enum]])) %>%
-        summarise(n = n(), mean = round(mean(.dur), 1), median = round(stats::median(.dur), 1),
-                  sd = round(stats::sd(.dur), 1), min = round(min(.dur), 1), max = round(max(.dur), 1),
+        summarise(n = n(), mean = round(mean(.dur), 3), median = round(stats::median(.dur), 3),
+                  sd = round(stats::sd(.dur), 3), min = round(min(.dur), 3), max = round(max(.dur), 3),
                   .groups = "drop")
     } else tibble()
     stats <- list(overall = stats_overall, by_section = stats_section, by_enumerator = stats_by_enum)
@@ -395,7 +481,7 @@ check_m6 <- function(ds, roles, modules) {
     flag <- ok & abs(v - mu) > sd_rule * sdv
     if (!any(flag)) next
     tmp <- ds[flag, , drop = FALSE]
-    tmp$.v <- v[flag]
+    tmp$.v <- round(v[flag], 3)
     # Sort worst-first by deviation magnitude (SDs from the mean), not the
     # raw value — a raw value alone isn't comparable across variables or
     # across low/high outliers on the same variable.
@@ -483,11 +569,11 @@ check_m8 <- function(ds, roles, modules) {
     }
     flagged <- tmp %>% filter(is.finite(dist_m), dist_m > thr)
     if (nrow(flagged) > 0) {
-      flagged$.v <- as.character(round(flagged$dist_m))
+      flagged$.v <- as.character(round(flagged$dist_m, 3))
       findings <- mk_findings(
         flagged, "gps_distance", "M8", "gps_distance",
-        sprintf("Distance between reference and survey coordinates is %.0f meters (flag threshold: %s m)",
-                flagged$dist_m, thr),
+        sprintf("Distance between reference and survey coordinates is %.3f meters (flag threshold: %s m)",
+                round(flagged$dist_m, 3), thr),
         roles, ".v", sort_value_col = "dist_m"
       )
     }
@@ -499,8 +585,8 @@ check_m8 <- function(ds, roles, modules) {
 check_m9 <- function(ds, roles, modules) {
   ordinal_vars <- modules$M9$ordinal_vars %||% character()
   ordinal_vars <- ordinal_vars[!is.na(ordinal_vars) & ordinal_vars %in% names(ds)]
-  enum_thr <- modules$M9$enum_threshold_pct %||% 0.8
-  survey_thr <- modules$M9$survey_threshold_pct %||% 0.8
+  enum_thr <- modules$M9$enum_threshold_pct %||% 0.9
+  survey_thr <- modules$M9$survey_threshold_pct %||% 0.9
   min_n_per_enum <- 10L
   parts <- list()
 
@@ -546,7 +632,7 @@ check_m9 <- function(ds, roles, modules) {
     flag <- share >= survey_thr
     if (any(flag)) {
       tmp <- ds[flag, , drop = FALSE]
-      tmp$.v <- round(share[flag], 2)
+      tmp$.v <- round(share[flag], 3)
       parts$survey <- mk_findings(
         tmp, "straightlining_survey", "M9", "straightlining_survey",
         sprintf("%.0f%%+ of this submission's ordinal answers are identical", survey_thr * 100),
@@ -629,14 +715,27 @@ check_m13 <- function(ds, roles, modules) {
   list(findings = findings)
 }
 
-run_check_modules <- function(ds, roles, modules, project_root = NULL) {
-  ds <- prepare_ds_for_checks(ds, roles, project_root)
+run_check_modules <- function(ds, roles, modules, code_output_dir = NULL, target_ds = NULL) {
+  ds_full <- prepare_ds_for_checks(ds, roles, code_output_dir, target_ds = target_ds)
+  # M1 alone sees the FULL, unfiltered ds_full (it needs the complete
+  # picture — every row, target-list or all primary+secondary rows — to
+  # compute completion rates). Every other module below (M2-M13, M10) sees
+  # only the completed/surveyed subset, per the completion redesign: once a
+  # "status" completion signal filters out Incomplete/Refused rows, those
+  # rows shouldn't be checked for duplicates, outliers, timing, etc.
+  ds <- if (any(!ds_full$.hfc_completed)) {
+    filtered <- ds_full[ds_full$.hfc_completed, , drop = FALSE]
+    attr(filtered, "hfc_form_map") <- attr(ds_full, "hfc_form_map")
+    filtered
+  } else {
+    ds_full
+  }
   findings_list <- list()
   stats_list <- list()
 
   if (isTRUE(modules$M1$on)) {
     tryCatch({
-      r <- check_m1(ds, roles, modules)
+      r <- check_m1(ds_full, roles, modules)
       findings_list$m1 <- r$findings
       stats_list$M1 <- r$stats
     }, error = function(e) message("M1: ", e$message))
@@ -705,10 +804,10 @@ run_check_modules <- function(ds, roles, modules, project_root = NULL) {
   # ---- M11 Survey-specific: custom checks only (fully AI-authored per project) ---
   if (isTRUE(modules$M11$on) || length(modules$M11$custom %||% character()) > 0) {
     custom <- modules$M11$custom %||% character()
-    if (!is.null(project_root) && length(custom)) {
+    if (!is.null(code_output_dir) && length(custom)) {
       for (cname in custom) {
         if (!nzchar(cname)) next
-        cfile <- hfc_path(project_root, "code", "checks", paste0(cname, ".R"))
+        cfile <- hfc_path(code_output_dir, "code", "checks", paste0(cname, ".R"))
         if (!file.exists(cfile)) {
           message("Custom check missing: ", cfile)
           next
