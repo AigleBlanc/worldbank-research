@@ -45,7 +45,7 @@ m5_desc <- function(modules) {
     } else {
         sprintf("outside %s local time", hrs)
     }
-    sprintf("Flags interviews conducted at unusual times — %s — using each submission's local time zone.", clause)
+    sprintf("Flags interviews conducted at unusual times (%s), using each submission's local time zone.", clause)
 }
 
 m6_desc <- function(modules) {
@@ -88,7 +88,7 @@ m9_desc <- function(modules) {
 }
 
 m11_desc <- function(modules) {
-    "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row — usually a form/coding problem (the field isn't showing up in the enumerator's app, or the question is misconfigured), not a per-row file-hygiene issue."
+    "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row: usually a form/coding problem (the field isn't showing up in the enumerator's app, or the question is misconfigured), not a per-row file-hygiene issue."
 }
 
 DYNAMIC_MODULE_DESC <- list(

@@ -56,7 +56,12 @@ write_commented_modules_yaml <- function(modules, modules_path) {
         label <- module_label(code)
         desc <- module_desc(code, modules)
         comment_lines <- .wrap_comment(sprintf("%s — %s: %s", code, label, desc))
-        yaml_block <- strsplit(yaml::as.yaml(setNames(list(m), code)), "\n")[[1]]
+        # `desc` is also written as its own yaml key (Title Case, e.g. "Completion",
+        # "GPS Location") -- not just folded into the comment above -- so anyone
+        # opening this file cold can tell what a module is without cross-referencing
+        # check_modules.md.
+        m_with_desc <- c(list(desc = label), m)
+        yaml_block <- strsplit(yaml::as.yaml(setNames(list(m_with_desc), code)), "\n")[[1]]
         c(comment_lines, yaml_block, "")
     })
 

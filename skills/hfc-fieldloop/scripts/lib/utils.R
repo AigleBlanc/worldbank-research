@@ -18,6 +18,40 @@ safe_num <- function(x) {
     suppressWarnings(as.numeric(x))
 }
 
+#' Decode a Stata/SurveyCTO value-labelled column (e.g. 1/2/3 with attached
+#' labels "Name 1"/"Name 2"/"Name 3") to its label text. Common SurveyCTO
+#' pattern: the enumerator/group field IS the labelled ID, with no separate
+#' name column at all, so this is what makes those names show up anywhere
+#' rather than raw codes. Values with no matching label fall back to their
+#' own printed value (haven::as_factor()'s default), never an error. A
+#' plain (non-labelled) column passes through unchanged.
+decode_labelled_chr <- function(x) {
+    if (inherits(x, "haven_labelled")) {
+        return(as.character(haven::as_factor(x)))
+    }
+    as.character(x)
+}
+
+#' Resolve a per-row display name for an enumerator/group ID column: the
+#' separate name column when one was found (roles$enum_name/group_name),
+#' else the ID column's own decoded value labels, else NA. Never applied to
+#' the respondent/entity ID — that stays anonymous by design (see
+#' roles$entity_display / resolve_display_vec()).
+resolve_unit_name <- function(ds, id_col, name_col) {
+    if (!is.null(name_col) && !is.na(name_col) && name_col %in% names(ds)) {
+        return(as.character(ds[[name_col]]))
+    }
+    # Only decode when the ID column is genuinely value-labelled (has actual
+    # names attached) - an unlabelled ID still returns blank here, same as
+    # before this fallback existed, preserving "never fall back to
+    # duplicating the ID" (see pick_name_field()'s doc comment above).
+    if (!is.null(id_col) && !is.na(id_col) && id_col %in% names(ds) &&
+        inherits(ds[[id_col]], "haven_labelled")) {
+        return(decode_labelled_chr(ds[[id_col]]))
+    }
+    rep("", nrow(ds))
+}
+
 # Product root: all built artifacts live under <code_output_dir>/hfc/ — the
 # git-tracked folder named in config.json's code_output_dir, decoupled from
 # wherever the input microdata actually lives.
@@ -180,11 +214,13 @@ mk_findings <- function(df, check_id, module, category, issue_chr, roles, value_
         start_date = if (!is.null(roles$start) && roles$start %in% names(df)) as.character(df[[roles$start]]) else "",
         end_date = if (!is.null(roles$end) && roles$end %in% names(df)) as.character(df[[roles$end]]) else "",
         key = if (!is.null(roles$key) && roles$key %in% names(df)) as.character(df[[roles$key]]) else "",
-        value = if (!is.null(value_col) && value_col %in% names(df)) as.character(df[[value_col]]) else "",
+        value = if (!is.null(value_col) && value_col %in% names(df)) decode_labelled_chr(df[[value_col]]) else "",
         variable = variable_name %||% "",
+        # Entity/respondent stays exactly as-is here (never decoded from the
+        # ID's own value labels) - anonymity by design, see roles$entity_display.
         entity_name = if (!is.null(roles$entity_name_field) && roles$entity_name_field %in% names(df)) as.character(df[[roles$entity_name_field]]) else "",
-        group_name = if (!is.null(roles$group_name) && roles$group_name %in% names(df)) as.character(df[[roles$group_name]]) else "",
-        enumerator_name = if (!is.null(roles$enum_name) && roles$enum_name %in% names(df)) as.character(df[[roles$enum_name]]) else "",
+        group_name = resolve_unit_name(df, roles$group, roles$group_name),
+        enumerator_name = resolve_unit_name(df, roles$enum, roles$enum_name),
         sort_value = if (!is.null(sort_value_col) && sort_value_col %in% names(df)) suppressWarnings(as.numeric(df[[sort_value_col]])) else NA_real_
     )
 }

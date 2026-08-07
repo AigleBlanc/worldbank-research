@@ -399,6 +399,44 @@ detect_form_version_col <- function(ds) {
     pick_first(nms, c("formdef_version", "form_version", "survey_version", "version$"))
 }
 
+#' Section-level start/end timestamp PAIRS (e.g. introduction_start /
+#' introduction_end, training_start / training_end) — distinct from the one
+#' overall roles$start/roles$end pair, which is excluded here so it isn't
+#' double-counted as its own "section". Pairs columns sharing a common stem
+#' under either a `<stem>_start`/`<stem>_end` or `start_<stem>`/`end_<stem>`
+#' naming convention. Used by check_m4() (M4 Timing) to offer an optional
+#' per-section duration breakdown (SKILL.md A2, Keys & Hours window).
+#' Returns a named list: Title Case label -> list(start = col, end = col).
+detect_section_time_pairs <- function(ds, exclude = character()) {
+    nms <- setdiff(names(ds), exclude)
+    suffix_starts <- grep("^(.+)_start$", nms, ignore.case = TRUE, value = TRUE)
+    suffix_ends <- grep("^(.+)_end$", nms, ignore.case = TRUE, value = TRUE)
+    prefix_starts <- grep("^start_(.+)$", nms, ignore.case = TRUE, value = TRUE)
+    prefix_ends <- grep("^end_(.+)$", nms, ignore.case = TRUE, value = TRUE)
+
+    stem_of <- function(x, pattern) sub(pattern, "\\1", x, ignore.case = TRUE)
+    pairs <- list()
+    for (sc in suffix_starts) {
+        stem <- stem_of(sc, "^(.+)_start$")
+        ec <- suffix_ends[stem_of(suffix_ends, "^(.+)_end$") == stem]
+        if (length(ec)) pairs[[stem]] <- list(start = sc, end = ec[[1]])
+    }
+    for (sc in prefix_starts) {
+        stem <- stem_of(sc, "^start_(.+)$")
+        if (!is.null(pairs[[stem]])) next
+        ec <- prefix_ends[stem_of(prefix_ends, "^end_(.+)$") == stem]
+        if (length(ec)) pairs[[stem]] <- list(start = sc, end = ec[[1]])
+    }
+    if (!length(pairs)) return(list())
+
+    title_case <- function(s) {
+        s <- gsub("[_.]+", " ", s)
+        s <- trimws(s)
+        paste0(toupper(substring(s, 1, 1)), substring(s, 2))
+    }
+    stats::setNames(pairs, vapply(names(pairs), title_case, character(1)))
+}
+
 #' Best-effort version-cutover inference when no version column exists (M3).
 #' Bins submissions by month of `start_col` and looks for columns whose
 #' non-missing rate jumps sharply between adjacent bins — a signal that the
@@ -466,14 +504,20 @@ detect_unique_key_column <- function(ds, exclude = character()) {
         if (any(is.na(x) | !nzchar(x_chr))) return(FALSE)
         length(unique(x_chr)) == nrow(ds)
     }
-    # Exact-name pattern (key/uuid/instanceid) is checked against the FULL
-    # column set first, before `exclude` is applied — a column can
+    # A literal `key` column (SurveyCTO's own globally-unique submission ID)
+    # is trusted unconditionally, whenever it exists — checked against the
+    # FULL column set first, before `exclude` is applied, since a column can
     # legitimately serve as both Entity ID and the unique submission key at
-    # once (e.g. SurveyCTO's `key`), so it being excluded because it was
-    # already picked as Entity ID must not block it from also being
-    # recognized here. Only fall through to the exclude-filtered scan below
-    # if no exact-name match exists.
-    name_cand <- pick_first(names(ds), c("^key$", "uuid", "instanceid"))
+    # once. Skips the uniqueness gate deliberately: a handful of corrupted/
+    # duplicate `key` values in real field data is exactly what M2
+    # Duplicates exists to catch, not a reason to silently substitute a
+    # different column as the reported Unique Submission ID.
+    key_col <- pick_first(names(ds), "^key$")
+    if (!is.na(key_col)) return(key_col)
+
+    # uuid/instanceid aren't the literal SurveyCTO convention, so they keep
+    # the stricter uniqueness-gated behavior.
+    name_cand <- pick_first(names(ds), c("uuid", "instanceid"))
     if (!is.na(name_cand) && is_fully_unique(name_cand)) return(name_cand)
 
     nms <- setdiff(names(ds), exclude)
@@ -552,6 +596,13 @@ profile_roles <- function(ds, media_folder = NA_character_, roster_candidate = N
     # group_var_candidates as their M1$group_vars source, now preferring
     # Treatment/Control over geography (see default_modules() below).
     roles$group_var_candidates <- roles$treatment_control_candidates %||% roles$geo_group_candidates
+
+    # Section-level start/end timestamp pairs, distinct from the overall
+    # roles$start/roles$end — see detect_section_time_pairs(). Empty list
+    # (never NULL) when the survey has no section-level timing at all.
+    roles$section_time_pairs <- detect_section_time_pairs(
+        ds, exclude = c(roles$start, roles$end)
+    )
 
     # A guessed display label for roles$group (e.g. "School", "Village") —
     # confirmed later, not part of the required Setup gate; see
@@ -755,6 +806,7 @@ default_modules <- function(roles) {
         duration = roles$duration,
         sd_rule = 3,
         section_map = list(),
+        section_pairs = list(),
         by_enum = TRUE
         ),
         M5 = list(

@@ -4,12 +4,13 @@ Confirm modules via the guess-first-then-correct **AskUserQuestion** windows des
 
 ## Required setup (Window "Setup", A1 — before any module work)
 
-Confirmed in one window ("Setup"), up to 4 tabs, one atomic fact each, immediately after data discovery — not folded into M1–M13 review:
+Confirmed in one window ("Setup"), 4 tabs, one atomic fact each, immediately after data discovery — not folded into M1–M13 review. A completion signal (when detected) follows immediately as its own single-tab window, since Setup has no spare capacity for a 5th tab:
 
 - **Data found (always):** the discovered data/form paths, plus row count, column count, and collection date range.
 - **Entity (always):** the Entity Label (a Title-Case guess for what to call the entity, e.g. "Household" — applies everywhere the entity is displayed: the HTML report's findings tables *and* the xlsx/csv issue-tracking export) with the underlying column named ("in place of `hhld_id`"). Entity ID (the column itself) and the duplicate-check key are auto-resolved (`shortlist_entity_ids()`'s top pick; Entity ID alone if already unique, else + `detect_duplicate_key_candidates()`'s top hit) and are not separately confirmed — a wrong Entity ID pick is corrected via this tab's free-text box, since the entity line names the underlying column.
 - **Country (always):** the data-collection country + resolved timezone (stated as abbreviation + city/country + UTC offset) — inferred from geography **in the data** (district/region/village names, a GPS bounding box) when there's no explicit country column, **never from the input folder's name**.
-- **Completion (only if a completion signal is detected):** states the agent's interpretation of which completion signal applies (`detect_completion_signal()`) — a status column, a roster/target file, or a primary/secondary sample column, plus the downstream effect (every other check runs on the completed subset only). When more than one signal is detected at once, the message must explicitly flag the conflict rather than silently picking one.
+- **Specific instructions (always):** an open "anything I should know before diving in?" catch-all, asked here specifically so an answer can still shape role profiling and every A2 module-config window that follows — not a last-minute add-on before build.
+- **Completion (only if a completion signal is detected):** states the agent's interpretation of which completion signal applies (`detect_completion_signal()`) — a status column, a roster/target file, or a primary/secondary sample column, plus the downstream effect (every other check runs on the completed subset only). When more than one signal is detected at once, the message must explicitly flag the conflict rather than silently picking one. Runs as its own single-tab window immediately after Setup — Setup's 4 tabs (Data found, Entity, Country, Specific instructions) are already at the cap without it.
 
 Media-indicating columns (audio/image filenames, qualitative text) are detected here too but not stated until the Media, Map & Grouping window (A2) — no reason to front-load a fact that isn't needed until then.
 

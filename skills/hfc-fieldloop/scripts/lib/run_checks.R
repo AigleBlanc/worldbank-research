@@ -79,6 +79,22 @@ parse_datetime_col <- function(x) {
     dt
 }
 
+#' Small per-enumerator ID -> display-name lookup table (.enum, .ename),
+#' decoding a value-labelled ID column via resolve_unit_name() (utils.R)
+#' whenever there's no separate name column - the common SurveyCTO pattern
+#' where the enumerator field is just a coded ID with attached value labels.
+#' Shared by every check_mN() that aggregates by enumerator and then needs
+#' to attach a display name to the raw ID afterward (M1, M4, M7, M9, M13).
+#' NULL when there's no usable enumerator column at all.
+enum_name_lookup <- function(ds, roles) {
+  if (is.na(roles$enum) || !roles$enum %in% names(ds)) return(NULL)
+  ename_vec <- resolve_unit_name(ds, roles$enum, roles$enum_name)
+  tibble(.enum = as.character(ds[[roles$enum]]), .ename = ename_vec) %>%
+    dplyr::filter(!is.na(.enum), nzchar(.enum)) %>%
+    dplyr::group_by(.enum) %>%
+    dplyr::summarise(.ename = dplyr::first(stats::na.omit(.ename), default = NA_character_), .groups = "drop")
+}
+
 #' Row-wise fraction of missing/blank cells across a set of columns.
 row_missing_ratio <- function(ds, cols) {
     cols <- cols[cols %in% names(ds)]
@@ -237,10 +253,9 @@ check_m1 <- function(ds, roles, modules) {
     })
     by_group_df <- if (length(by_group)) bind_rows(by_group) else tibble()
     by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(group_source_ds)) {
-        has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(group_source_ds)
         enum_disp <- resolve_display_vec(
         group_source_ds[[roles$enum]],
-        if (has_enum_name) group_source_ds[[roles$enum_name]] else NULL,
+        resolve_unit_name(group_source_ds, roles$enum, roles$enum_name),
         roles$enumerator_display %||% "name"
         )
         completion_summary(complete_flag, enum_disp) %>% rename(enumerator = group) %>% arrange(pct_complete)
@@ -262,15 +277,13 @@ check_m1 <- function(ds, roles, modules) {
         length(complete_flag) == nrow(ds)) {
         pct_median <- modules$M1$pct_median %||% 0.5
         group_term <- roles$group_label %||% "Group"
-        has_group_name <- !is.null(roles$group_name) && !is.na(roles$group_name) && roles$group_name %in% names(ds)
-        counts <- ds %>% mutate(.complete = complete_flag) %>%
+        group_name_vec <- resolve_unit_name(ds, roles$group, roles$group_name)
+        counts <- ds %>% mutate(.complete = complete_flag, .gname = group_name_vec) %>%
         filter(.complete, !is.na(.data[[roles$group]])) %>%
         group_by(.data[[roles$group]]) %>%
         summarise(
             n = n(),
-            .group_name = if (has_group_name) {
-            dplyr::first(stats::na.omit(as.character(.data[[roles$group_name]])), default = NA_character_)
-            } else NA_character_,
+            .group_name = dplyr::first(stats::na.omit(.gname), default = NA_character_),
             .groups = "drop"
         )
         if (nrow(counts) > 1) {
@@ -379,41 +392,92 @@ check_m3 <- function(ds, roles, modules) {
 }
 
 # ---- M4 Survey Duration ------------------------------------------------------
+#' SD-outlier flag one duration vector (minutes), reused for both the overall
+#' duration column and each opted-in section pair below — same threshold
+#' logic, just parameterized by label/variable_name so the resulting
+#' long_duration/short_duration findings stay distinguishable per section.
+.m4_flag_outliers <- function(ds, dur, sd_rule, roles, variable_name) {
+  ok <- is.finite(dur)
+  parts <- list()
+  mu <- mean(dur[ok]); sdv <- stats::sd(dur[ok])
+  if (is.finite(mu) && is.finite(sdv) && sdv > 0) {
+    long_flag <- ok & dur > mu + sd_rule * sdv
+    short_flag <- ok & dur < mu - sd_rule * sdv & dur > 0
+    if (any(long_flag)) {
+      tmp <- ds[long_flag, , drop = FALSE]; tmp$.v <- dur[long_flag]
+      parts$long <- mk_findings(
+        tmp, "long_duration", "M4", "long_duration",
+        sprintf("%s more than %s SD above the mean", variable_name, sd_rule), roles, ".v",
+        variable_name = variable_name, sort_value_col = ".v"
+      )
+    }
+    if (any(short_flag)) {
+      tmp <- ds[short_flag, , drop = FALSE]; tmp$.v <- dur[short_flag]
+      parts$short <- mk_findings(
+        tmp, "short_duration", "M4", "short_duration",
+        sprintf("%s more than %s SD below the mean", variable_name, sd_rule), roles, ".v",
+        variable_name = variable_name, sort_value_col = ".v"
+      )
+    }
+  }
+  if (length(parts)) bind_rows(parts) else empty_findings()
+}
+
 check_m4 <- function(ds, roles, modules) {
   findings <- empty_findings()
   stats <- NULL
   dc <- modules$M4$duration %||% roles$duration
   sd_rule <- modules$M4$sd_rule %||% 3
+  section_findings <- list()
+  section_stats_extra <- list()
+
+  # Section-level start/end pairs (SKILL.md A2, Keys & Hours window) — opted
+  # into via modules$M4$section_pairs, a named list label -> list(start=,
+  # end=) sourced from roles$section_time_pairs. Runs independently of the
+  # overall duration column below: a survey can have section timing with or
+  # without a single global duration field.
+  section_pairs <- modules$M4$section_pairs %||% list()
+  for (label in names(section_pairs)) {
+    pr <- section_pairs[[label]]
+    if (is.null(pr$start) || is.null(pr$end) ||
+        !pr$start %in% names(ds) || !pr$end %in% names(ds)) next
+    sec_dur <- as.numeric(difftime(
+      parse_datetime_col(ds[[pr$end]]), parse_datetime_col(ds[[pr$start]]), units = "mins"
+    ))
+    var_label <- paste0(label, " duration")
+    section_stats_extra[[var_label]] <- sec_dur
+    section_findings[[label]] <- .m4_flag_outliers(ds, sec_dur, sd_rule, roles, var_label)
+  }
+
+  stat_row <- function(label, vals) {
+    tibble(level = label, n = sum(is.finite(vals)),
+          mean = round(mean(vals, na.rm = TRUE), 3), median = round(stats::median(vals, na.rm = TRUE), 3),
+          sd = round(stats::sd(vals, na.rm = TRUE), 3),
+          min = round(suppressWarnings(min(vals, na.rm = TRUE)), 3),
+          max = round(suppressWarnings(max(vals, na.rm = TRUE)), 3))
+  }
+
   if (!is.na(dc) && dc %in% names(ds)) {
     # SurveyCTO's duration export is always in seconds; always convert to
     # minutes for stats, outlier detection, and the finding's Value — every
     # downstream use of `dur` inherits this single conversion point.
     dur <- safe_num(ds[[dc]]) / 60
     ok <- is.finite(dur)
-    stat_row <- function(label, vals) {
-      tibble(level = label, n = sum(is.finite(vals)),
-            mean = round(mean(vals, na.rm = TRUE), 3), median = round(stats::median(vals, na.rm = TRUE), 3),
-            sd = round(stats::sd(vals, na.rm = TRUE), 3),
-            min = round(suppressWarnings(min(vals, na.rm = TRUE)), 3),
-            max = round(suppressWarnings(max(vals, na.rm = TRUE)), 3))
-    }
     stats_overall <- stat_row("Overall", dur[ok])
-    # Per-section duration requires the data to carry its own per-section
-    # timing columns (uncommon in standard SurveyCTO exports); section_map
-    # (column -> section label) is used for labeling elsewhere but there's
-    # no sub-duration to split here unless such columns exist.
+    # Pre-computed per-section duration columns (e.g. introduction_duration),
+    # as distinct from the section_pairs start/end derivation above — both
+    # feed the same by_section stats table.
     section_dur_cols <- grep("_duration$", setdiff(names(ds), dc), value = TRUE)
     section_map <- modules$M4$section_map %||% list()
-    stats_section <- if (length(section_dur_cols)) {
+    stats_section_precomputed <- if (length(section_dur_cols)) {
       bind_rows(lapply(section_dur_cols, function(cn) {
         label <- section_map[[cn]] %||% cn
         stat_row(label, safe_num(ds[[cn]]) / 60)  # same seconds->minutes convention as the main duration column
       }))
     } else tibble()
     stats_by_enum <- if (isTRUE(modules$M4$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
-      has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
       enum_disp <- resolve_display_vec(
-        ds[[roles$enum]], if (has_enum_name) ds[[roles$enum_name]] else NULL,
+        ds[[roles$enum]], resolve_unit_name(ds, roles$enum, roles$enum_name),
         roles$enumerator_display %||% "name"
       )
       ds %>% mutate(.dur = dur, .enum_disp = enum_disp) %>% filter(is.finite(.dur)) %>%
@@ -422,32 +486,20 @@ check_m4 <- function(ds, roles, modules) {
                   sd = round(stats::sd(.dur), 3), min = round(min(.dur), 3), max = round(max(.dur), 3),
                   .groups = "drop")
     } else tibble()
-    stats <- list(overall = stats_overall, by_section = stats_section, by_enumerator = stats_by_enum)
 
-    parts <- list()
-    mu <- mean(dur[ok]); sdv <- stats::sd(dur[ok])
-    if (is.finite(mu) && is.finite(sdv) && sdv > 0) {
-      long_flag <- ok & dur > mu + sd_rule * sdv
-      short_flag <- ok & dur < mu - sd_rule * sdv & dur > 0
-      if (any(long_flag)) {
-        tmp <- ds[long_flag, , drop = FALSE]; tmp$.v <- dur[long_flag]
-        parts$long <- mk_findings(
-          tmp, "long_duration", "M4", "long_duration",
-          sprintf("Interview duration more than %s SD above the mean", sd_rule), roles, ".v",
-          variable_name = dc, sort_value_col = ".v"
-        )
-      }
-      if (any(short_flag)) {
-        tmp <- ds[short_flag, , drop = FALSE]; tmp$.v <- dur[short_flag]
-        parts$short <- mk_findings(
-          tmp, "short_duration", "M4", "short_duration",
-          sprintf("Interview duration more than %s SD below the mean", sd_rule), roles, ".v",
-          variable_name = dc, sort_value_col = ".v"
-        )
-      }
-    }
-    if (length(parts)) findings <- bind_rows(parts)
+    section_findings[["__overall__"]] <- .m4_flag_outliers(ds, dur, sd_rule, roles, dc)
+    stats <- list(overall = stats_overall, by_enumerator = stats_by_enum)
+  } else {
+    stats_section_precomputed <- tibble()
+    stats <- list(overall = tibble(), by_enumerator = tibble())
   }
+
+  stats_section_pairs <- if (length(section_stats_extra)) {
+    bind_rows(lapply(names(section_stats_extra), function(lbl) stat_row(lbl, section_stats_extra[[lbl]])))
+  } else tibble()
+  stats$by_section <- bind_rows(stats_section_precomputed, stats_section_pairs)
+
+  if (length(section_findings)) findings <- bind_rows(section_findings)
   list(findings = findings, stats = stats)
 }
 
@@ -542,13 +594,7 @@ check_m7 <- function(ds, roles, modules) {
   enum_pool_threshold <- modules$M7$enum_pool_threshold %||% 0.9
   enum_pct_threshold <- modules$M7$enum_pct_threshold %||% 0.5
   form_map <- attr(ds, "hfc_form_map")
-  has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
-  enum_lookup <- if (by_enum && has_enum_name) {
-    ds %>% mutate(.enum = as.character(.data[[roles$enum]]), .ename = as.character(.data[[roles$enum_name]])) %>%
-      filter(!is.na(.enum), nzchar(.enum)) %>%
-      group_by(.enum) %>%
-      summarise(.ename = dplyr::first(stats::na.omit(.ename), default = NA_character_), .groups = "drop")
-  } else NULL
+  enum_lookup <- if (by_enum) enum_name_lookup(ds, roles) else NULL
   by_var <- list(); by_enum_list <- list(); enum_flags <- list()
   for (vc in vars) {
     codes <- if (sentinel_is_map) sentinel[[vc]] %||% character() else sentinel
@@ -687,16 +733,10 @@ check_m9 <- function(ds, roles, modules) {
 
   if (length(ordinal_vars) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
     enum_vec <- as.character(ds[[roles$enum]])
-    has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
-    enum_lookup <- if (has_enum_name) {
-      ds %>% mutate(.enum = as.character(.data[[roles$enum]]), .ename = as.character(.data[[roles$enum_name]])) %>%
-        filter(!is.na(.enum), nzchar(.enum)) %>%
-        group_by(.enum) %>%
-        summarise(.ename = dplyr::first(stats::na.omit(.ename), default = NA_character_), .groups = "drop")
-    } else NULL
+    enum_lookup <- enum_name_lookup(ds, roles)
     flagged_rows <- list()
     for (vc in ordinal_vars) {
-      v <- as.character(ds[[vc]])
+      v <- decode_labelled_chr(ds[[vc]])
       ok <- !is.na(v) & nzchar(v) & !is.na(enum_vec) & nzchar(enum_vec)
       if (!any(ok)) next
       tab <- tibble(enum = enum_vec[ok], v = v[ok]) %>%
@@ -787,16 +827,19 @@ check_m13 <- function(ds, roles, modules) {
   by_enum <- isTRUE(modules$M13$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)
   if (by_enum && length(vars)) {
     enum_vals <- as.character(ds[[roles$enum]])
-    has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
-    enum_names <- if (has_enum_name) as.character(ds[[roles$enum_name]]) else NULL
+    # resolve_unit_name() decodes a value-labelled ID column when there's no
+    # separate name column - falls back to the bare ID string when the
+    # column isn't labelled either, filtered out below via `nm != ev` so
+    # that case still renders a plain ID label, not a redundant "3 (3)".
+    enum_names <- resolve_unit_name(ds, roles$enum, roles$enum_name)
     # Default ("name"): "Name (ID)" label, both visible. Override ("id"):
     # bare ID only, honoring roles$enumerator_display — see
     # resolve_display_vec()'s de-identification-by-default policy.
-    show_name <- identical(roles$enumerator_display %||% "name", "name") && !is.null(enum_names)
+    show_name <- identical(roles$enumerator_display %||% "name", "name")
     for (ev in sort(unique(enum_vals[!is.na(enum_vals) & nzchar(enum_vals)]))) {
       idx <- which(enum_vals == ev)
       label <- if (show_name) {
-        nm <- unique(enum_names[idx]); nm <- nm[!is.na(nm) & nzchar(nm)]
+        nm <- unique(enum_names[idx]); nm <- nm[!is.na(nm) & nzchar(nm) & nm != ev]
         if (length(nm)) sprintf("%s (%s)", nm[[1]], ev) else ev
       } else ev
       stats[[label]] <- mk_table(ds[idx, , drop = FALSE])
@@ -827,7 +870,7 @@ check_m12 <- function(ds, roles, modules) {
             check_module = "M12",
             category = paste0(category, "_column_empty"),
             issue = sprintf(
-            "%s — every one of %d surveyed rows is missing/0/No on column '%s'. Likely the wrong column was detected, or this field was never actually captured, not a per-row gap.",
+            "%s. Every one of %d surveyed rows is missing/0/No on column '%s'. Likely the wrong column was detected, or this field was never actually captured, not a per-row gap.",
             issue, nrow(ds), col
             ),
             submission_id = "", group_id = "", enumerator = "", start_date = "", end_date = "",

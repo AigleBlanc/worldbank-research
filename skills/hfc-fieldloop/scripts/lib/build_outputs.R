@@ -292,7 +292,7 @@ MODULE_META <- list(
     M4 = list(label = "Survey Duration",
                 desc = "Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews that were unusually long or short."),
     M5 = list(label = "Irregular Timing",
-                desc = "Flags interviews conducted at unusual times — weekends or outside normal working hours — using each submission's local time zone."),
+                desc = "Flags interviews conducted at unusual times: weekends or outside normal working hours, using each submission's local time zone."),
     M6 = list(label = "Numeric Outliers",
                 desc = "Flags unusually high or low values on key numeric questions (e.g. ages, scores) that fall outside the normal range for this survey."),
     M7 = list(label = "Missingness",
@@ -308,7 +308,7 @@ MODULE_META <- list(
     M12 = list(label = "Consent & Assent",
                 desc = "Flags cases missing a required consent (guardian agreement) or assent (the child's own agreement) flag, which the survey should always capture before proceeding."),
     M13 = list(label = "Summary Statistics",
-                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important variables — overall, and broken out per enumerator.")
+                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important variables, overall and broken out per enumerator.")
 )
 
 module_label <- function(code) {
@@ -665,7 +665,7 @@ render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
     paste(parts, collapse = "")
 }
 
-SUMMARY_PLACEHOLDER_TEXT <- "Summary not yet drafted — findings are listed below by module."
+SUMMARY_PLACEHOLDER_TEXT <- "Summary not yet drafted. Findings are listed below by module."
 
 # hfc/config/summary_message.md — a short, agent-drafted narrative (Slack-
 # register, focused on the pressing issues: completion, duplicates,
@@ -796,7 +796,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
                 entry <- module_notes$custom[[nm]]
                 lbl <- entry$label %||% nm
                 d <- entry$description %||% ""
-                paste0("<li><strong>", esc(lbl), "</strong> — ", esc(d), "</li>")
+                paste0("<li><strong>", esc(lbl), "</strong>: ", esc(d), "</li>")
             }, character(1))
             custom_html <- paste0(
                 "<div class='custom-checks'><h3>Custom checks for this survey</h3><ul>",
@@ -880,8 +880,8 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         findings %>% filter(start_date == last_date | end_date == last_date)
         } else findings
         lastday_html <- paste0(
-        "<section id='lastday' class='card'><h2>Last Day — ", esc(last_date), "</h2>",
-        "<p class='mod-desc'>Every issue from the most recent day of data collection, across all modules — ",
+        "<section id='lastday' class='card'><h2>Last Day: ", esc(last_date), "</h2>",
+        "<p class='mod-desc'>Every issue from the most recent day of data collection, across all modules: ",
         "a quick way to see what's most urgent.</p>",
         html_searchable_table(
             last_day_f,
@@ -910,11 +910,11 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         Finding = c("Finding", "One flagged row: a single thing that looks off in one submission (or one enumerator/site) and may be worth a closer look."),
         Category = c("Category", "A short label grouping similar findings together, e.g. \"irregular_time\" or \"gps_distance\"."),
         Consent = c("Consent", "The guardian or head-of-household's agreement for the interview to take place."),
-        Assent = c("Assent", "The child's own agreement to participate — separate from, and in addition to, a guardian's consent."),
+        Assent = c("Assent", "The child's own agreement to participate, separate from and in addition to a guardian's consent."),
         Enumerator = c("Enumerator", "The field staff member who conducted the interview."),
         Duplicate = c("Duplicate ID / key", "Two or more submissions sharing the same unique ID (or ID combination) or survey key, usually meaning one interview was captured twice."),
-        Outlier = c("Outlier", "A value far outside the typical range for that question — possibly a data-entry slip, possibly a genuinely unusual case."),
-        Straightlining = c("Straightlining", "Giving the same answer choice repeatedly instead of varying answers — by one enumerator across surveys, or within one survey's set of similar questions."),
+        Outlier = c("Outlier", "A value far outside the typical range for that question: possibly a data-entry slip, possibly a genuinely unusual case."),
+        Straightlining = c("Straightlining", "Giving the same answer choice repeatedly instead of varying answers, by one enumerator across surveys, or within one survey's set of similar questions."),
         LastDay = c("Last day", "The most recent date of data collection, confirmed at setup, collected in its own Last Day tab.")
     )
     glossary_keys <- c(
@@ -948,7 +948,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
     html <- paste0(
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'/>",
-        "<title>HFC FieldLoop — HFC Checks</title>",
+        "<title>HFC Checks</title>",
         "<style>
 :root{--bg:#f4efe6;--ink:#1c1914;--muted:#5c564c;--card:#fffdf8;--line:#ddd4c4;--accent:#2a6f5e;--nav:#1a222c}
 *{box-sizing:border-box}

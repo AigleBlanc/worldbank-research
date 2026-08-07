@@ -1,7 +1,8 @@
 # Discover microdata + SurveyCTO-like form inside the configured input data
-# directory — and only there (config.json's input_data_dir). No searching
-# across multiple locations; media resolution lives entirely in config.json
-# (cfg$media_dir) now, not here.
+# directory (config.json's input_data_dir) and any of its nested subfolders
+# — never outside it. No searching across multiple top-level locations;
+# media resolution lives entirely in config.json (cfg$media_dir) now, not
+# here.
 # Usage:
 #   Rscript discover.R <input_data_dir>
 #   source(); res <- discover_project(input_data_dir)
@@ -18,7 +19,7 @@ discover_project <- function(input_data_dir) {
 
     candidates <- list.files(
         input_data_dir, pattern = "\\.(dta|csv|xlsx|xls)$", full.names = TRUE,
-        ignore.case = TRUE, recursive = FALSE
+        ignore.case = TRUE, recursive = TRUE
     )
     candidates <- unique(normalizePath(candidates, mustWork = FALSE))
     # Exclude resolved outputs and feedback/tracking workbooks by name
@@ -94,7 +95,7 @@ discover_project <- function(input_data_dir) {
     # so this can't steal a real data/form file.
     doc_candidates <- list.files(
         input_data_dir, pattern = "\\.(pdf|docx?|txt|md)$", full.names = TRUE,
-        ignore.case = TRUE, recursive = FALSE
+        ignore.case = TRUE, recursive = TRUE
     )
     doc_candidates <- unique(normalizePath(doc_candidates, mustWork = FALSE))
     is_context_doc_like <- function(path) {
