@@ -87,6 +87,27 @@ discover_project <- function(input_data_dir) {
         list(path = roster_path, confidence = if (length(roster_named)) "name_match" else "second_file")
     } else NULL
 
+    # Project description / Pre-Analysis Plan document — background context
+    # only (survey purpose, design, target sample, key outcomes), never a
+    # data source. Same name-match-first, single-file-fallback pattern as
+    # roster_candidate above. Extensions never overlap the data-file pattern,
+    # so this can't steal a real data/form file.
+    doc_candidates <- list.files(
+        input_data_dir, pattern = "\\.(pdf|docx?|txt|md)$", full.names = TRUE,
+        ignore.case = TRUE, recursive = FALSE
+    )
+    doc_candidates <- unique(normalizePath(doc_candidates, mustWork = FALSE))
+    is_context_doc_like <- function(path) {
+        grepl("pap|pre.?analysis|project.?description|protocol|concept.?note|proposal|study.?design|research.?plan|design.?report|background",
+              tolower(basename(path)))
+    }
+    doc_named <- doc_candidates[vapply(doc_candidates, is_context_doc_like, logical(1))]
+    context_doc <- if (length(doc_named)) {
+        list(path = doc_named[[1]], confidence = "name_match")
+    } else if (length(doc_candidates) == 1) {
+        list(path = doc_candidates[[1]], confidence = "only_doc_file")
+    } else NULL
+
     list(
         input_data_dir = input_data_dir,
         data = data_info,
@@ -94,6 +115,7 @@ discover_project <- function(input_data_dir) {
         all_data_candidates = data_files,
         all_form_candidates = forms,
         roster_candidate = roster_candidate,
+        context_doc = context_doc,
         status = if (!is.null(data_info)) "found" else "missing_data"
     )
 }

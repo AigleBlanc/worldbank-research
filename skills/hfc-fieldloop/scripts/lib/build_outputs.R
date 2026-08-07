@@ -361,7 +361,10 @@ CATEGORY_LABELS <- c(
     media_column_empty = "Media column empty (all rows)",
     assent = "Missing assent",
     consent = "Missing consent",
-    audio = "Missing audio consent flag"
+    audio = "Missing audio consent flag",
+    assent_column_empty = "Assent column empty (all rows)",
+    consent_column_empty = "Consent column empty (all rows)",
+    audio_column_empty = "Audio consent column empty (all rows)"
 )
 
 category_label <- function(category) {
@@ -607,7 +610,10 @@ CATEGORY_COLS <- list(
     media_column_empty     = FINDINGS_COLS_AGGREGATE_SURVEY,
     assent                 = FINDINGS_COLS_ROW_BASE,
     consent                = FINDINGS_COLS_ROW_BASE,
-    audio                  = FINDINGS_COLS_ROW_BASE
+    audio                  = FINDINGS_COLS_ROW_BASE,
+    assent_column_empty    = FINDINGS_COLS_AGGREGATE_SURVEY,
+    consent_column_empty   = FINDINGS_COLS_AGGREGATE_SURVEY,
+    audio_column_empty     = FINDINGS_COLS_AGGREGATE_SURVEY
 )
 # Unmatched categories (e.g. an M10 custom check's own category string)
 # default to the full row-level set — a custom check is arbitrary enough

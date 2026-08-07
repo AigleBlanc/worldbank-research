@@ -815,6 +815,26 @@ check_m12 <- function(ds, roles, modules) {
         if (exists("filter_expected_skips", mode = "function") && !is.null(form_map)) {
         miss <- filter_expected_skips(miss, ds, col, form_map)
         }
+        # If EVERY surveyed row is flagged, this is one structural problem
+        # (the wrong column was detected, or the field was never actually
+        # captured for this survey) — a single dataset-level finding, not
+        # one per row. Same treatment M11 already gives a completely-empty
+        # media column (see media.R's run_m11_media_checks()).
+        if (nrow(ds) > 0 && nrow(miss) == nrow(ds)) {
+        return(tibble(
+            finding_id = paste0("m12:column_empty:", col),
+            check_id = paste0(check_id, "_column_empty"),
+            check_module = "M12",
+            category = paste0(category, "_column_empty"),
+            issue = sprintf(
+            "%s — every one of %d surveyed rows is missing/0/No on column '%s'. Likely the wrong column was detected, or this field was never actually captured, not a per-row gap.",
+            issue, nrow(ds), col
+            ),
+            submission_id = "", group_id = "", enumerator = "", start_date = "", end_date = "",
+            key = "", value = "", variable = col, entity_name = "", group_name = "", enumerator_name = "",
+            sort_value = NA_real_
+        ))
+        }
         mk_findings(miss, check_id, "M12", category, sprintf("%s (column '%s')", issue, col), roles)
     }
     parts <- list()

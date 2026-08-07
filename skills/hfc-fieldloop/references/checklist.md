@@ -8,6 +8,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 |---|---|
 | Microdata in the configured Input Data Directory (immutable) | yes |
 | Instrument / form (also in the Input Data Directory) | optional (preferred for M10 / M3 / nested skip-logic) |
+| Project description / Pre-Analysis Plan (pdf/doc/docx/txt/md, also in the Input Data Directory) | optional (read once for background context; never a data source) |
 | `hfc/structure.html` reviewed + confirmed (Wrap-up window's Structure tab) | yes |
 | Setup window (A1): data found, Entity, country/timezone confirmed (+ completion signal, if detected) | yes |
 | Module-config windows (A2): Keys & Hours, Dates/Variables/GPS, Media/Map/Grouping, Wrap-up (Consent + Extra checks + Structure + Excel columns) all confirmed | yes |

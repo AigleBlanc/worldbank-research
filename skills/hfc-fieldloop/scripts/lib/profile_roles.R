@@ -11,7 +11,7 @@ pick_first <- function(nms, patterns) {
 
 col_label <- function(x) {
     lab <- tryCatch(attr(x, "label"), error = function(e) NULL)
-    if (is.null(lab) || !nzchar(as.character(lab))) return(NA_character_)
+    if (is.null(lab) || length(lab) != 1 || !nzchar(as.character(lab))) return(NA_character_)
     as.character(lab)[[1]]
 }
 

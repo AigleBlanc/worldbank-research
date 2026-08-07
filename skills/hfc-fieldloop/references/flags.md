@@ -37,3 +37,4 @@
 | F34 | Letting incomplete/non-surveyed rows (per a confirmed "status" completion signal) leak into any M2-M13 finding — they must be filtered out before those modules run; M1 alone sees the unfiltered data |
 | F35 | Confusing assent and consent, or bundling the Consent tab (A2, Wrap-up window) with any other module's confirmation |
 | F36 | Defaulting M1's completion-by-group breakdown to a geographic column when a Treatment/Control column exists and geography wasn't explicitly opted into (default: declined) |
+| F37 | Treating a project description/PAP document as a data source (parsing findings or role fields out of it) or letting it silently override what the actual microdata shows |
