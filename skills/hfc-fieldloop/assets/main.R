@@ -63,7 +63,7 @@ if (!isTRUE(cfg$found)) {
 # Rscript file.path(skill, "scripts", "commit_merged_issue_tracking.R") "merged_issue_tracking.xlsx"
 
 # ---------------------------------------------------------------------------
-# Pipeline B — Post-feedback: interpret Open+Field-Team-Comment rows, write fixes
+# Pipeline B — Post-feedback: interpret Open+Comment rows, write fixes
 # ---------------------------------------------------------------------------
 # Rscript file.path(skill, "scripts", "apply_feedback.R") "clone"
 # Rscript file.path(skill, "scripts", "apply_feedback.R") "list-open"

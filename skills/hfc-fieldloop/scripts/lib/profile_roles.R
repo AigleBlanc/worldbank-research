@@ -721,8 +721,8 @@ default_modules <- function(roles) {
     # M1's completion-by-group breakdown defaults to Treatment/Control;
     # geography is only added when there's no Treatment/Control column at
     # all, or the user explicitly opted in to it alongside T/C (default:
-    # declined — see roles$geo_group_opted_in, confirmed in the GPS+Media
-    # module-bundle tab).
+    # declined — see roles$geo_group_opted_in, confirmed in the Media, Map
+    # & Grouping window's Add geography tab).
     m1_tc <- roles$treatment_control_col %||%
         (if (length(roles$treatment_control_candidates)) roles$treatment_control_candidates[[1]] else NA_character_)
     m1_geo <- roles$geo_group_col %||%

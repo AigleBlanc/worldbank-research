@@ -1,7 +1,7 @@
 # Post-feedback pipeline — thin CLI over scripts/lib/apply_feedback_helpers.R.
 # The fix logic itself is agent-authored per finding (hfc/code/resolutions/<id>.R,
 # defining fix(ds) -> ds) — there is no built-in fix-classification engine.
-# Trigger: any row with Status=Open and a non-empty Field Team Comment is eligible
+# Trigger: any row with Status=Open and a non-empty Comment is eligible
 # (no separate Accepted gate). The agent reads each such row, decides the
 # fix, writes hfc/code/resolutions/<id>.R, then calls `apply` with the Corrections text
 # — all against today's resolutions/ clone, never issue_tracking.xlsx

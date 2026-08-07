@@ -6,10 +6,10 @@
 # AskUserQuestion confirmation is the only path that ever updates the live
 # file (see scripts/merge_resolutions.R, scripts/commit_merged_issue_tracking.R).
 #
-# Trigger: any row with Status == "Open" and a non-empty Field Team Comment
-# is eligible — there is no separate Accepted gate. The agent interprets the
-# Field Team Comment and applies a fix in a single pass (propose Corrections +
-# apply the data fix + set Status = "Resolved", all at once).
+# Trigger: any row with Status == "Open" and a non-empty Comment is eligible
+# — there is no separate Accepted gate. The agent interprets the Comment and
+# applies a fix in a single pass (propose Corrections + apply the data fix +
+# set Status = "Resolved", all at once).
 #
 # Every function here takes `cfg` — the loaded config.json (see
 # scripts/lib/sync_fpaths.R) — as its first argument, since fix application
@@ -34,9 +34,9 @@ clone_for_resolution_pass <- function(cfg, skill_dir = NULL, date = Sys.Date()) 
   list(status = "created", n = nrow(ctx$tbl))
 }
 
-#' Status=Open + non-empty Field Team Comment rows from today's resolutions
-#' clone, with full row context for the agent to read directly — Issue,
-#' Field Team Comment, Entity ID, Variable, Value, Issue Category, etc.
+#' Status=Open + non-empty Comment rows from today's resolutions clone, with
+#' full row context for the agent to read directly — Issue, Comment, Entity
+#' ID, Variable, Value, Issue Category, etc.
 list_open_commented_rows <- function(cfg, skill_dir = NULL, date = Sys.Date()) {
   suppressPackageStartupMessages({ library(dplyr) })
   entity_label <- load_entity_label(cfg$code_output_dir)
@@ -44,7 +44,7 @@ list_open_commented_rows <- function(cfg, skill_dir = NULL, date = Sys.Date()) {
   ctx <- fetch_issue_tracking(skill_dir = skill_dir, entity_label = entity_label, group_label = group_label)
   clone <- read_resolution_clone(ctx, date = date, entity_label = entity_label, group_label = group_label)
   if (is.null(clone)) stop("No resolutions/ clone for today — run clone_for_resolution_pass() first.")
-  clone %>% filter(toupper(as.character(status)) == "OPEN", nzchar(as.character(field_team_comment)))
+  clone %>% filter(toupper(as.character(status)) == "OPEN", nzchar(as.character(comment)))
 }
 
 #' Update one row's Status/Corrections in today's resolutions clone only.
@@ -64,7 +64,7 @@ list_open_commented_rows <- function(cfg, skill_dir = NULL, date = Sys.Date()) {
 }
 
 #' Single pass: agent has already written hfc/code/resolutions/<id>.R (fix(ds) -> ds)
-#' after interpreting the row's Field Team Comment. This loads the latest dataset,
+#' after interpreting the row's Comment. This loads the latest dataset,
 #' applies the fix, writes <sibling of input_data_dir>/intermediate/<stem>.<ext>,
 #' and records the Corrections text + Status = "Resolved" in today's
 #' resolutions clone.

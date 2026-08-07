@@ -34,7 +34,7 @@ issue_tracking_header_map <- function(entity_label = NA_character_, group_label 
         enddate               = "Enddate",
         issue                 = "Issue",
         value                 = "Value",
-        field_team_comment    = "Field Team Comment",
+        comment               = "Comment",
         corrections           = "Corrections",
         correction_author     = "Correction Author",
         status                = "Status",
@@ -94,7 +94,7 @@ findings_to_issue_tracking <- function(findings, roles = NULL) {
             enddate = end_date,
             issue,
             value,
-            field_team_comment = "",
+            comment = "",
             corrections = "",
             correction_author = "",
             status = "Open",
@@ -173,7 +173,7 @@ write_issue_tracking <- function(tbl, findings, xlsx_path, csv_path, entity_labe
     writeData(wb, "Instructions", data.frame(
         step = 1:4,
         action = c(
-        "Field: fill Field Team Comment and Corrections",
+        "Field: fill Comment and Corrections",
         "RA: set Status to Accepted | Revise | leave Open",
         "RA: set Correction Author",
         "When ready in chat: Process HFC feedback"

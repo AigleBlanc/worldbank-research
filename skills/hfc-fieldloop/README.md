@@ -65,7 +65,7 @@ If `issue_tracking.xlsx` already exists (a second run), the agent doesn't overwr
 
 ## How "Process HFC feedback" works
 
-The field team and RA write comments directly into `issue_tracking.xlsx` (Field Team Comment column) on any row they want fixed. Once that's done:
+The field team and RA write comments directly into `issue_tracking.xlsx` (Comment column) on any row they want fixed. Once that's done:
 
 1. Say **"Process HFC feedback"**.
 2. The agent finds every row that's still `Open` and has a comment, and shows you the list.

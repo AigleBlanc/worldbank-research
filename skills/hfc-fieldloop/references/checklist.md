@@ -8,9 +8,9 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 |---|---|
 | Microdata in the configured Input Data Directory (immutable) | yes |
 | Instrument / form (also in the Input Data Directory) | optional (preferred for M10 / M3 / nested skip-logic) |
-| `hfc/structure.html` reviewed + Continue confirmed | yes |
-| Setup window (A1): data/media files, Entity Label, country/timezone confirmed (+ completion signal, if detected) | yes |
-| Module-config windows (A2): Dupes+Version, Timing (incl. last date), Variables, GPS+Media, Consent, Extra checks all confirmed | yes |
+| `hfc/structure.html` reviewed + confirmed (Wrap-up window's Structure tab) | yes |
+| Setup window (A1): data found, Entity, country/timezone confirmed (+ completion signal, if detected) | yes |
+| Module-config windows (A2): Keys & Hours, Dates/Variables/GPS, Media/Map/Grouping, Wrap-up (Consent + Extra checks + Structure + Excel columns) all confirmed | yes |
 | `hfc/project.yaml` | yes |
 | `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` | yes (agent writes from confirmed options before build) |
 | `hfc/code/main.R` (one path global) | yes |
@@ -18,7 +18,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | `hfc/outputs/issues.csv` with stable, content-derived `finding_id` (Issue ID) | yes |
 | Live `issue_tracking.xlsx` in OneDrive, with `Status` | yes (defaults Open; the one shared file — agent, RA, and field team all edit it; no local copy) |
 | `hfc/outputs/report.html` | yes (navigable; searchable tables) |
-| Project `README.md` drafted from `assets/README_template.md` | yes (confirm once with user) |
+| Project `README.md` drafted from `assets/README_template.md` | yes (drafted automatically, no confirmation) |
 
 ## OneDrive (required)
 

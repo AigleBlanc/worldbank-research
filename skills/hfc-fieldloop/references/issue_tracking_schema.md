@@ -1,6 +1,6 @@
 # Issue tracking schema
 
-Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (Field Team Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in a folder the OneDrive desktop app keeps synced to the cloud — **required, no local-only fallback**: `onedrive_output_dir` in `skills/hfc-fieldloop/config.json` points at that folder, and every read/write is plain file I/O against it; OneDrive's own sync client (not this skill) is what propagates changes to/from the cloud. There is never a separate local-only copy anywhere under `hfc/`. Every user-facing script calls `require_fieldloop_config_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if `config.json` isn't fully configured/reachable — see `SKILL.md`'s A0.
+Collaboration surface: **one file**, `issue_tracking.xlsx` — edited collaboratively by the agent, the RA, and the field team on the same sheet (Comment/Corrections/Status all live together; there is no separate audit twin). It lives entirely in a folder the OneDrive desktop app keeps synced to the cloud — **required, no local-only fallback**: `onedrive_output_dir` in `skills/hfc-fieldloop/config.json` points at that folder, and every read/write is plain file I/O against it; OneDrive's own sync client (not this skill) is what propagates changes to/from the cloud. There is never a separate local-only copy anywhere under `hfc/`. Every user-facing script calls `require_fieldloop_config_ready()` (`scripts/lib/issue_store.R`) before doing any real work, and stops with setup instructions if `config.json` isn't fully configured/reachable — see `SKILL.md`'s A0.
 
 Two dated-snapshot subfolders live alongside the live file, inside the same synced folder:
 
@@ -26,7 +26,7 @@ Template: `assets/issue_tracking_template.csv`. Column order in every written fi
 | Startdate / Enddate | `start_date` / `end_date` | blank for an aggregate-level finding, same as Entity ID |
 | Issue | `issue` | plain-English issue label |
 | Value | `value` | the flagged value itself, when the check has one to report at this row's granularity — continuous measurements (duration, GPS distance, outlier deviation, straightlining share, media duration) are rounded to 3 decimal places; percentages (completion, missingness) stay whole-number `%`, unchanged |
-| Field Team Comment | — | field team text (was `field_comment`, then `RIL Comment` — RIL doesn't stand for the field team, renamed for clarity) |
+| Comment | — | field team/RA/agent text (was `field_comment`, then `RIL Comment` — RIL doesn't stand for the field team — then `Comment`, simplified since the field team isn't the only one who writes here) |
 | Corrections | — | proposed/applied solution — written by field/RA when proposing a fix, or by the agent (`apply_feedback.R apply --corrections`) describing what it actually did |
 | Correction Author | — | RA/field initials, or the agent |
 | **Status** | — | see below |
@@ -51,7 +51,7 @@ Five values:
 | `Resolved` | The agent wrote and applied a fix | `apply_feedback.R apply`, in today's resolutions clone only, until merged and committed |
 | `Needs Review` | The agent couldn't confidently resolve it | `apply_feedback.R needs-review`, in today's resolutions clone only, until merged and committed |
 
-**Trigger for the agent to act:** any row with `Status == Open` **and** a non-empty Field Team Comment is eligible — there is no separate `Accepted` gate. `Accepted`/`Revise` are advisory signals a field/RA can still use for their own triage, but the agent interprets and fixes any Open+commented row regardless of whether it's `Accepted`.
+**Trigger for the agent to act:** any row with `Status == Open` **and** a non-empty Comment is eligible — there is no separate `Accepted` gate. `Accepted`/`Revise` are advisory signals a field/RA can still use for their own triage, but the agent interprets and fixes any Open+commented row regardless of whether it's `Accepted`.
 
 Legacy files (old `status`+`resolved` pair, or `ra_status`) are migrated automatically on read: `accepted`+`resolved=yes`→`Resolved`; `accepted`+`resolved=partial`→`Needs Review`; `accepted`+`resolved=No`→`Accepted`; `revise`→`Revise`; else→`Open`.
 
@@ -60,13 +60,13 @@ Legacy files (old `status`+`resolved` pair, or `ra_status`) are migrated automat
 The live `issue_tracking.xlsx` is never overwritten silently — two different merge directions, each narrow to its own purpose, both requiring explicit AskUserQuestion confirmation before the live file changes:
 
 **Setup Build side** (`merge_preserve_existing()` in `scripts/lib/build_outputs.R`, driven by `scripts/merge_issues.R`): merges this run's `intermediate/` snapshot against the live file.
-- Every row already in the live file is kept **exactly as-is** — no column refreshed, nothing recomputed, `Today's Date`/`Field Team Comment`/`Status`/etc. all untouched.
+- Every row already in the live file is kept **exactly as-is** — no column refreshed, nothing recomputed, `Today's Date`/`Comment`/`Status`/etc. all untouched.
 - Issue IDs only in the new snapshot → genuinely new findings, appended with `Status = Open`.
 - Issue IDs only in the live file (no longer reproduced by current data) → **never dropped**; their trail also lives on in `hfc/code/resolutions/`/`data/intermediate/` if a fix was ever applied.
 - `run_setup_build.R` runs this automatically on every rebuild once a live file exists; it writes `merged_issue_tracking.xlsx` and stops with a `MERGE_PENDING` message rather than overwriting — the agent reviews it with the user, then runs `commit_merged_issue_tracking.R`.
 
 **Post-feedback side** (`merge_resolution_updates()` in `scripts/lib/build_outputs.R`, driven by `scripts/merge_resolutions.R`): merges today's `resolutions/` clone against the live file.
-- For Issue IDs in both: take `Status`/`Corrections`/`Correction Author` from the clone, keep every other column from the live file (in case the field/RA edited something concurrently, e.g. a new Field Team Comment on an unrelated row).
+- For Issue IDs in both: take `Status`/`Corrections`/`Correction Author` from the clone, keep every other column from the live file (in case the field/RA edited something concurrently, e.g. a new Comment on an unrelated row).
 - Issue IDs only in the live file pass through unchanged.
 - Writes `merged_issue_resolutions.xlsx`; same review-then-commit pattern.
 
@@ -97,7 +97,7 @@ Share the OneDrive **folder** (not the individual file) with collaborators via t
 There's no built-in fix-classification engine — the agent reads each eligible row and writes the fix itself. See `SKILL.md`'s Pipeline B and `scripts/lib/apply_feedback_helpers.R`. Everything below operates on today's `resolutions/<date>_issues_resolution.xlsx` clone, never on `issue_tracking.xlsx` directly:
 
 1. `apply_feedback.R clone` — creates (or reuses, if already run today) today's resolutions clone from the current live file.
-2. `apply_feedback.R list-open` — filters today's clone to `Status = Open` + non-empty Field Team Comment, writes `hfc/outputs/fix_candidates.csv` with full row context.
-3. Per row, in a single pass: the agent interprets the Field Team Comment, writes `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds`, then calls `apply_feedback.R apply --finding-id <id> --corrections "<what it did>"` — loads `<sibling of input_data_dir>/intermediate/<stem>.<ext>` if it exists (else the original file in `input_data_dir`), applies `fix(ds)`, writes back to `<sibling of input_data_dir>/intermediate/` (one evolving file), and sets `Corrections` + `Status = Resolved` in the clone only.
+2. `apply_feedback.R list-open` — filters today's clone to `Status = Open` + non-empty Comment, writes `hfc/outputs/fix_candidates.csv` with full row context.
+3. Per row, in a single pass: the agent interprets the Comment, writes `hfc/code/resolutions/<Issue ID, sanitized>.R` defining `fix(ds) -> ds`, then calls `apply_feedback.R apply --finding-id <id> --corrections "<what it did>"` — loads `<sibling of input_data_dir>/intermediate/<stem>.<ext>` if it exists (else the original file in `input_data_dir`), applies `fix(ds)`, writes back to `<sibling of input_data_dir>/intermediate/` (one evolving file), and sets `Corrections` + `Status = Resolved` in the clone only.
 4. `apply_feedback.R needs-review --finding-id <id>` — sets `Status = Needs Review` in the clone for rows the agent can't confidently handle.
 5. `merge_resolutions.R` folds the clone back into a `merged_issue_resolutions.xlsx`; after AskUserQuestion confirmation, `commit_merged_issue_tracking.R` applies it to the live file.

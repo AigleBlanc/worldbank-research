@@ -54,7 +54,7 @@ Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R --open
 
 ### After field feedback
 
-1. Say **Process HFC feedback**. There's no built-in fix engine — the agent reads each Open row with a Field Team Comment and writes the fix itself, against a working clone (not the live file directly).
+1. Say **Process HFC feedback**. There's no built-in fix engine — the agent reads each Open row with a Comment and writes the fix itself, against a working clone (not the live file directly).
 2. Review proposed fixes; confirm per row, then confirm the merged file before it's committed back to the live `issue_tracking.xlsx`.
 3. Expect `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` updated (raw file unchanged); `Status` set to `Resolved`/`Needs Review` in the live file only after that final confirm.
 

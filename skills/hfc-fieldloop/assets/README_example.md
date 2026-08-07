@@ -34,7 +34,7 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 > 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 > 3. In Claude Code (VS Code): **Run HFC FieldLoop** or `/hfc-fieldloop`. The agent first confirms `config.json` is reachable (required — stops with setup instructions if not), then walks through config reuse (if a prior run exists), a Setup window (discovered files, Entity Label, country — stated as best guesses to confirm or correct), module-config windows (duplicates/version, timing, key variables, GPS/media, consent, extra checks — same guess-then-correct pattern), `hfc/structure.html` Continue, and feedback columns — use **Other** to correct anything wrong. Do not type `M1=Y M2=…`.
 > 4. Open `hfc/outputs/report.html` (builder may auto-open). Field/RA edit `issue_tracking.xlsx` directly in the shared OneDrive-synced folder (access set up once, by hand).
-> 5. Later: **Process HFC feedback** once Field Team Comments exist on Open rows in `issue_tracking.xlsx` — the agent reads each row and writes the fix itself, against a working clone, then merges back after confirmation (choose options to proceed).
+> 5. Later: **Process HFC feedback** once Comments exist on Open rows in `issue_tracking.xlsx` — the agent reads each row and writes the fix itself, against a working clone, then merges back after confirmation (choose options to proceed).
 >
 > CLI after `hfc/config/modules.yaml` exists:
 > ```bash
