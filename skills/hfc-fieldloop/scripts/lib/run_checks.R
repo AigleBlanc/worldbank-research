@@ -17,8 +17,8 @@
 # combined pipeline, as long as each check_mN() preserves its own internal
 # row order (documented per-function below where it matters).
 #
-# M11 (fully agent-authored per project, dynamically sourced) and M12
-# (already delegated to run_m12_media_checks() in media.R) are intentionally
+# M10 (fully agent-authored per project, dynamically sourced) and M11
+# (already delegated to run_m11_media_checks() in media.R) are intentionally
 # NOT extracted — there is no inline logic to pull out for either.
 #
 # Intentional divergence from the full-pipeline path: run_check_modules()
@@ -117,7 +117,7 @@ completion_summary <- function(complete_flag, group_vec = NULL) {
         )
 }
 
-#' TRUE for rows that belong in the M2-M13/M10 "surveyed subset". Only the
+#' TRUE for rows that belong in the M2-M13 "surveyed subset". Only the
 #' "status" completion signal actually removes rows — an explicit
 #' Incomplete/Refused-style status means that row wasn't really surveyed.
 #' The "roster" and "primary_secondary" signals never remove rows from ds:
@@ -237,7 +237,13 @@ check_m1 <- function(ds, roles, modules) {
     })
     by_group_df <- if (length(by_group)) bind_rows(by_group) else tibble()
     by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(group_source_ds)) {
-        completion_summary(complete_flag, group_source_ds[[roles$enum]]) %>% rename(enumerator = group)
+        has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(group_source_ds)
+        enum_disp <- resolve_display_vec(
+        group_source_ds[[roles$enum]],
+        if (has_enum_name) group_source_ds[[roles$enum_name]] else NULL,
+        roles$enumerator_display %||% "name"
+        )
+        completion_summary(complete_flag, enum_disp) %>% rename(enumerator = group) %>% arrange(pct_complete)
     } else tibble()
     by_date_df <- if (isTRUE(modules$M1$by_date %||% TRUE) && !is.na(roles$start) && roles$start %in% names(group_source_ds)) {
         d <- suppressWarnings(as.Date(as.character(group_source_ds[[roles$start]])))
@@ -255,21 +261,36 @@ check_m1 <- function(ds, roles, modules) {
     if (isTRUE(modules$M1$low_completion_on) && !is.na(roles$group) && roles$group %in% names(ds) &&
         length(complete_flag) == nrow(ds)) {
         pct_median <- modules$M1$pct_median %||% 0.5
+        group_term <- roles$group_label %||% "Group"
+        has_group_name <- !is.null(roles$group_name) && !is.na(roles$group_name) && roles$group_name %in% names(ds)
         counts <- ds %>% mutate(.complete = complete_flag) %>%
         filter(.complete, !is.na(.data[[roles$group]])) %>%
-        group_by(.data[[roles$group]]) %>% summarise(n = n(), .groups = "drop")
+        group_by(.data[[roles$group]]) %>%
+        summarise(
+            n = n(),
+            .group_name = if (has_group_name) {
+            dplyr::first(stats::na.omit(as.character(.data[[roles$group_name]])), default = NA_character_)
+            } else NA_character_,
+            .groups = "drop"
+        )
         if (nrow(counts) > 1) {
+        # Target = median completed-submission count across groups — a
+        # stand-in for a real enrollment target when the project has none.
         tgt <- stats::median(counts$n)
-        low_units <- counts[[roles$group]][counts$n < pct_median * tgt]
-        if (length(low_units)) {
-            flagged <- ds[as.character(ds[[roles$group]]) %in% as.character(low_units), , drop = FALSE]
-            # Sort worst-first (lowest completion ratio first): each flagged
-            # row's group completion count over the target median.
-            flagged$.sortv <- counts$n[match(as.character(flagged[[roles$group]]), as.character(counts[[roles$group]]))] / tgt
-            findings <- mk_findings(
-            flagged, "low_completion", "M1", "low_completion",
-            sprintf("Site has fewer completed submissions than %.0f%% of the median", 100 * pct_median),
-            roles, sort_value_col = ".sortv"
+        # Sort worst-first (lowest completion ratio first): each flagged
+        # group's completion count over the target.
+        low <- counts %>% filter(n < pct_median * tgt) %>% mutate(.sortv = n / tgt)
+        if (nrow(low)) {
+            unit_df <- tibble::tibble(
+            unit_id = as.character(low[[roles$group]]),
+            unit_name = low$.group_name,
+            .sortv = low$.sortv,
+            .value = sprintf("%d submissions (%.0f%% of target)", low$n, 100 * low$.sortv)
+            )
+            findings <- mk_aggregate_finding(
+            unit_df, "low_completion", "M1", "low_completion",
+            sprintf("%s has fewer completed submissions than %.0f%% of the target", group_term, 100 * pct_median),
+            roles, unit_type = "group", value_col = ".value", sort_value_col = ".sortv"
             )
         }
         }
@@ -390,8 +411,13 @@ check_m4 <- function(ds, roles, modules) {
       }))
     } else tibble()
     stats_by_enum <- if (isTRUE(modules$M4$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
-      ds %>% mutate(.dur = dur) %>% filter(is.finite(.dur)) %>%
-        group_by(enumerator = as.character(.data[[roles$enum]])) %>%
+      has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
+      enum_disp <- resolve_display_vec(
+        ds[[roles$enum]], if (has_enum_name) ds[[roles$enum_name]] else NULL,
+        roles$enumerator_display %||% "name"
+      )
+      ds %>% mutate(.dur = dur, .enum_disp = enum_disp) %>% filter(is.finite(.dur)) %>%
+        group_by(enumerator = .enum_disp) %>%
         summarise(n = n(), mean = round(mean(.dur), 3), median = round(stats::median(.dur), 3),
                   sd = round(stats::sd(.dur), 3), min = round(min(.dur), 3), max = round(max(.dur), 3),
                   .groups = "drop")
@@ -486,14 +512,12 @@ check_m6 <- function(ds, roles, modules) {
     # raw value — a raw value alone isn't comparable across variables or
     # across low/high outliers on the same variable.
     tmp$.sortv <- abs(v[flag] - mu) / sdv
+    tmp$.direction <- ifelse(v[flag] > mu, "more", "less")
     catg <- if (identical(vc, roles$age) || grepl("age", vc, ignore.case = TRUE)) "age_outlier" else "numeric_outlier"
-    label <- if (catg == "age_outlier") {
-      sprintf("Age outlier (beyond %s SD)", sd_rule)
-    } else {
-      sprintf("Numeric outlier on %s (beyond %s SD)", vc, sd_rule)
-    }
+    tmp <- utils::head(tmp, 200)
+    label <- sprintf("Outlier value for %s; the value is %s than %s SD from the mean", vc, tmp$.direction, sd_rule)
     parts[[vc]] <- mk_findings(
-      utils::head(tmp, 200), sprintf("outlier_%s", vc), "M6", catg, label, roles, ".v",
+      tmp, sprintf("outlier_%s", vc), "M6", catg, label, roles, ".v",
       variable_name = vc, sort_value_col = ".sortv"
     )
   }
@@ -508,39 +532,111 @@ check_m7 <- function(ds, roles, modules) {
   sentinel <- modules$M7$sentinel_codes %||% character()
   sentinel_is_map <- is.list(sentinel) && !is.null(names(sentinel))
   by_enum <- isTRUE(modules$M7$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)
-  sd_multiplier <- modules$M7$sd_multiplier %||% 2
-  by_var <- list(); by_enum_list <- list(); parts <- list()
+  # Three fixed, stated-not-asked thresholds (see SKILL.md/check_modules.md):
+  # a variable only counts as an "issue" (shows up at all) past
+  # var_issue_threshold population missingness; only the worst variables
+  # (past enum_pool_threshold) are even eligible for enumerator-level
+  # flagging; within that pool, an enumerator is flagged if THEIR OWN
+  # missingness on it clears enum_pct_threshold.
+  var_issue_threshold <- modules$M7$var_issue_threshold %||% 0.5
+  enum_pool_threshold <- modules$M7$enum_pool_threshold %||% 0.9
+  enum_pct_threshold <- modules$M7$enum_pct_threshold %||% 0.5
+  form_map <- attr(ds, "hfc_form_map")
+  has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
+  enum_lookup <- if (by_enum && has_enum_name) {
+    ds %>% mutate(.enum = as.character(.data[[roles$enum]]), .ename = as.character(.data[[roles$enum_name]])) %>%
+      filter(!is.na(.enum), nzchar(.enum)) %>%
+      group_by(.enum) %>%
+      summarise(.ename = dplyr::first(stats::na.omit(.ename), default = NA_character_), .groups = "drop")
+  } else NULL
+  by_var <- list(); by_enum_list <- list(); enum_flags <- list()
   for (vc in vars) {
     codes <- if (sentinel_is_map) sentinel[[vc]] %||% character() else sentinel
     x <- ds[[vc]]
     miss <- is.na(x) | as.character(x) %in% as.character(codes)
-    by_var[[vc]] <- tibble(variable = vc, pct_missing = round(100 * mean(miss), 1),
-                            n_missing = sum(miss), n = length(miss))
+
+    # Skip-logic exclusion: a row where this variable wasn't relevant (a
+    # parent answer routed the respondent around it) never counts toward
+    # missingness — dropped from the numerator AND the denominator, not
+    # just hidden from the numerator, or an entirely-skipped question would
+    # misleadingly show near-zero missingness.
+    applicable <- rep(TRUE, nrow(ds))
+    if (!is.null(form_map) && nrow(form_map) > 0 && vc %in% form_map$name &&
+        exists("row_is_relevant", mode = "function")) {
+      rel <- form_map$relevant[match(vc, form_map$name)]
+      if (!is.na(rel) && nzchar(rel)) applicable <- row_is_relevant(ds, rel)
+    }
+    miss[!applicable] <- FALSE
+    n_applicable <- sum(applicable)
+    pct_missing <- if (n_applicable > 0) round(100 * sum(miss) / n_applicable, 1) else NA_real_
+
+    # Gate 1: only real population-level issues get a row at all — "do not
+    # create rows for variables who don't have more than 50% missing."
+    if (is.na(pct_missing) || pct_missing <= var_issue_threshold * 100) next
+    by_var[[vc]] <- tibble(variable = vc, pct_missing = pct_missing,
+                            n_missing = sum(miss), n = n_applicable)
+
     if (by_enum) {
-      by_e <- tibble(enumerator = as.character(ds[[roles$enum]]), miss = miss) %>%
-        filter(!is.na(enumerator), nzchar(enumerator)) %>%
+      # by_e$enumerator stays the RAW ID throughout this block — the
+      # threshold check and mk_aggregate_finding() below both need the true
+      # ID, not a display name. A separate display-resolved copy is what
+      # actually goes into by_enum_list (stats$by_enumerator, rendered in
+      # the report) — see below.
+      by_e <- tibble(enumerator = as.character(ds[[roles$enum]]), miss = miss, applicable = applicable) %>%
+        filter(!is.na(enumerator), nzchar(enumerator), applicable) %>%
         group_by(enumerator) %>%
         summarise(pct_missing = round(100 * mean(miss), 1), n = n(), .groups = "drop") %>%
         mutate(variable = vc)
-      by_enum_list[[vc]] <- by_e
-      global_pct <- mean(miss) * 100
-      sdv <- stats::sd(by_e$pct_missing, na.rm = TRUE)
-      if (is.finite(sdv) && sdv > 0) {
-        hi <- by_e$enumerator[by_e$pct_missing > global_pct + sd_multiplier * sdv]
-        if (length(hi)) {
-          flagged <- ds[as.character(ds[[roles$enum]]) %in% hi, , drop = FALSE]
-          flagged$.pct <- by_e$pct_missing[match(as.character(flagged[[roles$enum]]), by_e$enumerator)]
-          parts[[vc]] <- mk_findings(
-            flagged, sprintf("high_missing_%s", vc), "M7", "high_missingness",
-            sprintf("Enumerator's missingness on %s is %s%% vs a %s%% survey average (>%sx the between-enumerator SD)",
-                    vc, flagged$.pct, round(global_pct, 1), sd_multiplier),
-            roles, ".pct", variable_name = vc, sort_value_col = ".pct"
-          )
-        }
+      by_e_display <- by_e
+      by_e_display$enumerator <- resolve_display_vec(
+        by_e$enumerator,
+        if (!is.null(enum_lookup)) enum_lookup$.ename[match(by_e$enumerator, enum_lookup$.enum)] else NULL,
+        roles$enumerator_display %||% "name"
+      )
+      by_enum_list[[vc]] <- by_e_display
+
+      # Gate 2: this variable only becomes eligible for enumerator-level
+      # flagging once its OWN population missingness clears the much higher
+      # pool threshold — a narrower subset of the Gate-1 "issue" variables.
+      if (pct_missing >= enum_pool_threshold * 100) {
+        # Gate 3: within that pool, flag enumerators whose personal
+        # missingness on it clears the (lower) personal threshold.
+        hi <- by_e %>% filter(pct_missing >= enum_pct_threshold * 100)
+        if (nrow(hi)) enum_flags[[vc]] <- hi %>% mutate(variable = vc)
       }
     }
   }
-  findings <- if (length(parts)) bind_rows(parts) else empty_findings()
+
+  # One row per enumerator, not one per (enumerator, variable) pair: an
+  # enumerator flagged on several variables gets every variable listed in
+  # the issue text and every personal missingness % joined with " & " in
+  # value, instead of a separate finding per variable (same pattern as
+  # check_m9()'s straightlining_enum).
+  findings <- empty_findings()
+  if (length(enum_flags)) {
+    all_flags <- bind_rows(enum_flags)
+    by_enum_agg <- all_flags %>%
+      group_by(enumerator) %>%
+      summarise(
+        vars = paste(variable, collapse = ", "),
+        pct_vals = paste(sprintf("%s%%", pct_missing), collapse = " & "),
+        worst_pct = max(pct_missing),
+        .groups = "drop"
+      )
+    ename <- if (!is.null(enum_lookup)) enum_lookup$.ename[match(by_enum_agg$enumerator, enum_lookup$.enum)] else NA_character_
+    unit_df <- tibble::tibble(
+      unit_id = by_enum_agg$enumerator,
+      unit_name = ename,
+      .issue = sprintf("Enumerator's missingness is %.0f%%+ on %s", enum_pct_threshold * 100, by_enum_agg$vars),
+      .value_display = by_enum_agg$pct_vals,
+      .sort = by_enum_agg$worst_pct
+    )
+    findings <- mk_aggregate_finding(
+      unit_df, "high_missing_enum", "M7", "high_missingness", unit_df$.issue,
+      roles, unit_type = "enumerator", value_col = ".value_display", sort_value_col = ".sort"
+    )
+  }
+
   stats <- list(
     by_variable = if (length(by_var)) bind_rows(by_var) else tibble(),
     by_enumerator = if (length(by_enum_list)) bind_rows(by_enum_list) else tibble()
@@ -572,8 +668,7 @@ check_m8 <- function(ds, roles, modules) {
       flagged$.v <- as.character(round(flagged$dist_m, 3))
       findings <- mk_findings(
         flagged, "gps_distance", "M8", "gps_distance",
-        sprintf("Distance between reference and survey coordinates is %.3f meters (flag threshold: %s m)",
-                round(flagged$dist_m, 3), thr),
+        sprintf("Distance between reference and survey coordinates is %.3f meters", round(flagged$dist_m, 3)),
         roles, ".v", sort_value_col = "dist_m"
       )
     }
@@ -592,6 +687,14 @@ check_m9 <- function(ds, roles, modules) {
 
   if (length(ordinal_vars) && !is.na(roles$enum) && roles$enum %in% names(ds)) {
     enum_vec <- as.character(ds[[roles$enum]])
+    has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
+    enum_lookup <- if (has_enum_name) {
+      ds %>% mutate(.enum = as.character(.data[[roles$enum]]), .ename = as.character(.data[[roles$enum_name]])) %>%
+        filter(!is.na(.enum), nzchar(.enum)) %>%
+        group_by(.enum) %>%
+        summarise(.ename = dplyr::first(stats::na.omit(.ename), default = NA_character_), .groups = "drop")
+    } else NULL
+    flagged_rows <- list()
     for (vc in ordinal_vars) {
       v <- as.character(ds[[vc]])
       ok <- !is.na(v) & nzchar(v) & !is.na(enum_vec) & nzchar(enum_vec)
@@ -606,18 +709,32 @@ check_m9 <- function(ds, roles, modules) {
         ) %>%
         filter(n >= min_n_per_enum, top_share >= enum_thr)
       if (!nrow(tab)) next
-      keep <- rep(FALSE, length(v))
-      for (i in seq_len(nrow(tab))) {
-        keep <- keep | (ok & enum_vec == tab$enum[i] & v == tab$top_val[i])
-      }
-      if (!any(keep)) next
-      tmp <- ds[keep, , drop = FALSE]
-      tmp$.v <- v[keep]
-      tmp$.share <- tab$top_share[match(enum_vec[keep], tab$enum)]
-      parts[[paste0("enum_", vc)]] <- mk_findings(
-        tmp, sprintf("straightlining_enum_%s", vc), "M9", "straightlining_enum",
-        sprintf("Enumerator gave the same answer on %s in %.0f%%+ of their surveys", vc, enum_thr * 100),
-        roles, ".v", variable_name = vc, sort_value_col = ".share"
+      flagged_rows[[vc]] <- tab %>% mutate(variable = vc)
+    }
+    # One row per enumerator, not one per (enumerator, variable) pair: an
+    # enumerator flagged on several variables gets every variable listed in
+    # the issue text and every straightlined answer joined with " & " in
+    # value, instead of a separate finding per variable.
+    if (length(flagged_rows)) {
+      by_enum <- bind_rows(flagged_rows) %>%
+        group_by(enum) %>%
+        summarise(
+          vars = paste(variable, collapse = ", "),
+          top_vals = paste(top_val, collapse = " & "),
+          worst_share = max(top_share),
+          .groups = "drop"
+        )
+      ename <- if (!is.null(enum_lookup)) enum_lookup$.ename[match(by_enum$enum, enum_lookup$.enum)] else NA_character_
+      unit_df <- tibble::tibble(
+        unit_id = by_enum$enum,
+        unit_name = ename,
+        .issue = sprintf("Enumerator gave the same answer on %s in %.0f%%+ of their surveys", by_enum$vars, enum_thr * 100),
+        .value_display = by_enum$top_vals,
+        .share_sort = by_enum$worst_share
+      )
+      parts$enum <- mk_aggregate_finding(
+        unit_df, "straightlining_enum", "M9", "straightlining_enum", unit_df$.issue,
+        roles, unit_type = "enumerator", value_col = ".value_display", sort_value_col = ".share_sort"
       )
     }
   }
@@ -644,14 +761,15 @@ check_m9 <- function(ds, roles, modules) {
   list(findings = findings)
 }
 
-# ---- M10 Summary Statistics (descriptive only, never produces findings) ----
+# ---- M13 Summary Statistics (descriptive only, never produces findings) ----
 # Returns a named list of tables: "Overall" (all rows, unchanged shape) plus
-# one additional table per enumerator when modules$M10$by_enum is on (default
-# TRUE) — full Variable/Mean/SD/Min/Max/Obs breakdown per enumerator, not a
-# replacement for Overall. Uses roles$enum_name (PII/display name) as the
-# table label when available, falling back to the raw enumerator ID.
-check_m10 <- function(ds, roles, modules) {
-  vars <- modules$M10$vars %||% character()
+# one additional table per enumerator when modules$M13$by_enum is on (default
+# TRUE) — full Variable/Mean/SD/Min/Max/Missing(displayed "NA")/Obs breakdown
+# per enumerator, not a replacement for Overall. Missing + Obs = total rows
+# considered. Uses roles$enum_name (PII/display name) as the table label when
+# available, falling back to the raw enumerator ID.
+check_m13 <- function(ds, roles, modules) {
+  vars <- modules$M13$vars %||% character()
   vars <- vars[!is.na(vars) & vars %in% names(ds)]
 
   mk_table <- function(sub_ds) {
@@ -659,67 +777,72 @@ check_m10 <- function(ds, roles, modules) {
       v <- safe_num(sub_ds[[vc]]); ok <- is.finite(v)
       tibble(Variable = vc, Mean = round(mean(v[ok]), 3), SD = round(stats::sd(v[ok]), 3),
             Min = round(suppressWarnings(min(v[ok])), 3), Max = round(suppressWarnings(max(v[ok])), 3),
-            Obs = sum(ok))
+            Missing = sum(!ok), Obs = sum(ok))
     })
     if (length(rows)) bind_rows(rows) else tibble()
   }
 
   stats <- list(Overall = mk_table(ds))
 
-  by_enum <- isTRUE(modules$M10$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)
+  by_enum <- isTRUE(modules$M13$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(ds)
   if (by_enum && length(vars)) {
     enum_vals <- as.character(ds[[roles$enum]])
-    enum_names <- if (!is.null(roles$enum_name) && roles$enum_name %in% names(ds)) {
-      as.character(ds[[roles$enum_name]])
-    } else enum_vals
+    has_enum_name <- !is.null(roles$enum_name) && !is.na(roles$enum_name) && roles$enum_name %in% names(ds)
+    enum_names <- if (has_enum_name) as.character(ds[[roles$enum_name]]) else NULL
+    # Default ("name"): "Name (ID)" label, both visible. Override ("id"):
+    # bare ID only, honoring roles$enumerator_display — see
+    # resolve_display_vec()'s de-identification-by-default policy.
+    show_name <- identical(roles$enumerator_display %||% "name", "name") && !is.null(enum_names)
     for (ev in sort(unique(enum_vals[!is.na(enum_vals) & nzchar(enum_vals)]))) {
       idx <- which(enum_vals == ev)
-      nm <- unique(enum_names[idx]); nm <- nm[!is.na(nm) & nzchar(nm)]
-      label <- if (length(nm)) sprintf("%s (%s)", nm[[1]], ev) else ev
+      label <- if (show_name) {
+        nm <- unique(enum_names[idx]); nm <- nm[!is.na(nm) & nzchar(nm)]
+        if (length(nm)) sprintf("%s (%s)", nm[[1]], ev) else ev
+      } else ev
       stats[[label]] <- mk_table(ds[idx, , drop = FALSE])
     }
   }
   list(stats = stats)
 }
 
-# ---- M13 Consent / assent / audio flags -------------------------------------
-check_m13 <- function(ds, roles, modules) {
-  form_map <- attr(ds, "hfc_form_map")
-  flag_miss <- function(col, check_id, category, issue) {
-    if (is.na(col) || !col %in% names(ds)) return(NULL)
-    miss <- ds %>% filter(is.na(.data[[col]]) |
-                            as.character(.data[[col]]) %in% c("", "0", "No", "no"))
-    if (exists("filter_expected_skips", mode = "function") && !is.null(form_map)) {
-      miss <- filter_expected_skips(miss, ds, col, form_map)
+# ---- M12 Consent / assent / audio flags -------------------------------------
+check_m12 <- function(ds, roles, modules) {
+    form_map <- attr(ds, "hfc_form_map")
+    flag_miss <- function(col, check_id, category, issue) {
+        if (is.na(col) || !col %in% names(ds)) return(NULL)
+        miss <- ds %>% filter(is.na(.data[[col]]) |
+                                as.character(.data[[col]]) %in% c("", "0", "No", "no"))
+        if (exists("filter_expected_skips", mode = "function") && !is.null(form_map)) {
+        miss <- filter_expected_skips(miss, ds, col, form_map)
+        }
+        mk_findings(miss, check_id, "M12", category, sprintf("%s (column '%s')", issue, col), roles)
     }
-    mk_findings(miss, check_id, "M13", category, sprintf("%s (column '%s')", issue, col), roles)
-  }
-  parts <- list()
-  if (!is.na(roles$assent)) {
-    parts$a <- flag_miss(roles$assent, "missing_assent", "assent",
-                          "Missing, 0, or No assent flag")
-  }
-  if (!is.na(roles$consent)) {
-    parts$c <- flag_miss(roles$consent, "missing_consent", "consent",
-                          "Missing, 0, or No consent flag")
-  }
-  audio_flag <- modules$M13$audio %||% roles$audio_flag %||% roles$audio
-  media_files <- unique(c(roles$audio_file_cols %||% character(),
-                          roles$image_file_cols %||% character()))
-  if (!is.na(audio_flag) && audio_flag %in% names(ds) && !audio_flag %in% media_files) {
-    parts$aud <- flag_miss(audio_flag, "missing_audio_flag", "audio",
-                            "Missing, 0, or No audio consent flag")
-  }
-  parts <- Filter(Negate(is.null), parts)
-  findings <- if (length(parts)) bind_rows(parts) else empty_findings()
-  list(findings = findings)
+    parts <- list()
+    if (!is.na(roles$assent)) {
+        parts$a <- flag_miss(roles$assent, "missing_assent", "assent",
+                            "Missing, 0, or No assent flag")
+    }
+    if (!is.na(roles$consent)) {
+        parts$c <- flag_miss(roles$consent, "missing_consent", "consent",
+                            "Missing, 0, or No consent flag")
+    }
+    audio_flag <- modules$M12$audio %||% roles$audio_flag %||% roles$audio
+    media_files <- unique(c(roles$audio_file_cols %||% character(),
+                            roles$image_file_cols %||% character()))
+    if (!is.na(audio_flag) && audio_flag %in% names(ds) && !audio_flag %in% media_files) {
+        parts$aud <- flag_miss(audio_flag, "missing_audio_flag", "audio",
+                                "Missing, 0, or No audio consent flag")
+    }
+    parts <- Filter(Negate(is.null), parts)
+    findings <- if (length(parts)) bind_rows(parts) else empty_findings()
+    list(findings = findings)
 }
 
 run_check_modules <- function(ds, roles, modules, code_output_dir = NULL, target_ds = NULL) {
   ds_full <- prepare_ds_for_checks(ds, roles, code_output_dir, target_ds = target_ds)
   # M1 alone sees the FULL, unfiltered ds_full (it needs the complete
   # picture — every row, target-list or all primary+secondary rows — to
-  # compute completion rates). Every other module below (M2-M13, M10) sees
+  # compute completion rates). Every other module below (M2-M13) sees
   # only the completed/surveyed subset, per the completion redesign: once a
   # "status" completion signal filters out Incomplete/Refused rows, those
   # rows shouldn't be checked for duplicates, outliers, timing, etc.
@@ -795,15 +918,15 @@ run_check_modules <- function(ds, roles, modules, code_output_dir = NULL, target
     }, error = function(e) message("M9: ", e$message))
   }
 
-  if (isTRUE(modules$M10$on)) {
+  if (isTRUE(modules$M13$on)) {
     tryCatch({
-      stats_list$M10 <- check_m10(ds, roles, modules)$stats
-    }, error = function(e) message("M10: ", e$message))
+      stats_list$M13 <- check_m13(ds, roles, modules)$stats
+    }, error = function(e) message("M13: ", e$message))
   }
 
-  # ---- M11 Survey-specific: custom checks only (fully AI-authored per project) ---
-  if (isTRUE(modules$M11$on) || length(modules$M11$custom %||% character()) > 0) {
-    custom <- modules$M11$custom %||% character()
+  # ---- M10 Survey-specific: custom checks only (fully AI-authored per project) ---
+  if (isTRUE(modules$M10$on) || length(modules$M10$custom %||% character()) > 0) {
+    custom <- modules$M10$custom %||% character()
     if (!is.null(code_output_dir) && length(custom)) {
       for (cname in custom) {
         if (!nzchar(cname)) next
@@ -822,7 +945,7 @@ run_check_modules <- function(ds, roles, modules, code_output_dir = NULL, target
           }
           out <- env[[fn_name]](ds, roles)
           if (!is.null(out) && nrow(out) > 0) {
-            if (!"check_module" %in% names(out)) out$check_module <- "M11"
+            if (!"check_module" %in% names(out)) out$check_module <- "M10"
             findings_list[[paste0("custom_", cname)]] <- out
           }
         }, error = function(e) message("Custom ", cname, ": ", e$message))
@@ -830,17 +953,17 @@ run_check_modules <- function(ds, roles, modules, code_output_dir = NULL, target
     }
   }
 
-  # ---- M12 Media files (delegated to media.R) --------------------------
-  if (isTRUE(modules$M12$on) && exists("run_m12_media_checks", mode = "function")) {
+  # ---- M11 Media files (delegated to media.R) --------------------------
+  if (isTRUE(modules$M11$on) && exists("run_m11_media_checks", mode = "function")) {
     tryCatch({
-      findings_list$m12 <- run_m12_media_checks(ds, roles, modules)
-    }, error = function(e) message("M12: ", e$message))
+      findings_list$m11 <- run_m11_media_checks(ds, roles, modules)
+    }, error = function(e) message("M11: ", e$message))
   }
 
-  if (isTRUE(modules$M13$on)) {
+  if (isTRUE(modules$M12$on)) {
     tryCatch({
-      findings_list$m13 <- check_m13(ds, roles, modules)$findings
-    }, error = function(e) message("M13: ", e$message))
+      findings_list$m12 <- check_m12(ds, roles, modules)$findings
+    }, error = function(e) message("M12: ", e$message))
   }
 
   findings <- bind_rows(findings_list)

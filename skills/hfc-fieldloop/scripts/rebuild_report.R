@@ -16,12 +16,6 @@
 #
 # Usage: Rscript rebuild_report.R [--open]
 
-`%||%` <- function(a, b) {
-    if (is.null(a) || length(a) == 0) return(b)
-    if (length(a) == 1 && (is.na(a) || (is.character(a) && !nzchar(as.character(a))))) return(b)
-    a
-}
-
 .resolve_skill <- function() {
     sp <- {
     ca <- commandArgs(trailingOnly = FALSE)
@@ -50,7 +44,7 @@ source(file.path(lib, "run_checks.R"))
 source(file.path(lib, "build_outputs.R"))
 source(file.path(lib, "module_desc.R"))
 source(file.path(lib, "pipeline_core.R"))
-source(file.path(lib, "sync_folder.R"))
+source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
 
 args <- commandArgs(trailingOnly = TRUE)
@@ -80,6 +74,7 @@ proj_yaml <- yaml::read_yaml(proj_yaml_path)
 data_rel <- proj_yaml$data_file
 project_id <- proj_yaml$project_id %||% derive_project_id(cfg$input_data_dir)
 entity_label <- roles$entity_label %||% NA_character_
+group_label <- roles$group_label %||% NA_character_
 
 message("Loading latest data for: ", cfg$input_data_dir)
 ds <- load_latest_dataset(cfg$input_data_dir, data_rel)
@@ -100,9 +95,9 @@ if (identical(roles$completion_primary_signal, "roster") &&
     !is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
     target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
 }
-res <- run_checks_and_write_registry(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
+res <- run_checks_and_write_issues(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
 
-ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label)
+ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label, group_label = group_label)
 if (is.null(ctx$tbl)) {
     stop("No issue_tracking.xlsx found in the configured OneDrive output folder — nothing to filter the report against. Run the setup build first.")
 }

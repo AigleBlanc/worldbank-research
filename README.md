@@ -1,6 +1,6 @@
 # Claude Code FieldLoop staging
 
-This repo *is* the `.claude/` folder for a survey project — clone it directly into place, rename it, and you're set up. It contains the HFC FieldLoop skill (`skills/hfc-fieldloop/`) plus a `settings.json` that pre-approves the permissions the skill needs, so Claude Code doesn't interrupt you for every file read or `Rscript` call.
+This repo *is* the `.claude/` folder for a survey project — clone it directly into place, rename it, and you're set up. It contains the HFC FieldLoop skill (`skills/hfc-fieldloop/`). Turn on Claude Code's built-in **Auto** permission mode (`/permissions`, or the mode toggle) so the agent doesn't interrupt you for routine file reads/writes and `Rscript` calls — it's a setting you control yourself, not something this repo ships for you.
 
 ## Install into a survey project
 
@@ -9,7 +9,6 @@ Target layout once installed:
 ```
 your_project/
 ├── .claude/
-│   ├── settings.json
 │   └── skills/hfc-fieldloop/
 ├── data/raw/            ← your survey export goes here
 └── hfc/                 ← created automatically once you run it
@@ -39,12 +38,9 @@ Then open `your_project/` in VS Code with Claude Code, and follow [`.claude/skil
 Rscript .claude/skills/hfc-fieldloop/install.R
 ```
 
-**b) Set up OneDrive (required — `issue_tracking.xlsx` has no local fallback)**
-1. Make sure the OneDrive desktop app is installed and signed in on this machine, and note the local folder it syncs to.
-2. Open `.claude/skills/hfc-fieldloop/assets/lib/sync_folder.json`, set `"enabled": true`, and set `"local_path"` to that folder's absolute path (e.g. `"/Users/you/OneDrive - Your Org/HFC Reports"`). There's no sign-in step — the agent reads/writes that folder like any other local folder, and OneDrive's own sync client handles getting it to the cloud.
-3. Share that OneDrive folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
+**b) Configure `config.json`** (once, at `.claude/skills/hfc-fieldloop/config.json`) — set four directories: **Input Data Directory** (your survey microdata export, never modified), **OneDrive Folder Directory** (a folder the OneDrive desktop app is already syncing on this machine — install/sign in to OneDrive first, then point this at the local folder it syncs to; there's no sign-in step in the skill itself, it just reads/writes that folder like any other local folder), **Code Output Directory** (a folder you manage yourself, ideally a git repo, where the built `hfc/` report lands), and optionally **Media Folder Directory**. Share the OneDrive folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly. Full details: [`.claude/skills/hfc-fieldloop/README.md`](skills/hfc-fieldloop/README.md).
 
-If OneDrive isn't set up yet, the agent will tell you and stop before doing any real work — do steps a and b first.
+If `config.json` isn't fully configured yet, the agent will tell you and stop before doing any real work — do steps a and b first.
 
 **c) Run it**
 

@@ -1,7 +1,7 @@
 # Post-feedback pipeline — thin CLI over scripts/lib/apply_feedback_helpers.R.
 # The fix logic itself is agent-authored per finding (hfc/code/resolutions/<id>.R,
 # defining fix(ds) -> ds) — there is no built-in fix-classification engine.
-# Trigger: any row with Status=Open and a non-empty RIL Comment is eligible
+# Trigger: any row with Status=Open and a non-empty Field Team Comment is eligible
 # (no separate Accepted gate). The agent reads each such row, decides the
 # fix, writes hfc/code/resolutions/<id>.R, then calls `apply` with the Corrections text
 # — all against today's resolutions/ clone, never issue_tracking.xlsx
@@ -13,12 +13,6 @@
 #   Rscript apply_feedback.R list-open
 #   Rscript apply_feedback.R apply --finding-id <id> --corrections "<text>"
 #   Rscript apply_feedback.R needs-review --finding-id <id>
-
-`%||%` <- function(a, b) {
-  if (is.null(a) || length(a) == 0) return(b)
-  if (length(a) == 1 && (is.na(a) || (is.character(a) && !nzchar(as.character(a))))) return(b)
-  a
-}
 
 # Step 1: find the skill's own root dir, same as run_setup_build.R.
 .resolve_skill <- function() {
@@ -35,7 +29,7 @@ skill <- .resolve_skill()
 lib <- file.path(skill, "scripts", "lib")
 source(file.path(lib, "utils.R"))
 source(file.path(lib, "build_outputs.R"))
-source(file.path(lib, "sync_folder.R"))
+source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
 source(file.path(lib, "apply_feedback_helpers.R"))
 
@@ -67,7 +61,7 @@ if (mode == "clone") {
   message("Resolutions clone ", res$status, " (", res$n, " rows).")
 } else if (mode == "list-open") {
   open_rows <- list_open_commented_rows(cfg, skill_dir = skill)
-  out_path <- hfc_path(cfg$code_output_dir, "registry", "fix_candidates.csv")
+  out_path <- hfc_path(cfg$code_output_dir, "outputs", "fix_candidates.csv")
   write_csv(open_rows, out_path)
   message("Open + commented rows: ", nrow(open_rows))
   message("Wrote ", out_path)

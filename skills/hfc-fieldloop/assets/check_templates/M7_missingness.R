@@ -12,7 +12,7 @@ skill <- "your/path/to/hfc-fieldloop/"
 code_output_dir <- "your/path/to/hfc/output/"
 
 lib <- file.path(skill, "scripts", "lib")
-for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R", "sync_folder.R")) {
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R", "sync_fpaths.R")) {
   source(file.path(lib, f))
 }
 suppressPackageStartupMessages({ library(dplyr); library(yaml) })
@@ -25,7 +25,11 @@ modules <- yaml::read_yaml(hfc_path(code_output_dir, "config", "modules.yaml"))
 proj_yaml <- yaml::read_yaml(hfc_path(code_output_dir, "project.yaml"))
 ds <- load_latest_dataset(cfg$input_data_dir, proj_yaml$data_file)
 ds <- prepare_ds_for_checks(ds, roles, code_output_dir)
-if (any(!ds$.hfc_completed)) ds <- ds[ds$.hfc_completed, , drop = FALSE]
+if (any(!ds$.hfc_completed)) {
+  form_map <- attr(ds, "hfc_form_map")
+  ds <- ds[ds$.hfc_completed, , drop = FALSE]
+  attr(ds, "hfc_form_map") <- form_map
+}
 
 res <- check_m7(ds, roles, modules)
 res$findings <- dedupe_finding_ids(res$findings)

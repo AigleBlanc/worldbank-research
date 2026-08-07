@@ -1,5 +1,5 @@
 # Write hfc/structure.html — product tree map for user review before Continue.
-# `cfg`: the loaded config.json (see scripts/lib/sync_folder.R) — its four
+# `cfg`: the loaded config.json (see scripts/lib/sync_fpaths.R) — its four
 # configured directories are shown directly, since they're no longer siblings
 # under one project_root.
 
@@ -95,12 +95,11 @@ write_product_structure_html <- function(cfg, open = FALSE) {
                 <li class="dir"><span class="name">config/</span>
                   <ul>
                     <li>modules.yaml · role_map.yaml</li>
-                    <li>config.json · module_cards.txt</li>
+                    <li>config.json</li>
                   </ul>
                 </li>
                 <li class="dir"><span class="name">instruments/</span><span class="meta">optional form copy</span></li>
-                <li class="dir"><span class="name">registry/</span><span class="meta">findings.csv</span></li>
-                <li class="dir"><span class="name">outputs/</span><span class="meta">report.html</span></li>
+                <li class="dir"><span class="name">outputs/</span><span class="meta">report.html · issues.csv</span></li>
                 <li class="dir"><span class="name">code/</span><span class="meta">main.R</span>
                   <ul>
                     <li class="dir"><span class="name">checks/</span><span class="meta">M1–M13 (runnable) + custom (e.g. example_check.R)</span></li>

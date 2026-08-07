@@ -1,7 +1,7 @@
 # Check templates (M1–M13)
 #
 # Authority for the underlying logic: ../../scripts/lib/run_checks.R's
-# check_mN() functions (+ media.R for M12, geo_timezone.R for M5's timezone
+# check_mN() functions (+ media.R for M11, geo_timezone.R for M5's timezone
 # resolution) — each template here is a thin, real, runnable wrapper around
 # the same shared function the build itself calls, not a separate copy of
 # the logic.

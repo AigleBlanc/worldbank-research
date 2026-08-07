@@ -43,7 +43,7 @@ if (!dir.exists(skill)) {
   stop("Expected skill at: ", skill)
 }
 
-source(file.path(skill, "scripts", "lib", "sync_folder.R"))
+source(file.path(skill, "scripts", "lib", "sync_fpaths.R"))
 cfg <- load_fieldloop_config(skill)
 if (!isTRUE(cfg$found)) {
   stop("skills/hfc-fieldloop/config.json is not fully configured. Reason: ", cfg$reason %||% "unknown")
@@ -51,7 +51,7 @@ if (!isTRUE(cfg$found)) {
 
 # ---------------------------------------------------------------------------
 # Pipeline A — Setup build (after confirming modules in chat)
-# Writes hfc/code/checks/, hfc/registry/findings.csv, issue_tracking.xlsx
+# Writes hfc/code/checks/, hfc/outputs/issues.csv, issue_tracking.xlsx
 # (OneDrive), hfc/outputs/report.html.
 # ---------------------------------------------------------------------------
 # Rscript file.path(skill, "scripts", "run_setup_build.R") --open
@@ -63,7 +63,7 @@ if (!isTRUE(cfg$found)) {
 # Rscript file.path(skill, "scripts", "commit_merged_issue_tracking.R") "merged_issue_tracking.xlsx"
 
 # ---------------------------------------------------------------------------
-# Pipeline B — Post-feedback: interpret Open+RIL-Comment rows, write fixes
+# Pipeline B — Post-feedback: interpret Open+Field-Team-Comment rows, write fixes
 # ---------------------------------------------------------------------------
 # Rscript file.path(skill, "scripts", "apply_feedback.R") "clone"
 # Rscript file.path(skill, "scripts", "apply_feedback.R") "list-open"

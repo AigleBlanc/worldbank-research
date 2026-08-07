@@ -1,19 +1,14 @@
-# Build + open hfc/check_modules.html — a tree preview of every M1-M13
-# module's proposed default (on/off, rationale, thresholds/variables), shown
-# to the user BEFORE the accept-all/review pace question (SKILL.md A2.3).
-# Read-only against hfc/config/: reflects modules.yaml/role_map.yaml if they
-# already exist (a rebuild-preview), else fresh profiler defaults — never
-# writes either file itself, that only happens once the user actually
-# confirms in chat.
+# Writes hfc/config/modules.yaml — a commented, human-readable draft of
+# every M1-M13 module's proposed default (on/off, description, thresholds/
+# variables) — shown to the user BEFORE the accept-all/review confirmation
+# (SKILL.md A2), so the agent can give them a real, already-existing path to
+# open and review/edit directly, in addition to the chat tabs. Reflects
+# modules.yaml/role_map.yaml if they already exist (a rebuild-preview,
+# re-serialized with fresh comments but the same values), else fresh
+# profiler defaults. role_map.yaml itself is read-only here, never written.
 #
-# Usage: Rscript preview_modules.R [--open]
+# Usage: Rscript preview_modules.R
 # Reads skills/hfc-fieldloop/config.json for input_data_dir/media_dir/code_output_dir.
-
-`%||%` <- function(a, b) {
-    if (is.null(a) || length(a) == 0) return(b)
-    if (length(a) == 1 && (is.na(a) || (is.character(a) && !nzchar(as.character(a))))) return(b)
-    a
-}
 
 .resolve_skill <- function() {
     sp <- {
@@ -43,11 +38,8 @@ source(file.path(lib, "profile_roles.R"))
 source(file.path(lib, "build_outputs.R"))
 source(file.path(lib, "module_desc.R"))
 source(file.path(lib, "check_modules_preview.R"))
-source(file.path(lib, "sync_folder.R"))
+source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
-
-args <- commandArgs(trailingOnly = TRUE)
-do_open <- "--open" %in% args
 
 suppressPackageStartupMessages({
     library(haven); library(dplyr); library(readr); library(openxlsx)
@@ -82,8 +74,14 @@ if (file.exists(role_map_path)) {
     if (!is.null(saved$entity_label) && nzchar(as.character(saved$entity_label))) {
         roles$entity_label <- as.character(saved$entity_label)
     }
+    if (!is.null(saved$group_label) && nzchar(as.character(saved$group_label))) {
+        roles$group_label <- as.character(saved$group_label)
+    }
     if (!is.null(saved$important_vars) && length(saved$important_vars)) {
         roles$important_vars <- unlist(saved$important_vars)
+    }
+    if (!is.null(saved$missingness_extra_vars) && length(saved$missingness_extra_vars)) {
+        roles$missingness_extra_vars <- unlist(saved$missingness_extra_vars)
     }
     if (!is.null(saved$completion_primary_signal) && nzchar(as.character(saved$completion_primary_signal))) {
         roles$completion_primary_signal <- as.character(saved$completion_primary_signal)
@@ -96,5 +94,5 @@ if (file.exists(role_map_path)) {
     }
 }
 
-out <- write_check_modules_preview_html(cfg, roles, modules, open = do_open)
+out <- write_commented_modules_yaml(modules, modules_path)
 message("Wrote ", out)

@@ -14,7 +14,7 @@ Annotated example of the short Slack-register message the FieldLoop agent drafts
 
 > There are 2 duplicates for School ID 4 Gashanga - @fieldboss please address them - issue_tracking.xlsx (real path)
 
-[Why this works: names the real entity ("School ID 4 Gashanga," not "a school"), the real count (2), a real file path the reader can actually open, and an `@mention` placeholder aimed at whoever should act on it. This comes from M2's findings in `hfc/registry/findings.csv`, not a generic "some duplicates were found."]
+[Why this works: names the real entity ("School ID 4 Gashanga," not "a school"), the real count (2), a real file path the reader can actually open, and an `@mention` placeholder aimed at whoever should act on it. This comes from M2's findings in `hfc/outputs/issues.csv`, not a generic "some duplicates were found."]
 
 > Average survey duration is 106 mins (median is 104 mins).
 
@@ -22,7 +22,7 @@ Annotated example of the short Slack-register message the FieldLoop agent drafts
 
 > Attendance, baseline ledger, and/or test scores were not available in 4 schools - schools 141, 157, 176, and 192.
 
-[Why this works: this is the data/media-presence gap statement, at entity/group granularity — translated from M12's (now dataset-level) "this column is completely empty" finding and/or M7's missingness findings into a school-by-school list a field team can actually act on. Never just restates M12's raw one-line finding ("column X is empty") verbatim — that tells nobody which schools to follow up with.]
+[Why this works: this is the data/media-presence gap statement, at entity/group granularity — translated from M11's (now dataset-level) "this column is completely empty" finding and/or M7's missingness findings into a school-by-school list a field team can actually act on. Never just restates M11's raw one-line finding ("column X is empty") verbatim — that tells nobody which schools to follow up with.]
 
 ---
 

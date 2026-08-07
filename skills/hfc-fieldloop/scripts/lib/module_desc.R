@@ -17,6 +17,16 @@ fmt_var_list <- function(vars, n = 4) {
     paste0(paste(utils::head(vars, n), collapse = ", "), ", and ", length(vars) - n, " more")
 }
 
+m2_desc <- function(modules) {
+    key_cols <- c(modules$M2$id, modules$M2$extra_keys %||% character())
+    key <- fmt_var_list(key_cols, n = 6)
+    key_clause <- if (nzchar(key)) sprintf("the same %s", key) else "the same unique ID or survey key"
+    sprintf(
+        "Flags submissions that share %s, which usually means the same interview was uploaded or entered more than once.",
+        key_clause
+    )
+}
+
 m4_desc <- function(modules) {
     sd_rule <- modules$M4$sd_rule %||% 3
     sprintf(
@@ -49,12 +59,14 @@ m6_desc <- function(modules) {
 }
 
 m7_desc <- function(modules) {
-    sd_multiplier <- modules$M7$sd_multiplier %||% 2
+    var_issue <- round(100 * (modules$M7$var_issue_threshold %||% 0.5))
+    pool <- round(100 * (modules$M7$enum_pool_threshold %||% 0.9))
+    enum_pct <- round(100 * (modules$M7$enum_pct_threshold %||% 0.5))
     vars <- fmt_var_list(modules$M7$vars %||% character())
     var_clause <- if (nzchar(vars)) sprintf(" on: %s", vars) else ""
     sprintf(
-        "Flags enumerators whose missingness rate is more than %sx the between-enumerator SD above the survey average%s.",
-        sd_multiplier, var_clause
+        "Reports missingness on key survey questions%s, flagging any variable more than %s%% missing overall. For the worst variables (%s%%+ missing overall), also flags any enumerator whose own missingness on that variable is %s%%+.",
+        var_clause, var_issue, pool, enum_pct
     )
 }
 
@@ -75,11 +87,11 @@ m9_desc <- function(modules) {
     )
 }
 
-m12_desc <- function(modules) {
+m11_desc <- function(modules) {
     "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row — usually a form/coding problem (the field isn't showing up in the enumerator's app, or the question is misconfigured), not a per-row file-hygiene issue."
 }
 
 DYNAMIC_MODULE_DESC <- list(
-    M4 = m4_desc, M5 = m5_desc, M6 = m6_desc, M7 = m7_desc,
-    M8 = m8_desc, M9 = m9_desc, M12 = m12_desc
+    M2 = m2_desc, M4 = m4_desc, M5 = m5_desc, M6 = m6_desc, M7 = m7_desc,
+    M8 = m8_desc, M9 = m9_desc, M11 = m11_desc
 )

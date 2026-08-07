@@ -54,7 +54,7 @@ Rscript .claude/skills/hfc-fieldloop/scripts/run_setup_build.R --open
 
 ### After field feedback
 
-1. Say **Process HFC feedback**. There's no built-in fix engine — the agent reads each Open row with a RIL Comment and writes the fix itself, against a working clone (not the live file directly).
+1. Say **Process HFC feedback**. There's no built-in fix engine — the agent reads each Open row with a Field Team Comment and writes the fix itself, against a working clone (not the live file directly).
 2. Review proposed fixes; confirm per row, then confirm the merged file before it's committed back to the live `issue_tracking.xlsx`.
 3. Expect `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` updated (raw file unchanged); `Status` set to `Resolved`/`Needs Review` in the live file only after that final confirm.
 
@@ -73,12 +73,12 @@ Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merg
 | Product map | `hfc/structure.html` | Review tree in browser before Continue |
 | HTML report | `hfc/outputs/report.html` | Navigable findings (searchable tables, GPS map) |
 | Issue tracking | OneDrive-synced `issue_tracking.xlsx` (required, no local copy) | The one shared file — agent, RA, and field team all edit it |
-| Findings | `hfc/registry/findings.csv` | Machine-readable findings |
+| Findings | `hfc/outputs/issues.csv` | Machine-readable findings |
 | Fixed data | `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` | After Pipeline B; raw unchanged |
 
 ## Folder structure
 
-List the configured directories (Input Data Directory, Media Folder Directory, OneDrive Folder Directory, Code Output Directory) plus the `<Code Output Directory>/hfc/` tree after setup (`config/`, `instruments/`, `registry/`, `outputs/`, `code/` — `code/checks/`, `code/resolutions/`).
+List the configured directories (Input Data Directory, Media Folder Directory, OneDrive Folder Directory, Code Output Directory) plus the `<Code Output Directory>/hfc/` tree after setup (`config/`, `instruments/`, `outputs/`, `code/` — `code/checks/`, `code/resolutions/`).
 
 ## AI / confidentiality
 

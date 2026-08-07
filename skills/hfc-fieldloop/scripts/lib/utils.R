@@ -118,6 +118,26 @@ empty_findings <- function() {
     )
 }
 
+#' Resolve a display vector for an ID+optional-name pair, honoring a
+#' "name"|"id" display mode (roles$entity_display/enumerator_display/
+#' group_display — see profile_roles.R). "id" (or no name vector available)
+#' returns the raw ID; "name" coalesces to the name wherever it's non-blank,
+#' else falls back to the ID. This is the one place the
+#' de-identification-by-default policy is enforced: entity defaults to "id"
+#' (we never have the surveyed individual's real name), enumerator/group
+#' default to "name" (we do have those) — a project can flip either via a
+#' silent role_map.yaml override, never guessed, only set on explicit
+#' request. Two use shapes: pre-aggregation (run_checks.R, working directly
+#' off `ds[[roles$enum]]`/`ds[[roles$enum_name]]`) and post-hoc
+#' (build_outputs.R, working off findings' already-extracted id/name
+#' columns) — both are just two parallel character vectors once extracted.
+resolve_display_vec <- function(id_vals, name_vals, mode = "name") {
+    id_vals <- as.character(id_vals)
+    if (identical(mode, "id") || is.null(name_vals)) return(id_vals)
+    name_vals <- as.character(name_vals)
+    ifelse(!is.na(name_vals) & nzchar(name_vals), name_vals, id_vals)
+}
+
 #' Paste one or more ID columns into a single display/sort string.
 #' `id_cols` is usually a single column name, but may be a character vector
 #' when the survey's unique key is composite (e.g. household_id + member_id).
@@ -166,6 +186,47 @@ mk_findings <- function(df, check_id, module, category, issue_chr, roles, value_
         group_name = if (!is.null(roles$group_name) && roles$group_name %in% names(df)) as.character(df[[roles$group_name]]) else "",
         enumerator_name = if (!is.null(roles$enum_name) && roles$enum_name %in% names(df)) as.character(df[[roles$enum_name]]) else "",
         sort_value = if (!is.null(sort_value_col) && sort_value_col %in% names(df)) suppressWarnings(as.numeric(df[[sort_value_col]])) else NA_real_
+    )
+}
+
+#' One finding per AGGREGATE UNIT (an enumerator or a group/site), never one
+#' per underlying submission row. Deliberately leaves submission_id/
+#' entity_name/key blank — an aggregate finding was never established at the
+#' entity level, so nothing entity-shaped should appear downstream (HTML
+#' table, xlsx/csv Entity ID column) for it.
+#' `unit_df`: one row per flagged unit, already aggregated by the caller
+#' (e.g. check_m7()'s `by_e` table filtered to the flagged enumerators) — NOT
+#' the raw microdata. Must have a `unit_id` column (the raw enumerator/group
+#' ID); an optional `unit_name` column (display name, NA/blank if
+#' unavailable) is used for `enumerator_name`/`group_name`.
+mk_aggregate_finding <- function(unit_df, check_id, module, category, issue_chr, roles,
+                                  unit_type = c("enumerator", "group"),
+                                  value_col = NULL, variable_name = NULL, sort_value_col = NULL) {
+    unit_type <- match.arg(unit_type)
+    if (is.null(unit_df) || nrow(unit_df) == 0) return(empty_findings())
+    n <- nrow(unit_df)
+    unit_id <- as.character(unit_df$unit_id)
+    unit_name <- if ("unit_name" %in% names(unit_df)) as.character(unit_df$unit_name) else rep(NA_character_, n)
+    unit_name <- ifelse(is.na(unit_name), "", unit_name)
+    var_suffix <- if (!is.null(variable_name) && nzchar(variable_name)) paste0(":", variable_name) else ""
+    tibble::tibble(
+        finding_id = paste0(tolower(module), ":", unit_type, ":", unit_id, var_suffix),
+        check_id = check_id,
+        check_module = module,
+        category = category,
+        issue = if (length(issue_chr) == n) issue_chr else rep(issue_chr, n),
+        submission_id = "",
+        group_id = if (unit_type == "group") unit_id else "",
+        enumerator = if (unit_type == "enumerator") unit_id else "",
+        start_date = "",
+        end_date = "",
+        key = "",
+        value = if (!is.null(value_col) && value_col %in% names(unit_df)) as.character(unit_df[[value_col]]) else "",
+        variable = variable_name %||% "",
+        entity_name = "",
+        group_name = if (unit_type == "group") unit_name else "",
+        enumerator_name = if (unit_type == "enumerator") unit_name else "",
+        sort_value = if (!is.null(sort_value_col) && sort_value_col %in% names(unit_df)) suppressWarnings(as.numeric(unit_df[[sort_value_col]])) else NA_real_
     )
 }
 

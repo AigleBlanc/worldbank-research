@@ -255,7 +255,7 @@ detect_completion_signal <- function(ds, roster_candidate = NULL) {
 #' columns' sample values, plus a GPS bounding box if x/y columns exist.
 #' Does NOT resolve a country itself: country inference from place names or
 #' a GPS bounding box is agent judgment (documented in SKILL.md), the same
-#' treatment as M11 custom-check authorship and redundant-variable
+#' treatment as M10 custom-check authorship and redundant-variable
 #' de-duplication — a regex/lookup table can't reliably map "Bujumbura" or
 #' "Gashanga" to a country the way a general-knowledge reader can.
 GEOGRAPHY_SIGNAL_NAME_PATTERN <- "district|region|province|county|village|ward|site_name|school_name|community|admin[1-4]"
@@ -324,6 +324,28 @@ guess_sentinel_codes <- function(ds, vars) {
 #' the DEFAULT grouping. Requires BOTH a name-pattern hit AND a plausible
 #' value shape (2-3 distinct values that look like Treatment/Control/T/C/1/0)
 #' together, so an unrelated 0/1 flag that merely shares a name fragment
+#' Guess a human-readable label for what roles$group actually represents
+#' (e.g. "school_id" -> "School", "village" -> "Village") — used as the
+#' report/issue-tracking column header in place of the generic "Group ID".
+#' Confirmable/correctable like roles$entity_label (see SKILL.md's later
+#' module-config window, not the required Setup gate); NA when nothing
+#' matches, in which case callers fall back to the generic "Group".
+derive_group_label <- function(group_col_name) {
+    if (is.null(group_col_name) || length(group_col_name) == 0 || is.na(group_col_name) || !nzchar(group_col_name)) {
+        return(NA_character_)
+    }
+    gc <- tolower(group_col_name)
+    label_patterns <- c(
+        "school" = "School", "village" = "Village", "facility" = "Facility",
+        "cluster" = "Cluster", "ea_id|^ea$" = "Enumeration Area", "site" = "Site",
+        "community" = "Community", "ward" = "Ward", "district" = "District"
+    )
+    for (pat in names(label_patterns)) {
+        if (grepl(pat, gc)) return(unname(label_patterns[[pat]]))
+    }
+    NA_character_
+}
+
 #' (e.g. a "group" column that's actually a household roster grouping) isn't
 #' mistaken for a study arm.
 TREAT_NAME_PATTERN <- "treat|^arm$|condition|^tx$|^grp$|assignment"
@@ -531,6 +553,25 @@ profile_roles <- function(ds, media_folder = NA_character_, roster_candidate = N
     # Treatment/Control over geography (see default_modules() below).
     roles$group_var_candidates <- roles$treatment_control_candidates %||% roles$geo_group_candidates
 
+    # A guessed display label for roles$group (e.g. "School", "Village") —
+    # confirmed later, not part of the required Setup gate; see
+    # derive_group_label(). NA until confirmed/guessed successfully, in
+    # which case report/issue-tracking headers fall back to "Group".
+    roles$group_label <- derive_group_label(roles$group)
+
+    # De-identification-by-default policy: HFC data never has the surveyed
+    # individual's real name, but usually does have enumerator names — so
+    # Entity defaults to ID-only and Enumerator/Group default to
+    # name-if-available. Not guessed/detected — fixed defaults, silently
+    # overridable per project (the agent edits these directly in
+    # role_map.yaml only when a user explicitly asks for the opposite, e.g.
+    # non-anonymized data or a preference for raw enumerator IDs — never a
+    # guessed value, never a new setup question). See resolve_display_vec()
+    # in utils.R for where these are actually applied.
+    roles$entity_display <- "id"
+    roles$enumerator_display <- "name"
+    roles$group_display <- "name"
+
     # Completion signal (status column / roster-file / primary-secondary
     # column) — see SKILL.md A1's required-gate window Tab 2.
     completion_signal <- detect_completion_signal(ds, roster_candidate = roster_candidate)
@@ -651,8 +692,8 @@ default_modules <- function(roles) {
     audio_cols <- utils::head(audio_cols, 5)
     image_cols <- utils::head(image_cols, 5)
 
-    # Unified "important variables" shortlist (SKILL.md A2.10) drives M6/M9/M10
-    # instead of each module picking its own independent pool. M6/M10 use it
+    # Unified "important variables" shortlist (SKILL.md A2.10) drives M6/M9/M13
+    # instead of each module picking its own independent pool. M6/M13 use it
     # directly (any variable type is fine there); M9 straightlining still
     # needs ordinal-shaped columns specifically, so it intersects the
     # confirmed list with the auto-detected ordinal pool — falling back to
@@ -660,11 +701,22 @@ default_modules <- function(roles) {
     # variable-selection choice never silently disables the whole module.
     important_vars <- roles$important_vars %||% character()
     m6_vars <- if (length(important_vars)) important_vars else (roles$numeric_shortlist %||% character())
-    m10_vars <- if (length(important_vars)) important_vars else (roles$sumstats_var_candidates %||% character())
+    m13_vars <- if (length(important_vars)) important_vars else (roles$sumstats_var_candidates %||% character())
     m9_ordinal <- if (length(important_vars)) {
         intersect(important_vars, roles$ordinal_vars %||% character())
     } else character()
     if (!length(m9_ordinal)) m9_ordinal <- roles$ordinal_vars %||% character()
+
+    # M7 Missingness gets the unified shortlist PLUS up to ~20 more
+    # variables (any type, not just numeric) the agent separately judges
+    # important for missingness reporting specifically — live judgment
+    # during setup, no AskUserQuestion confirmation, written directly to
+    # role_map.yaml's missingness_extra_vars (see SKILL.md A2 step 4).
+    # Falls back to the old auto-derived candidate pool only when neither
+    # has been confirmed yet (e.g. the very first draft modules.yaml,
+    # before that step has run).
+    m7_vars <- unique(c(important_vars, roles$missingness_extra_vars %||% character()))
+    if (!length(m7_vars)) m7_vars <- roles$missingness_var_candidates %||% character()
 
     # M1's completion-by-group breakdown defaults to Treatment/Control;
     # geography is only added when there's no Treatment/Control column at
@@ -714,10 +766,12 @@ default_modules <- function(roles) {
         M6 = list(on = TRUE, vars = utils::head(m6_vars, 10), sd_rule = 3),
         M7 = list(
         on = TRUE,
-        vars = roles$missingness_var_candidates %||% character(),
+        vars = m7_vars,
         sentinel_codes = character(),
         by_enum = TRUE,
-        sd_multiplier = 2
+        var_issue_threshold = 0.5,
+        enum_pool_threshold = 0.9,
+        enum_pct_threshold = 0.5
         ),
         M8 = list(on = isTRUE(roles$has_gps), x = roles$x, y = roles$y, threshold_m = 300),
         M9 = list(
@@ -726,100 +780,20 @@ default_modules <- function(roles) {
         enum_threshold_pct = 0.9,
         survey_threshold_pct = 0.9
         ),
-        M10 = list(on = TRUE, vars = utils::head(m10_vars, 10), by_enum = TRUE, max_n = 10L),
-        M11 = list(on = FALSE, enabled = character(), custom = character()),
-        M12 = list(
+        M10 = list(on = FALSE, enabled = character(), custom = character()),
+        M11 = list(
         on = isTRUE(roles$has_media),
         audio_cols = audio_cols,
         image_cols = image_cols,
         other_cols = roles$qualitative_text_cols %||% character()
         ),
-        M13 = list(
+        M12 = list(
         on = isTRUE(roles$has_consentish),
         assent = roles$assent,
         consent = roles$consent,
         audio = roles$audio_flag
-        )
+        ),
+        M13 = list(on = TRUE, vars = utils::head(m13_vars, 10), by_enum = TRUE, max_n = 10L)
     )
 }
 
-format_module_cards <- function(roles) {
-    opt_letters <- function(opts) {
-        if (!length(opts) || all(is.na(opts))) return("(none found)")
-        paste(sprintf("%s%s %s", LETTERS[seq_along(opts)],
-                    ifelse(seq_along(opts) == 1, "*", ""), opts), collapse = "  ")
-    }
-    m11_line <- "M11 Survey-specific [none*]  (fully custom — describe any survey-specific checks you want in the Additional checks step)"
-
-    audio_f <- roles$audio_file_cols %||% character()
-    image_f <- roles$image_file_cols %||% character()
-    m12_line <- if (isTRUE(roles$has_media)) {
-        sprintf(
-        "M12 Media files [Y*]  audio: %s  images: %s  (flags a column only if it's completely empty across every surveyed row)",
-        opt_letters(utils::head(audio_f, 5)),
-        opt_letters(utils::head(image_f, 5))
-        )
-    } else {
-        "M12 Media files [skip*]  (no audio/image filename columns detected)"
-    }
-
-    id_lines <- if (length(roles$entity_id_rationale)) {
-        paste0("Entity ID shortlist: ", paste(roles$entity_id_rationale, collapse = " | "))
-    } else {
-        sprintf("Entity ID shortlist: %s", opt_letters(roles$entity_id_options))
-    }
-    composite_lines <- if (length(roles$composite_entity_id_rationale)) {
-        paste0("Composite Entity ID candidates: ", paste(roles$composite_entity_id_rationale, collapse = " | "))
-    } else {
-        "Composite Entity ID candidates: (none found)"
-    }
-    dup_key_line <- if (length(roles$dup_key_extra)) {
-        sprintf("Duplicate-check key: entity_id + %s", paste(roles$dup_key_extra, collapse = ", "))
-    } else {
-        "Duplicate-check key: Entity ID alone"
-    }
-    country_lines <- if (length(roles$country_col_rationale)) {
-        paste0("Country column candidates: ", paste(roles$country_col_rationale, collapse = " | "))
-    } else {
-        sprintf("Country: no column detected%s",
-                if (!is.na(roles$country_value_candidate)) sprintf(" (single value seen: %s)", roles$country_value_candidate) else "")
-    }
-
-    c(
-        id_lines,
-        composite_lines,
-        dup_key_line,
-        country_lines,
-        sprintf("Last date of data collection (detected): %s", roles$last_date_candidate %||% "?"),
-        sprintf("M1 Completion [Y*]  completion_var=%s  groups=%s  by_enum=Y*  by_date=Y*  low_completion=%s* of median",
-                if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else "(derive)",
-                if (length(roles$group_var_candidates)) paste(roles$group_var_candidates, collapse = ",") else "none",
-                "50%"),
-        sprintf("M2 Duplicates [Y*/N]  Entity ID: %s  extra_keys=%s",
-                opt_letters(roles$entity_id_options),
-                if (length(roles$dup_key_extra)) paste(roles$dup_key_extra, collapse = ",") else "none*"),
-        sprintf("M3 Form Version [%s]  version_col=%s",
-                if (!is.na(roles$form_version_col)) "Y*" else "best-guess*",
-                roles$form_version_col %||% "(none - will infer)"),
-        sprintf("M4 Survey Duration [Y*]  duration=%s  rule=3SD* both sides  by_enum=Y*",
-                roles$duration %||% "?"),
-        "M5 Irregular Timing [Y*]  weekends*  7pm-7am*",
-        sprintf("M6 Numeric Outliers [Y*]  pick (up to 10): %s  rule=3SD*",
-                paste(sprintf("%s* %s", LETTERS[seq_along(utils::head(roles$numeric_shortlist, 10))],
-                            utils::head(roles$numeric_shortlist, 10)), collapse = "  ")),
-        sprintf("M7 Missingness [Y*]  pick (up to 10): %s  by_enum=Y*  sentinel codes: (guessed alongside the variable list — see guess_sentinel_codes())",
-                paste(utils::head(roles$missingness_var_candidates %||% character(), 10), collapse = ", ")),
-        sprintf("M8 GPS [%s]  pair=%s/%s  threshold=300*",
-                if (roles$has_gps) "Y*" else "N*", roles$x %||% "?", roles$y %||% "?"),
-        sprintf("M9 Straightlining [%s]  ordinal vars: %s  enum_threshold=90%%*  survey_threshold=90%%*",
-                if (length(roles$ordinal_vars %||% character())) "Y*" else "skip*",
-                paste(utils::head(roles$ordinal_vars %||% character(), 10), collapse = ", ")),
-        sprintf("M10 Summary Stats [Y*]  pick (up to 10, expandable): %s",
-                paste(utils::head(roles$sumstats_var_candidates %||% character(), 10), collapse = ", ")),
-        m11_line,
-        m12_line,
-        sprintf("M13 Consent/assent/audio flags [%s]  assent=%s consent=%s audio_flag=%s",
-                if (roles$has_consentish) "Y*" else "skip*",
-                roles$assent %||% "none", roles$consent %||% "none", roles$audio_flag %||% "none")
-    )
-}

@@ -3,7 +3,7 @@
 #    or: Rscript "${THIS_CLAUDE_SKILL_DIR}/install.R"
 
 core <- c(
-    "haven", "readr", "readxl", "dplyr", "tidyr", "tibble", "stringr",
+    "haven", "readr", "readxl", "dplyr", "tibble",
     "lubridate", "openxlsx", "yaml", "jsonlite"
 )
 recommended <- c("geosphere")
@@ -35,5 +35,5 @@ if (length(opt_need)) {
     message("Optional media: install with install.packages(\"", opt_need[[1]],
             "\") or use ffprobe — not required for install success.")
 } else {
-    message("Optional media (M12 duration): av available.")
+    message("Optional media (M11 duration): av available.")
 }

@@ -1,13 +1,13 @@
-# M11 — Survey-specific: fully custom, authored per project (default none).
-# There are no built-in M11 checks — every M11 finding comes from a custom
+# M10 — Survey-specific: fully custom, authored per project (default none).
+# There are no built-in M10 checks — every M10 finding comes from a custom
 # check the AI writes for this survey's specific content.
 # Custom checks (from the Additional-checks gate) register here as
 # hfc/code/checks/<name>.R with an exported run_<name>(ds, roles) — see
 # custom_check_example.R and references/check_modules.md.
 
-check_m11_survey_specific <- function(ds, roles, custom = character()) {
+check_m10_survey_specific <- function(ds, roles, custom = character()) {
   if (!length(custom)) return(empty_findings())
-  # See scripts/lib/run_checks.R M11 for full implementation
+  # See scripts/lib/run_checks.R M10 for full implementation
   empty_findings()
 }
 
@@ -15,7 +15,7 @@ check_m11_survey_specific <- function(ds, roles, custom = character()) {
 # old M5, before the redesign folded default enumerator reporting into M1
 # Completion's "completion by enumerator" table). Not enabled by default —
 # copy/adapt into a real hfc/code/checks/<name>.R and register under
-# modules.yaml's M11.custom if a survey specifically wants SD-based
+# modules.yaml's M10.custom if a survey specifically wants SD-based
 # submission-count anomaly detection in addition to M1's descriptive table.
 #
 # run_enumerator_volume <- function(ds, roles, sd_rule = 2) {
@@ -31,7 +31,7 @@ check_m11_survey_specific <- function(ds, roles, custom = character()) {
 #   if (!nrow(hot)) return(empty_findings())
 #   tibble::tibble(
 #     finding_id = sprintf("enumerator_volume-%06d", seq_len(nrow(hot))),
-#     check_id = "enumerator_volume", check_module = "M11", category = "enumerator_volume",
+#     check_id = "enumerator_volume", check_module = "M10", category = "enumerator_volume",
 #     issue = sprintf("Enumerator daily volume outlier (n=%s)", hot$n),
 #     submission_id = "", group_id = "", enumerator = as.character(hot$.enum),
 #     start_date = as.character(hot$.day), end_date = "", key = "",

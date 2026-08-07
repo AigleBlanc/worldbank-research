@@ -12,7 +12,7 @@ skill <- "your/path/to/hfc-fieldloop/"
 code_output_dir <- "your/path/to/hfc/output/"
 
 lib <- file.path(skill, "scripts", "lib")
-for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R", "sync_folder.R")) {
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R", "sync_fpaths.R")) {
   source(file.path(lib, f))
 }
 suppressPackageStartupMessages({ library(dplyr); library(yaml) })

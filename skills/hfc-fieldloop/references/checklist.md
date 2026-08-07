@@ -7,7 +7,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | Item | Required |
 |---|---|
 | Microdata in the configured Input Data Directory (immutable) | yes |
-| Instrument / form (also in the Input Data Directory) | optional (preferred for M11 / M3 / nested skip-logic) |
+| Instrument / form (also in the Input Data Directory) | optional (preferred for M10 / M3 / nested skip-logic) |
 | `hfc/structure.html` reviewed + Continue confirmed | yes |
 | Setup window (A1): data/media files, Entity Label, country/timezone confirmed (+ completion signal, if detected) | yes |
 | Module-config windows (A2): Dupes+Version, Timing (incl. last date), Variables, GPS+Media, Consent, Extra checks all confirmed | yes |
@@ -15,7 +15,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` | yes (agent writes from confirmed options before build) |
 | `hfc/code/main.R` (one path global) | yes |
 | `hfc/code/checks/` modules (real, runnable per-module scripts + custom) | yes |
-| `hfc/registry/findings.csv` with stable, content-derived `finding_id` (Issue ID) | yes |
+| `hfc/outputs/issues.csv` with stable, content-derived `finding_id` (Issue ID) | yes |
 | Live `issue_tracking.xlsx` in OneDrive, with `Status` | yes (defaults Open; the one shared file — agent, RA, and field team all edit it; no local copy) |
 | `hfc/outputs/report.html` | yes (navigable; searchable tables) |
 | Project `README.md` drafted from `assets/README_template.md` | yes (confirm once with user) |
@@ -41,12 +41,12 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 - [ ] Open `hfc/structure.html` then `hfc/outputs/report.html` in a browser
 - [ ] Report tables searchable; GPS map present when M8 on; flagged points render in a distinct color from non-flagged points
-- [ ] Last Day tab present and populated when a last date was confirmed; matching findings bolded in their own module tables
+- [ ] Last Day tab present and populated when a last date was confirmed
 - [ ] Every table sorted by enumerator, then unique ID, then date (most recent first)
 - [ ] `issue_tracking.xlsx`, plus a copy of the report, present in the shared OneDrive-synced folder
 - [ ] Grep: no hardcoded user home paths outside `hfc/code/main.R`
-- [ ] If survey has pictures/audio: M12 on; filename cols not mis-filed under M13; M12 findings are dataset-level (one per fully-empty column), never per-row file-hygiene findings
+- [ ] If survey has pictures/audio: M11 on; filename cols not mis-filed under M12; M11 findings are dataset-level (one per fully-empty column), never per-row file-hygiene findings
 - [ ] Nested skip-logic blanks not flagged as missing when form available
-- [ ] If a completion signal was confirmed: M1 reports target-vs-actual (or primary/secondary composition) by group (Treatment/Control by default) and by enumerator; a "status" signal's Incomplete/Refused rows do not appear in any M2-M13/M10 finding
+- [ ] If a completion signal was confirmed: M1 reports target-vs-actual (or primary/secondary composition) by group (Treatment/Control by default) and by enumerator; a "status" signal's Incomplete/Refused rows do not appear in any M2-M13 finding
 - [ ] M9 straightlining fires at the 90% default unless explicitly overridden
 - [ ] Country was inferred from data content (or an explicit column), not the input folder's name

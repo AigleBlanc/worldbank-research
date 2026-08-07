@@ -1,18 +1,18 @@
-# HFC FieldLoop generated check: M10
-# Standalone, runnable script: reproduces this project's M10 (Summary Statistics)
+# HFC FieldLoop generated check: M12
+# Standalone, runnable script: reproduces this project's M12 (Consent & Assent)
 # findings using the same shared logic the build itself calls. Copied into
-# hfc/code/checks/M10_sumstats.R at build time with the skill/code_output_dir lines below
+# hfc/code/checks/M12_consent.R at build time with the skill/code_output_dir lines below
 # substituted for this machine's real paths — this file, as shipped in the
 # skill's assets/check_templates/, is the copy-source template.
 #
-# Usage: Rscript hfc/code/checks/M10_sumstats.R
+# Usage: Rscript hfc/code/checks/M12_consent.R
 
 # Set skill + code output paths (substituted automatically on setup build) ----
 skill <- "your/path/to/hfc-fieldloop/"
 code_output_dir <- "your/path/to/hfc/output/"
 
 lib <- file.path(skill, "scripts", "lib")
-for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R", "sync_folder.R")) {
+for (f in c("utils.R", "geo_timezone.R", "media.R", "form_logic.R", "profile_roles.R", "run_checks.R", "sync_fpaths.R")) {
   source(file.path(lib, f))
 }
 suppressPackageStartupMessages({ library(dplyr); library(yaml) })
@@ -25,8 +25,13 @@ modules <- yaml::read_yaml(hfc_path(code_output_dir, "config", "modules.yaml"))
 proj_yaml <- yaml::read_yaml(hfc_path(code_output_dir, "project.yaml"))
 ds <- load_latest_dataset(cfg$input_data_dir, proj_yaml$data_file)
 ds <- prepare_ds_for_checks(ds, roles, code_output_dir)
-if (any(!ds$.hfc_completed)) ds <- ds[ds$.hfc_completed, , drop = FALSE]
+if (any(!ds$.hfc_completed)) {
+  form_map <- attr(ds, "hfc_form_map")
+  ds <- ds[ds$.hfc_completed, , drop = FALSE]
+  attr(ds, "hfc_form_map") <- form_map
+}
 
-res <- check_m10(ds, roles, modules)
-message("M10 (Summary Statistics) — descriptive only, never produces findings rows:")
-print(res$stats)
+res <- check_m12(ds, roles, modules)
+res$findings <- dedupe_finding_ids(res$findings)
+message("M12 (Consent & Assent): ", nrow(res$findings), " findings")
+print(as.data.frame(res$findings))

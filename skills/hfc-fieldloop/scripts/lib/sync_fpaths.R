@@ -25,7 +25,7 @@
 skill_dir_guess <- function() {
     cands <- c(".claude/skills/hfc-fieldloop", "hfc-fieldloop", ".")
     for (c in cands) {
-        if (dir.exists(c) && file.exists(file.path(c, "scripts", "lib", "sync_folder.R"))) {
+        if (dir.exists(c) && file.exists(file.path(c, "scripts", "lib", "sync_fpaths.R"))) {
         return(normalizePath(c))
         }
     }

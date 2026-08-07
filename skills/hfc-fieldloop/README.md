@@ -14,13 +14,13 @@ Clone this skill anywhere as `.claude/skills/hfc-fieldloop/` — it doesn't need
 git clone https://github.com/AigleBlanc/worldbank-research.git .claude
 ```
 
-Open the folder containing `.claude/` in VS Code with Claude Code. The shipped `settings.json` auto-approves file reads/writes and `Rscript` calls so the agent doesn't interrupt you for routine steps; it still asks before any git/GitHub command that would commit, push, pull, or otherwise change the repo.
+Open the folder containing `.claude/` in VS Code with Claude Code. Turn on Claude Code's built-in **Auto** permission mode (`/permissions`, or the mode toggle) so the agent doesn't interrupt you for routine file reads/writes and `Rscript` calls — it's a setting you control yourself, not something this repo changes for you.
 
 ## 2. Two things YOU need to run yourself
 
-Everything else in this skill is run automatically by the AI agent when you talk to it — you never type an `Rscript` command by hand for normal use. Only these two setup steps are on you, and **both are required** — there's no working local-only mode, `issue_tracking.xlsx` lives in OneDrive:
+Everything else in this skill is run automatically by the AI agent when you talk to it — you never type an `Rscript` command by hand for normal use. Only these two setup steps are on you, and **both are required**. There's no working local-only mode `issue_tracking.xlsx` lives in OneDrive:
 
-**a) Install the R packages** (once, from a terminal):
+**a) Install the R packages** (once, from a terminal at the parent directory of .claude/):
 ```bash
 Rscript .claude/skills/hfc-fieldloop/install.R
 ```
@@ -37,7 +37,7 @@ Rscript .claude/skills/hfc-fieldloop/install.R
 - **Input Data Directory** — the folder containing your survey microdata export (never modified)
 - **Media Folder Directory** — optional; your SurveyCTO audio/photo attachments folder
 - **OneDrive Folder Directory** — a folder the OneDrive desktop app is syncing, for the shared `issue_tracking.xlsx` (make sure the OneDrive desktop app is installed and signed in on this machine first, and use the local folder it syncs to — there's no sign-in step in this skill itself, it just reads/writes that folder like any other local folder). Share that folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
-- **Code Output Directory** — a folder you manage yourself (ideally a git repo — this is where World Bank practice prefers versioned code/config output to live); the built `hfc/` report and checks land here. This skill only ever writes plain files there — it never runs git for you.
+- **Code Output Directory** — a folder you manage yourself (ideally a git repo, this is where World Bank practice prefers versioned code/config output to live); the built `hfc/` report and checks land here. This skill only ever writes plain files there; it never runs git for you.
 
 If `config.json` isn't fully configured yet, the agent will tell you and stop before doing any real work — do this first.
 
@@ -56,8 +56,8 @@ The agent will ask you questions along the way using clickable option cards (nev
 
 ## How "Run HFC FieldLoop" works
 
-1. The agent finds your data (and form, if you have one) and shows you its own best guess for a handful of things — what column identifies each person/household/unit, what to call it in the report, and the data-collection country — all in one screen. Type a correction if anything's wrong; otherwise just confirm it looks right.
-2. It proposes how it'll run each check (M1–M13: duplicates, outliers, GPS, timing, missing data, etc.) — again as its own best guess, grouped into a couple of screens, never a long list of options to choose from.
+1. The agent finds your data (and form, if you have one) and shows you its own best guess for a handful of things: what column identifies each respondent, what to call it in the report, and the data-collection country, all in one screen. Type a correction if anything's wrong; otherwise just confirm it looks right.
+2. It proposes how it'll run each check (M1–M13: duplicates, outliers, GPS, timing, missing data, etc.); again as its own best guess, grouped into a couple of screens, never a long list of options to choose from.
 3. It builds the report and opens `hfc/outputs/report.html` in your browser.
 4. It creates (or updates) `issue_tracking.xlsx` — one row per flagged issue.
 
@@ -65,7 +65,7 @@ If `issue_tracking.xlsx` already exists (a second run), the agent doesn't overwr
 
 ## How "Process HFC feedback" works
 
-The field team and RA write comments directly into `issue_tracking.xlsx` (RIL Comment column) on any row they want fixed. Once that's done:
+The field team and RA write comments directly into `issue_tracking.xlsx` (Field Team Comment column) on any row they want fixed. Once that's done:
 
 1. Say **"Process HFC feedback"**.
 2. The agent finds every row that's still `Open` and has a comment, and shows you the list.
@@ -98,4 +98,4 @@ You don't have to set `Accepted` before the agent will act — it picks up any `
 
 ## A note on privacy
 
-Don't paste household/respondent-level data into commercial AI chat tools. See [`references/ai_use.md`](references/ai_use.md) for details.
+Don't paste respondent-level data into commercial AI chat tools. See [`references/ai_use.md`](references/ai_use.md) for details.

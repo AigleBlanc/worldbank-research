@@ -7,12 +7,6 @@
 # All product artifacts land under <code_output_dir>/hfc/. Raw microdata is
 # read in place from input_data_dir and never copied anywhere.
 
-`%||%` <- function(a, b) {
-    if (is.null(a) || length(a) == 0) return(b)
-    if (length(a) == 1 && (is.na(a) || (is.character(a) && !nzchar(as.character(a))))) return(b)
-    a
-}
-
 # Step 1: find the skill's own root dir (so scripts/lib/*.R can be sourced
 # regardless of where/how this script was invoked from).
 .resolve_skill <- function() {
@@ -44,9 +38,10 @@ source(file.path(lib, "form_logic.R"))
 source(file.path(lib, "run_checks.R"))
 source(file.path(lib, "build_outputs.R"))
 source(file.path(lib, "module_desc.R"))
+source(file.path(lib, "check_modules_preview.R"))
 source(file.path(lib, "pipeline_core.R"))
 source(file.path(lib, "product_structure.R"))
-source(file.path(lib, "sync_folder.R"))
+source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
 
 # Step 2: parse CLI flags — no positional args anymore, everything comes from config.json.
@@ -102,13 +97,13 @@ if (!is.na(form_path) && file.exists(form_path)) {
 message("Loading: ", data_path)
 ds <- load_microdata(data_path, sample_n = sample_n)
 
-# Step 7: media folder for M12 on-disk audio/image checks — configured
+# Step 7: media folder for M11 on-disk audio/image checks — configured
 # directly via config.json's media_dir, optional.
 media_folder <- cfg$media_dir %||% NA_character_
 if (!is.na(media_folder) && nzchar(media_folder)) {
     message("Media folder: ", media_folder)
 } else {
-    message("Media folder: (not configured — M12 on-disk checks will be skipped if media cols exist)")
+    message("Media folder: (not configured — M11 on-disk checks will be skipped if media cols exist)")
 }
 
 # Step 8: heuristically detect column roles (id, group, gps, enum, …).
@@ -118,10 +113,11 @@ if (length(roles$entity_id_rationale)) {
 }
 
 # Step 9: reload previously confirmed roles (required-fields gate answers,
-# and the important-variables shortlist) from role_map.yaml, BEFORE modules
-# are loaded/defaulted next — default_modules() reads roles$important_vars,
-# so this must happen first or a true first-ever build (no modules.yaml yet)
-# would silently ignore an already-confirmed important-variables shortlist.
+# the important-variables shortlist, and M7's missingness_extra_vars) from
+# role_map.yaml, BEFORE modules are loaded/defaulted next — default_modules()
+# reads roles$important_vars/roles$missingness_extra_vars, so this must
+# happen first or a true first-ever build (no modules.yaml yet) would
+# silently ignore an already-confirmed shortlist.
 role_map_path <- hfc_path(cfg$code_output_dir, "config", "role_map.yaml")
 role_map_existed <- file.exists(role_map_path)
 if (role_map_existed) {
@@ -157,11 +153,29 @@ if (role_map_existed) {
     if (!is.null(saved$entity_label) && nzchar(as.character(saved$entity_label))) {
         roles$entity_label <- as.character(saved$entity_label)
     }
+    if (!is.null(saved$group_label) && nzchar(as.character(saved$group_label))) {
+        roles$group_label <- as.character(saved$group_label)
+    }
+    # De-identification display overrides (default "id"/"name"/"name" set by
+    # profile_roles() every run) — reload a saved override so it survives a
+    # rebuild instead of reverting to the default.
+    if (!is.null(saved$entity_display) && nzchar(as.character(saved$entity_display))) {
+        roles$entity_display <- as.character(saved$entity_display)
+    }
+    if (!is.null(saved$enumerator_display) && nzchar(as.character(saved$enumerator_display))) {
+        roles$enumerator_display <- as.character(saved$enumerator_display)
+    }
+    if (!is.null(saved$group_display) && nzchar(as.character(saved$group_display))) {
+        roles$group_display <- as.character(saved$group_display)
+    }
     if (!is.null(saved$map_focus) && nzchar(as.character(saved$map_focus))) {
         roles$map_focus <- as.character(saved$map_focus)
     }
     if (!is.null(saved$important_vars) && length(saved$important_vars)) {
         roles$important_vars <- unlist(saved$important_vars)
+    }
+    if (!is.null(saved$missingness_extra_vars) && length(saved$missingness_extra_vars)) {
+        roles$missingness_extra_vars <- unlist(saved$missingness_extra_vars)
     }
     # Completion signal + grouping confirmations (SKILL.md A1's required-gate
     # window / module-bundle tabs) persist here too; reload rather than
@@ -206,16 +220,14 @@ if (file.exists(modules_path)) {
     modules <- yaml::read_yaml(modules_path)
 } else {
     modules <- default_modules(roles)
-    yaml::write_yaml(modules, modules_path)
+    write_commented_modules_yaml(modules, modules_path)
 }
 if (role_map_existed && !is.null(modules$M2)) {
     modules$M2$id <- roles$entity_id
     modules$M2$extra_keys <- roles$dup_key_extra %||% character()
 }
-# Step 11: persist the (possibly reloaded) roles + a human-readable option-
-# card dump for reference.
+# Step 11: persist the (possibly reloaded) roles.
 yaml::write_yaml(roles, role_map_path)
-writeLines(format_module_cards(roles), hfc_path(cfg$code_output_dir, "config", "module_cards.txt"))
 
 # Step 12: form relevance for nested skip-logic
 form_map <- parse_form_relevance(if (!is.na(form_path) && file.exists(form_path)) form_path else
@@ -226,14 +238,14 @@ attr(ds, "hfc_form_map") <- form_map
 # (roles$map_focus, reloaded above), no separate report.yaml.
 report_cfg <- list(map_focus = roles$map_focus %||% "country")
 
-# Step 14: human-readable notes for custom/M11 checks (and optional per-module
+# Step 14: human-readable notes for custom/M10 checks (and optional per-module
 # description overrides), authored during the Additional-checks confirm step.
 # Optional file.
 module_notes_path <- hfc_path(cfg$code_output_dir, "config", "module_notes.yaml")
 module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes_path) else NULL
 
 # Steps 15-16: the actual work — run every confirmed M1–M13 + custom check,
-# then write registry outputs (shared with scripts/rebuild_report.R).
+# then write hfc/outputs/ artifacts (shared with scripts/rebuild_report.R).
 # When the confirmed completion signal is "roster", load the target/sample
 # list (read-only, never mutated, never copied anywhere) so check_m1() can
 # compute target-vs-actual completion against it.
@@ -243,7 +255,7 @@ if (identical(roles$completion_primary_signal, "roster") &&
     target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
     if (is.null(target_ds)) message("Could not load roster/target file: ", roles$completion_roster_candidate$path)
 }
-res <- run_checks_and_write_registry(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
+res <- run_checks_and_write_issues(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
 findings <- res$findings
 stats <- res$stats
 
@@ -254,17 +266,18 @@ stats <- res$stats
 # to confirm (a prior file exists: merging must never silently overwrite
 # field/RA/agent work on the live shared file).
 entity_label <- roles$entity_label %||% NA_character_
-ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label)
-fb_new <- findings_to_issue_tracking(findings)
-write_tracking_snapshot(ctx, fb_new, entity_label = entity_label)
+group_label <- roles$group_label %||% NA_character_
+ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label, group_label = group_label)
+fb_new <- findings_to_issue_tracking(findings, roles = roles)
+write_tracking_snapshot(ctx, fb_new, entity_label = entity_label, group_label = group_label)
 
 merge_pending <- FALSE
 if (is.null(ctx$tbl)) {
-    commit_issue_tracking(fb_new, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label)
+    commit_issue_tracking(fb_new, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label, group_label = group_label)
     issue_tracking_status <- "created"
 } else {
     merged <- merge_preserve_existing(ctx$tbl, fb_new)
-    write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label)
+    write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label, group_label = group_label)
     merge_pending <- TRUE
     issue_tracking_status <- "merge_pending"
 }

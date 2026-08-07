@@ -7,12 +7,6 @@
 #
 # Usage: Rscript merge_resolutions.R   (skills/hfc-fieldloop/config.json must already be configured)
 
-`%||%` <- function(a, b) {
-  if (is.null(a) || length(a) == 0) return(b)
-  if (length(a) == 1 && (is.na(a) || (is.character(a) && !nzchar(as.character(a))))) return(b)
-  a
-}
-
 .resolve_skill <- function() {
   ca <- commandArgs(trailingOnly = FALSE)
   fa <- grep("^--file=", ca, value = TRUE)
@@ -27,23 +21,24 @@ skill <- .resolve_skill()
 lib <- file.path(skill, "scripts", "lib")
 source(file.path(lib, "utils.R"))
 source(file.path(lib, "build_outputs.R"))
-source(file.path(lib, "sync_folder.R"))
+source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
 
 cfg_ctx <- require_fieldloop_config_ready(skill)
 cfg <- cfg_ctx$cfg
 entity_label <- load_entity_label(cfg$code_output_dir)
-ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label)
+group_label <- load_group_label(cfg$code_output_dir)
+ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label, group_label = group_label)
 current <- ctx$tbl
 if (is.null(current)) stop("No issue_tracking.xlsx found — run the setup build first.")
 
-clone <- read_resolution_clone(ctx, entity_label = entity_label)
+clone <- read_resolution_clone(ctx, entity_label = entity_label, group_label = group_label)
 if (is.null(clone)) {
   stop("No resolutions/ clone found for today — run `apply_feedback.R clone` first.")
 }
 
 merged <- merge_resolution_updates(current, clone)
-write_named_tracking_file(ctx, merged, "merged_issue_resolutions.xlsx", entity_label = entity_label)
+write_named_tracking_file(ctx, merged, "merged_issue_resolutions.xlsx", entity_label = entity_label, group_label = group_label)
 
 n_changed <- sum(current$finding_id %in% clone$finding_id &
                  (current$status != clone$status[match(current$finding_id, clone$finding_id)]))
