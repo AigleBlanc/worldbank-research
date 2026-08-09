@@ -41,10 +41,10 @@ Use `assets/README_example.md` for the expected level of specificity. Confirm on
 
 ### First-time setup
 
-1. Configure `.claude/skills/hfc-fieldloop/config.json` — Input Data Directory (your microdata + optional form), Media Folder Directory (optional), OneDrive Folder Directory, Code Output Directory.
+1. Configure `.claude/skills/hfc-fieldloop/config.json` — Input Data Directory (your microdata + optional form), Media Folder Directory (optional), HFC Output Directory, Code Output Directory.
 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 3. In VS Code + Claude Code: **Run HFC FieldLoop** or `/hfc-fieldloop`. The agent states its own best guess at each step; use **Other** to correct anything wrong — do not type `M1=Y M2=…`.
-4. `issue_tracking.xlsx` lives in the OneDrive-synced folder named by `config.json`'s OneDrive Folder Directory (required — no local fallback). Access is shared with collaborators once, by hand, via OneDrive's own sharing UI.
+4. `issue_tracking.xlsx` lives in the OneDrive-synced folder named by `config.json`'s HFC Output Directory (required — no local fallback). Access is shared with collaborators once, by hand, via OneDrive's own sharing UI.
 
 CLI equivalent after modules confirmed:
 
@@ -78,7 +78,7 @@ Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merg
 
 ## Folder structure
 
-List the configured directories (Input Data Directory, Media Folder Directory, OneDrive Folder Directory, Code Output Directory) plus the `<Code Output Directory>/hfc/` tree after setup (`config/`, `instruments/`, `outputs/`, `code/` — `code/checks/`, `code/resolutions/`).
+List the configured directories (Input Data Directory, Media Folder Directory, HFC Output Directory, Code Output Directory) plus the `<Code Output Directory>/hfc/` tree after setup (`config/`, `instruments/`, `outputs/`, `code/` — `code/checks/`, `code/resolutions/`).
 
 ## AI / confidentiality
 

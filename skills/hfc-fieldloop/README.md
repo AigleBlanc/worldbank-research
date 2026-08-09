@@ -30,13 +30,13 @@ Rscript .claude/skills/hfc-fieldloop/install.R
 {
     "Input Data Directory": "/path/to/your/survey/data",
     "Media Folder Directory": "",
-    "OneDrive Folder Directory": "/Users/you/OneDrive - Your Org/HFC Reports",
+    "HFC Output Directory": "/Users/you/OneDrive - Your Org/HFC Reports",
     "Code Output Directory": "/path/to/a/git/repo/you/manage"
 }
 ```
 - **Input Data Directory** — the folder containing your survey microdata export (never modified)
 - **Media Folder Directory** — optional; your SurveyCTO audio/photo attachments folder
-- **OneDrive Folder Directory** — a folder the OneDrive desktop app is syncing, for the shared `issue_tracking.xlsx` (make sure the OneDrive desktop app is installed and signed in on this machine first, and use the local folder it syncs to — there's no sign-in step in this skill itself, it just reads/writes that folder like any other local folder). Share that folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
+- **HFC Output Directory** — a folder the OneDrive desktop app is syncing, for the shared `issue_tracking.xlsx` (make sure the OneDrive desktop app is installed and signed in on this machine first, and use the local folder it syncs to — there's no sign-in step in this skill itself, it just reads/writes that folder like any other local folder). Share that folder with your RA/field team via OneDrive's normal "Share" button, so they can open and edit `issue_tracking.xlsx` directly.
 - **Code Output Directory** — a folder you manage yourself (ideally a git repo, this is where World Bank practice prefers versioned code/config output to live); the built `hfc/` report and checks land here. This skill only ever writes plain files there; it never runs git for you.
 
 If `config.json` isn't fully configured yet, the agent will tell you and stop before doing any real work — do this first.
@@ -92,7 +92,7 @@ You don't have to set `Accepted` before the agent will act — it picks up any `
 | What | Where |
 |---|---|
 | HTML report | `<Code Output Directory>/hfc/outputs/report.html` |
-| Shared tracking file | `issue_tracking.xlsx` — in your configured **OneDrive Folder Directory** (required, no local copy) |
+| Shared tracking file | `issue_tracking.xlsx` — in your configured **HFC Output Directory** (required, no local copy) |
 | Fixed data (raw is never touched) | a sibling `intermediate/` folder next to your **Input Data Directory** |
 | Your original data | your **Input Data Directory** — never modified |
 

@@ -2,19 +2,26 @@
 
 Confirm modules via the guess-first-then-correct **AskUserQuestion** windows described in `interaction.md` and `SKILL.md`'s A1/A2 — the agent states its own best guess in plain language, the user gets one free-text way to correct it. Do not ask the user to type `M1=Y M2=…`. Do not ask 100 column questions.
 
-## Required setup (Window "Setup", A1 — before any module work)
+## Required setup (Windows "Setup" then "Entity & Country", A1 — before any module work)
 
-Confirmed in one window ("Setup"), 4 tabs, one atomic fact each, immediately after data discovery — not folded into M1–M13 review. A completion signal (when detected) follows immediately as its own single-tab window, since Setup has no spare capacity for a 5th tab:
+**"Setup"**, 2 tabs, fires immediately after data discovery, before any role profiling:
 
 - **Data found (always):** the discovered data/form paths, plus row count, column count, and collection date range.
+- **Instructions (always):** an open "any specific instructions for this data or session?" catch-all — states the real path to a blank, pre-fillable `hfc/config/modules.yaml` (`preview_modules.R --blank`, no data dependency) that the user can hand-edit directly. Asked *before* role profiling specifically so the answer can skip inference (e.g. a stated country, a declined check), not just skip a later tab — see "Never re-ask" below.
+
+Once the Instructions answer is applied (free text interpreted as directives, plus any hand-edited `modules.yaml` re-read), the agent reads `context_doc` (if found), then the instrument/form (if found), then finally loads and profiles the microdata — role profiling runs last, informed by everything already resolved.
+
+**"Entity & Country"**, up to 3 tabs, fires right after:
+
 - **Entity (always):** the Entity Label (a Title-Case guess for what to call the entity, e.g. "Household" — applies everywhere the entity is displayed: the HTML report's findings tables *and* the xlsx/csv issue-tracking export) with the underlying column named ("in place of `hhld_id`"). Entity ID (the column itself) and the duplicate-check key are auto-resolved (`shortlist_entity_ids()`'s top pick; Entity ID alone if already unique, else + `detect_duplicate_key_candidates()`'s top hit) and are not separately confirmed — a wrong Entity ID pick is corrected via this tab's free-text box, since the entity line names the underlying column.
-- **Country (always):** the data-collection country + resolved timezone (stated as abbreviation + city/country + UTC offset) — inferred from geography **in the data** (district/region/village names, a GPS bounding box) when there's no explicit country column, **never from the input folder's name**.
-- **Specific instructions (always):** an open "anything I should know before diving in?" catch-all, asked here specifically so an answer can still shape role profiling and every A2 module-config window that follows — not a last-minute add-on before build.
-- **Completion (only if a completion signal is detected):** states the agent's interpretation of which completion signal applies (`detect_completion_signal()`) — a status column, a roster/target file, or a primary/secondary sample column, plus the downstream effect (every other check runs on the completed subset only). When more than one signal is detected at once, the message must explicitly flag the conflict rather than silently picking one. Runs as its own single-tab window immediately after Setup — Setup's 4 tabs (Data found, Entity, Country, Specific instructions) are already at the cap without it.
+- **Country (always, skipped if Instructions already stated it):** the data-collection country + resolved timezone (stated as abbreviation + city/country + UTC offset) — inferred from geography **in the data** (district/region/village names, a GPS bounding box) when there's no explicit country column, **never from the input folder's name**.
+- **Completion (only if a completion signal is detected):** states the agent's interpretation of which completion signal applies (`detect_completion_signal()`) — a status column, a roster/target file, or a primary/secondary sample column, plus the downstream effect (every other check runs on the completed subset only). When more than one signal is detected at once, the message must explicitly flag the conflict rather than silently picking one. Fits comfortably alongside Entity/Country now that Data found/Instructions live in the earlier Setup window instead.
+
+**Never re-ask what's already resolved:** every A2 tab from here on checks the Instructions answer and any hand-edited `modules.yaml`/`role_map.yaml` value first — a tab whose subject is already settled gets skipped (state the fact once in chat), never re-asked. Concrete case: declining GPS checks skips both the GPS threshold tab (Dates, Variables & GPS) and the Map focus tab (Media, Map & Grouping) together, since `write_html_report()` ties the map's rendering to the M8 check being on.
 
 Media-indicating columns (audio/image filenames, qualitative text) are detected here too but not stated until the Media, Map & Grouping window (A2) — no reason to front-load a fact that isn't needed until then.
 
-Persist to `hfc/config/role_map.yaml`: `entity_id`, `entity_id_sep`, `entity_label`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `qualitative_text_cols`, `completion_primary_signal`, `completion_status_col`, `completion_status_complete_values`, `completion_roster_candidate`, `completion_roster_key_col`, `completion_primary_secondary_col`, `completion_primary_value`. (`last_date`, `treatment_control_col`, `geo_group_col`, `geo_group_opted_in`, `map_focus`, `group_label`, `important_vars`, and `missingness_extra_vars` are confirmed later, in A2's module-config windows — see below.) `entity_display`/`enumerator_display`/`group_display` (de-identification-by-default: entity ID-only, enumerator/group name-if-available — see A1 step 4) are set to their fixed defaults by `profile_roles()` on every run, never guessed or confirmed in any window — edited directly in the yaml only on an explicit user request.
+Persist to `hfc/config/role_map.yaml`: `entity_id`, `entity_id_sep`, `entity_label`, `dup_key_extra`, `country_mode`, `country`/`country_col`/`country_timezone_map`, `timezone`, `qualitative_text_cols`, `completion_primary_signal`, `completion_status_col`, `completion_status_complete_values`, `completion_roster_candidate`, `completion_roster_key_col`, `completion_primary_secondary_col`, `completion_primary_value`. (`last_date`, `treatment_control_col`, `geo_group_col`, `geo_group_opted_in`, `map_focus`, `group_label`, `important_vars`, and `missingness_extra_vars` are confirmed later, in A2's module-config windows — see below.) `entity_display`/`enumerator_display`/`group_display` (de-identification-by-default: entity ID-only, enumerator/group name-if-available — see A1 step 7c) are set to their fixed defaults by `profile_roles()` on every run, never guessed or confirmed in any window — edited directly in the yaml only on an explicit user request.
 
 ## Nested / skip-logic questions
 
@@ -26,9 +33,9 @@ No separate "pace" question anymore (there's no more Accept-all vs. Review split
 
 **"Keys & Hours"**, up to 4 tabs: Duplicate key (M2, restated). Form version + mapping (M3, only if 2+ versions detected). Duration column (M4) — its 3 SD threshold is a fully silent fixed default, never mentioned in any tab. Work hours (M5) — real partial-accept options (both / work-hours only / weekend only), not generic Other.
 
-**"Dates, Variables & GPS"**, up to 4 tabs: Last date of data collection (states the Last Day tab dependency; a real "include more days" option, not just Other). Variables — the full unified important-variables shortlist, spelled out by name directly in the tab's text (no separate numbered chat post anymore, the tab text has no length cap). Sentinel codes (M7's `guess_sentinel_codes()` guess). GPS distance threshold (M8, default 300m). M6's fixed 3 SD threshold, M9's fixed 90% threshold, and M7's three missingness thresholds (50% variable-issue / 90% enumerator-pool / 50% enumerator-personal) are all fully silent fixed defaults now — not mentioned in any tab at all.
+**"Dates, Variables & GPS"**, up to 4 tabs: Last date of data collection (states the Last Day tab dependency; a real "include more days" option, not just Other). Variables — the full unified important-variables shortlist, spelled out by name directly in the tab's text (no separate numbered chat post anymore, the tab text has no length cap). Sentinel codes (M7's `guess_sentinel_codes()` guess). GPS distance threshold (M8, default 300m) — **skipped when M8 is already resolved off** (Instructions or pre-filled `modules.yaml`). M6's fixed 3 SD threshold, M9's fixed 90% threshold, and M7's three missingness thresholds (50% variable-issue / 90% enumerator-pool / 50% enumerator-personal) are all fully silent fixed defaults now — not mentioned in any tab at all.
 
-**"Media, Map & Grouping"**, up to 4 tabs: Media-indicating columns (M11, restated from Setup). Map focus default. An opt-in geographic-grouping ask (M1, only shown when a Treatment/Control column exists; default declined; real Yes/No options). Group Label (`derive_group_label()`, e.g. "School" for `school_id` — what `roles$group` is called throughout the report/tracking sheet; distinct from the Treatment/Control-vs-geography grouping question above).
+**"Media, Map & Grouping"**, up to 4 tabs: Media-indicating columns (M11, restated from A1). Map focus default — **skipped together with GPS threshold** (the map only renders when M8 is on). An opt-in geographic-grouping ask (M1, only shown when a Treatment/Control column exists; default declined; real Yes/No options). Group Label (`derive_group_label()`, e.g. "School" for `school_id` — what `roles$group` is called throughout the report/tracking sheet; distinct from the Treatment/Control-vs-geography grouping question above).
 
 **"Wrap-up"**, up to 4 tabs, closes out A2/A3/A4-prep together: Consent mapping (M12), its own tab, never bundled with anything else. Extra checks (M10), mandatory every run. Structure — states the real `hfc/config/modules.yaml` path here (first mention), 3 options: continue / "I edited the specifications" (re-read the file) / change the plan. Excel columns — the `issue_tracking.xlsx` schema, keep/modify.
 
@@ -36,7 +43,7 @@ No separate "pace" question anymore (there's no more Accept-all vs. Review split
 
 ## M1 — Completion
 
-**Default: ON.** Redefined from "did this row finish" to "were all planned surveys conducted." Signal type comes from the Setup window's Completion tab (`roles$completion_primary_signal`):
+**Default: ON.** Redefined from "did this row finish" to "were all planned surveys conducted." Signal type comes from the Entity & Country window's Completion tab (`roles$completion_primary_signal`) — the report's Completion section states which one applies for this project (`module_desc.R`'s `m1_desc()`).
 
 - **status** — an explicit per-row outcome column (Complete/Incomplete/Refused-style). Filters M2–M13 to the completed subset.
 - **roster** — a target/planned-sample file compared against the actual survey data. Reports "planned vs. actually surveyed"; every surveyed row still counts as completed for M2–M13's purposes.
@@ -67,7 +74,7 @@ Confirmed in the Keys & Hours window's Duration column tab: the guessed column, 
 
 ## M5 — Irregular Timing
 
-**Default: ON** — timezone-aware (uses the country/timezone confirmed in A1's Setup tab); absorbs the old "early start" concept.
+**Default: ON** — timezone-aware (uses the country/timezone confirmed in A1's Entity & Country window); absorbs the old "early start" concept.
 
 Confirmed in the Keys & Hours window's Work hours tab, alongside M4: work-hours window (default 7pm–7am flags evenings/nights + weekends), stated as one guess with real partial-accept options (flag both / work-hours only / weekend only) rather than a single accept-or-Other choice. Last date of data collection is a separate fact, confirmed in the Dates, Variables & GPS window instead (it doesn't belong to M5 specifically — it drives the report-wide Last Day tab).
 
@@ -123,7 +130,7 @@ Custom user-described checks are registered under M10/`custom` and live as
 
 **Redesigned to a single check, no on-disk file access at all:** flags a media-indicating column only if it is **completely empty across every surveyed row** — a strong signal of a form/coding problem (the field isn't showing up in the enumerator's app, or the question is misconfigured), not a per-row file-hygiene issue. This deliberately drops the old per-row checks (empty cell, file missing on disk, tiny file, bad extension, duplicate basename/hash, duration, flag↔file mismatch) — none of those survive.
 
-Confirmed in the Media, Map & Grouping window's Media columns tab: the media-indicating columns (audio/image filename columns + any qualitative text columns), restated from the Setup window for visibility.
+Confirmed in the Media, Map & Grouping window's Media columns tab: the media-indicating columns (audio/image filename columns + any qualitative text columns), detected during A1's role profiling and stated here for the first time.
 
 `config.json`'s Media Folder Directory is not read by this check (kept in config for potential future use).
 

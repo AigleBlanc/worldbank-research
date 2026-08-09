@@ -818,12 +818,15 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
             ))
         }
 
-        # GPS map
+        # GPS map — tied to the M8 check being on, not just GPS data existing:
+        # declining the GPS check should also drop the map, not leave a map
+        # with nothing checked behind it.
         map_html <- ""
         map_focus <- tolower(as.character(report_cfg$map_focus %||% "country"))
         has_gps <- !is.null(roles) && isTRUE(roles$has_gps) && !is.null(ds) &&
             !is.na(roles$x) && !is.na(roles$y) &&
-            roles$x %in% names(ds) && roles$y %in% names(ds)
+            roles$x %in% names(ds) && roles$y %in% names(ds) &&
+            isTRUE(modules$M8$on %||% TRUE)
         if (has_gps) {
             nav_links <- c(nav_links, '<a href="#map">Map</a>')
             xx <- safe_num(ds[[roles$x]])
@@ -936,8 +939,8 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
     )
     about_html <- paste0(
         "<section id='about' class='card'><h2>About this dashboard</h2>",
-        "<p>This report is a first read of the data, not a verdict. The tables below", 
-        "are not necessarily proof that something is wrong, but results of an analysis", 
+        "<p>This report is a first read of the data, not a verdict. The tables below ", 
+        "are not necessarily proof that something is wrong, but results of an analysis ", 
         "that can be reviewed BUT is first AI-assisted (to err is also AI). Use the search box (or ",
         "\"Show all\") in any table to look up a specific submission, enumerator, or value.</p>",
         "<p><strong>Terms you'll see:</strong></p>",

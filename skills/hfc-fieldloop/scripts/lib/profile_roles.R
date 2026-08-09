@@ -789,6 +789,12 @@ default_modules <- function(roles) {
         M1 = list(
         on = TRUE,
         completion_var = if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else NA_character_,
+        # Which of detect_completion_signal()'s signal types (status/roster/
+        # primary_secondary) is actually driving check_m1()'s complete_flag
+        # for this project, or "row_missingness" when none was detected —
+        # round-tripped through modules.yaml so the report's Completion
+        # section (module_desc.R's m1_desc()) can state it concretely.
+        completion_signal = roles$completion_primary_signal %||% "row_missingness",
         group_vars = m1_group_vars,
         by_enum = TRUE,
         by_date = TRUE,

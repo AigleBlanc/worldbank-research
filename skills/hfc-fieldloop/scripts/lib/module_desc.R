@@ -17,6 +17,27 @@ fmt_var_list <- function(vars, n = 4) {
     paste0(paste(utils::head(vars, n), collapse = ", "), ", and ", length(vars) - n, " more")
 }
 
+m1_desc <- function(modules) {
+    sig <- modules$M1$completion_signal %||% NA_character_
+    var <- modules$M1$completion_var %||% NA_character_
+    pct_median <- round(100 * (modules$M1$pct_median %||% 0.5))
+    method <- if (identical(sig, "status")) {
+        sprintf("complete when its%s status column marks it Complete", if (!is.na(var)) sprintf(" `%s`", var) else "")
+    } else if (identical(sig, "roster")) {
+        "complete when it matches an entry in the project's target/roster file"
+    } else if (identical(sig, "primary_secondary")) {
+        sprintf("complete when its%s column marks it Primary sample", if (!is.na(var)) sprintf(" `%s`", var) else "")
+    } else if (!is.na(var)) {
+        sprintf("complete when its `%s` column looks affirmative, or (if that's blank) at least 90%% of its fields are filled in", var)
+    } else {
+        "complete once at least 90% of its fields are filled in"
+    }
+    sprintf(
+        "A submission counts %s. Reports these counts overall, by group, enumerator, and date, and flags any group below %s%% of the median completion count.",
+        method, pct_median
+    )
+}
+
 m2_desc <- function(modules) {
     key_cols <- c(modules$M2$id, modules$M2$extra_keys %||% character())
     key <- fmt_var_list(key_cols, n = 6)
@@ -92,6 +113,6 @@ m11_desc <- function(modules) {
 }
 
 DYNAMIC_MODULE_DESC <- list(
-    M2 = m2_desc, M4 = m4_desc, M5 = m5_desc, M6 = m6_desc, M7 = m7_desc,
+    M1 = m1_desc, M2 = m2_desc, M4 = m4_desc, M5 = m5_desc, M6 = m6_desc, M7 = m7_desc,
     M8 = m8_desc, M9 = m9_desc, M11 = m11_desc
 )

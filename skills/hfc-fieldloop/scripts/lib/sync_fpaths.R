@@ -42,19 +42,19 @@ CONFIG_PLACEHOLDER_RE <- "^<.*>$"
 # that matters, edited directly, no per-project override. JSON keys are
 # Title Case (RA-facing — this file is something a non-programmer edits by
 # hand): "Input Data Directory", "Media Folder Directory",
-# "OneDrive Folder Directory", "Code Output Directory",
+# "HFC Output Directory", "Code Output Directory",
 # "Main Tracking Filename". The R-side return list below keeps snake_case
 # element names (cfg$input_data_dir etc.) — only the JSON string keys are
 # Title Case; every downstream cfg$... reference in this codebase is
 # unaffected by this file's key names. Required fields: Input Data
-# Directory, OneDrive Folder Directory, Code Output Directory. Media Folder
+# Directory, HFC Output Directory, Code Output Directory. Media Folder
 # Directory is optional (surveys with no audio/photo questions can leave it
 # blank) — scripts/lib/media.R already tolerates a missing/unset media
 # folder.
 CONFIG_JSON_KEYS <- c(
     input_data_dir = "Input Data Directory",
     media_dir = "Media Folder Directory",
-    onedrive_output_dir = "OneDrive Folder Directory",
+    onedrive_output_dir = "HFC Output Directory",
     code_output_dir = "Code Output Directory",
     main_file = "Main Tracking Filename"
 )

@@ -30,7 +30,7 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 
 ## Instructions
 
-> 1. Confirm `.claude/skills/hfc-fieldloop/config.json` is fully configured (Input Data Directory, OneDrive Folder Directory, Code Output Directory; Media Folder Directory optional).
+> 1. Confirm `.claude/skills/hfc-fieldloop/config.json` is fully configured (Input Data Directory, HFC Output Directory, Code Output Directory; Media Folder Directory optional).
 > 2. Run `Rscript .claude/skills/hfc-fieldloop/install.R`.
 > 3. In Claude Code (VS Code): **Run HFC FieldLoop** or `/hfc-fieldloop`. The agent first confirms `config.json` is reachable (required — stops with setup instructions if not), then walks through config reuse (if a prior run exists), a Setup window (discovered files, Entity Label, country — stated as best guesses to confirm or correct), module-config windows (duplicates/version, timing, key variables, GPS/media, consent, extra checks — same guess-then-correct pattern), `hfc/structure.html` Continue, and feedback columns — use **Other** to correct anything wrong. Do not type `M1=Y M2=…`.
 > 4. Open `hfc/outputs/report.html` (builder may auto-open). Field/RA edit `issue_tracking.xlsx` directly in the shared OneDrive-synced folder (access set up once, by hand).
@@ -50,7 +50,7 @@ Annotated example of a **survey project** README the FieldLoop agent should aim 
 > - `hfc/structure.html` — product tree (review before Continue)
 > - `hfc/outputs/report.html` — findings by module (searchable tables, GPS map)
 > - OneDrive-synced `issue_tracking.xlsx` (required, no local copy) — the one shared file; agent, RA, and field team all edit it
-> - `.claude/skills/hfc-fieldloop/config.json` — Input Data Directory / Media Folder Directory / OneDrive Folder Directory / Code Output Directory / Main Tracking Filename; skill-level, not per-project
+> - `.claude/skills/hfc-fieldloop/config.json` — Input Data Directory / Media Folder Directory / HFC Output Directory / Code Output Directory / Main Tracking Filename; skill-level, not per-project
 > - `hfc/outputs/issues.csv` — stable, content-derived Issue IDs
 
 ## Folder structure

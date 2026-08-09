@@ -34,6 +34,42 @@
     paste0("# ", lines)
 }
 
+# TRUE for NULL/NA/empty-string/zero-length values only -- FALSE and 0 are
+# real, meaningful settings (e.g. "on: no"), never treated as blank.
+.is_blank_yaml_val <- function(x) {
+    if (is.null(x) || length(x) == 0) return(TRUE)
+    if (length(x) == 1) {
+        if (is.na(x)) return(TRUE)
+        if (is.character(x) && !nzchar(trimws(x))) return(TRUE)
+    }
+    FALSE
+}
+
+#' Merge a user's hand-edited/partially-filled modules.yaml (`prefilled`,
+#' typically the blank draft written early in A1 -- see SKILL.md -- read
+#' back after the Setup window) on top of freshly-guessed defaults
+#' (`guessed`, `default_modules(roles)`) -- field by field, per module. Any
+#' non-blank value already present in `prefilled` wins (the user explicitly
+#' set it); every field left untouched falls back to `guessed`'s value.
+#' `desc` is never merged -- write_commented_modules_yaml() always
+#' regenerates it fresh from module_label(), so a stale prefilled `desc`
+#' would just be dead weight (and, left in, would collide with the fresh one
+#' it prepends).
+merge_prefilled_modules <- function(guessed, prefilled) {
+    codes <- union(names(guessed), names(prefilled))
+    stats::setNames(lapply(codes, function(code) {
+        g <- guessed[[code]] %||% list()
+        p <- prefilled[[code]] %||% list()
+        fields <- setdiff(union(names(g), names(p)), "desc")
+        merged <- lapply(fields, function(f) {
+            pv <- p[[f]]
+            if (!.is_blank_yaml_val(pv)) pv else g[[f]]
+        })
+        names(merged) <- fields
+        merged
+    }), codes)
+}
+
 write_commented_modules_yaml <- function(modules, modules_path) {
     dir.create(dirname(modules_path), recursive = TRUE, showWarnings = FALSE)
 

@@ -48,6 +48,19 @@ suppressPackageStartupMessages({
 
 ctx <- require_fieldloop_config_ready(skill)
 cfg <- ctx$cfg
+modules_path <- hfc_path(cfg$code_output_dir, "config", "modules.yaml")
+
+# --blank: write an empty, pre-fillable draft immediately after discovery,
+# before any role profiling -- SKILL.md A1's Setup window mentions this
+# file's path so the user can hand-edit whatever they already know (module
+# on/off, thresholds, variables) instead of waiting to be asked. No data
+# dependency at all -- skips discovery/loading/profiling entirely.
+args <- commandArgs(trailingOnly = TRUE)
+if ("--blank" %in% args) {
+    out <- write_commented_modules_yaml(list(), modules_path)
+    message("Wrote blank draft: ", out)
+    quit(save = "no", status = 0)
+}
 
 disc <- discover_project(cfg$input_data_dir)
 if (!identical(disc$status, "found")) {
@@ -62,12 +75,11 @@ media_folder <- cfg$media_dir %||% NA_character_
 
 roles <- profile_roles(ds, media_folder = media_folder, roster_candidate = disc$roster_candidate)
 
-modules_path <- hfc_path(cfg$code_output_dir, "config", "modules.yaml")
-modules <- if (file.exists(modules_path)) yaml::read_yaml(modules_path) else default_modules(roles)
-
 # Overlay any already-confirmed required-fields-gate answers (A1 runs before
 # A2, so role_map.yaml may already hold a partial config) — read-only, never
-# written back here.
+# written back here. Applied BEFORE default_modules(roles) below, so these
+# adjustments actually reach the fresh guess (important_vars etc. feed
+# M6/M9/M13's guessed variable lists).
 role_map_path <- hfc_path(cfg$code_output_dir, "config", "role_map.yaml")
 if (file.exists(role_map_path)) {
     saved <- yaml::read_yaml(role_map_path)
@@ -93,6 +105,14 @@ if (file.exists(role_map_path)) {
         roles$geo_group_col <- as.character(saved$geo_group_col)
     }
 }
+
+# Merge fresh guesses with whatever's already on disk -- the blank draft
+# from the earlier --blank pass, possibly hand-edited by the user in the
+# Setup window (SKILL.md A1). Never used wholesale: any field the user left
+# untouched still needs a real guess, not a blank.
+guessed <- default_modules(roles)
+prefilled <- if (file.exists(modules_path)) yaml::read_yaml(modules_path) else list()
+modules <- merge_prefilled_modules(guessed, prefilled)
 
 out <- write_commented_modules_yaml(modules, modules_path)
 message("Wrote ", out)

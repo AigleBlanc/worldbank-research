@@ -37,7 +37,7 @@ Template: `assets/issue_tracking_template.csv`. Column order in every written fi
 
 **Removed from `issue_tracking.xlsx`:** `check_module` (kept only on internal `findings` for the HTML report). **Merged into single columns:** the old separate `Entity ID`+`Entity`, `Group ID`+`Group`, `Enumerator ID`+`Enumerator` pairs are each now one column, mode-resolved by `resolve_display_vec()` (`scripts/lib/utils.R`).
 
-**De-identification defaults & override:** `role_map.yaml`'s `entity_display` (default `"id"`), `enumerator_display` (default `"name"`), and `group_display` (default `"name"`) control the three resolutions above — set once by `profile_roles()`, never guessed or asked about. Applies identically to the HTML report's findings tables *and* its descriptive stats tables (M1/M4/M7's by-enumerator breakdowns, M13's per-enumerator labels). Change one only on an explicit user request, by editing the field directly and rebuilding — see `SKILL.md` A1 step 4.
+**De-identification defaults & override:** `role_map.yaml`'s `entity_display` (default `"id"`), `enumerator_display` (default `"name"`), and `group_display` (default `"name"`) control the three resolutions above — set once by `profile_roles()`, never guessed or asked about. Applies identically to the HTML report's findings tables *and* its descriptive stats tables (M1/M4/M7's by-enumerator breakdowns, M13's per-enumerator labels). Change one only on an explicit user request, by editing the field directly and rebuilding — see `SKILL.md` A1 step 7c.
 
 ### Status
 
@@ -79,12 +79,12 @@ One file, one rule: `hfc-fieldloop/config.json` — the only config that matters
 {
   "Input Data Directory": "/Users/you/Documents/my_survey/data",
   "Media Folder Directory": "",
-  "OneDrive Folder Directory": "/Users/you/OneDrive - Your Org/HFC Reports",
+  "HFC Output Directory": "/Users/you/OneDrive - Your Org/HFC Reports",
   "Code Output Directory": "/Users/you/code/my_survey_hfc",
   "Main Tracking Filename": "issue_tracking.xlsx"
 }
 ```
-**OneDrive Folder Directory** must be an absolute path to a folder the OneDrive desktop app is already syncing on this machine (it's created automatically if the sync client hasn't materialized it yet). A missing or still-placeholder **Input Data Directory**, **OneDrive Folder Directory**, or **Code Output Directory** → every user-facing script's `require_fieldloop_config_ready()` pre-flight `stop()`s, naming the specific field, rather than proceeding. **Media Folder Directory** is optional — no check module reads it (see `references/check_modules.md`'s M11 section); it's kept in `config.json` only in case a future check needs on-disk media access.
+**HFC Output Directory** must be an absolute path to a folder the OneDrive desktop app is already syncing on this machine (it's created automatically if the sync client hasn't materialized it yet). A missing or still-placeholder **Input Data Directory**, **HFC Output Directory**, or **Code Output Directory** → every user-facing script's `require_fieldloop_config_ready()` pre-flight `stop()`s, naming the specific field, rather than proceeding. **Media Folder Directory** is optional — no check module reads it (see `references/check_modules.md`'s M11 section); it's kept in `config.json` only in case a future check needs on-disk media access.
 
 Share the OneDrive **folder** (not the individual file) with collaborators via the normal OneDrive "Specific people" sharing UI, once, before relying on this — this skill never mints its own share links, it just reads/writes whatever folder access has already been configured.
 

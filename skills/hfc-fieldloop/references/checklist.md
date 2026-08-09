@@ -10,7 +10,8 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | Instrument / form (also in the Input Data Directory) | optional (preferred for M10 / M3 / nested skip-logic) |
 | Project description / Pre-Analysis Plan (pdf/doc/docx/txt/md, also in the Input Data Directory) | optional (read once for background context; never a data source) |
 | `hfc/structure.html` reviewed + confirmed (Wrap-up window's Structure tab) | yes |
-| Setup window (A1): data found, Entity, country/timezone confirmed (+ completion signal, if detected) | yes |
+| Setup window (A1): data found, Instructions confirmed | yes |
+| Entity & Country window (A1): Entity, country/timezone confirmed (+ completion signal, if detected) | yes |
 | Module-config windows (A2): Keys & Hours, Dates/Variables/GPS, Media/Map/Grouping, Wrap-up (Consent + Extra checks + Structure + Excel columns) all confirmed | yes |
 | `hfc/project.yaml` | yes |
 | `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` | yes (agent writes from confirmed options before build) |
@@ -25,7 +26,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 | Item | Notes |
 |---|---|
-| `config.json` with Input Data Directory, OneDrive Folder Directory, Code Output Directory all set to real paths (Media Folder Directory optional) | Skill-level config, no per-project override — OneDrive Folder Directory is the OneDrive desktop app's synced local folder |
+| `config.json` with Input Data Directory, HFC Output Directory, Code Output Directory all set to real paths (Media Folder Directory optional) | Skill-level config, no per-project override — HFC Output Directory is the OneDrive desktop app's synced local folder |
 | Config pre-flight (A0) passes before any real work starts | No local-only mode — `require_fieldloop_config_ready()` stops the build otherwise |
 | Folder shared with collaborators via OneDrive's own "Specific people" UI (once, by hand) | Code never mints its own share links |
 
