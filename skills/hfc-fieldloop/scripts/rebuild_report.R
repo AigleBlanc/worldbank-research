@@ -1,4 +1,4 @@
-# Refresh hfc/outputs/report.html after a "Process HFC feedback" pass —
+# Refresh hfc/outputs/<MMDD>_HFCs.html after a "Process HFC feedback" pass —
 # re-runs M1-M13 against the latest data (<sibling of input_data_dir>/intermediate/
 # if any fixes were applied, else the original file in input_data_dir) using
 # the project's already-confirmed hfc/config/role_map.yaml + modules.yaml
@@ -87,12 +87,12 @@ if (file.exists(form_path) && exists("parse_form_relevance", mode = "function"))
 module_notes_path <- hfc_path(cfg$code_output_dir, "config", "module_notes.yaml")
 module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes_path) else NULL
 
-# When the confirmed completion signal is "roster", reload the target/sample
-# list so check_m1() can recompute target-vs-actual completion (read-only,
-# never mutated, never copied).
+# Reload the roster/target-sample list whenever one was found (read-only,
+# never mutated, never copied) — not just when the confirmed completion
+# signal is "roster": check_m1()'s replacement-sample analysis needs it
+# independently of which signal is actually driving completion.
 target_ds <- NULL
-if (identical(roles$completion_primary_signal, "roster") &&
-    !is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
+if (!is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
     target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
 }
 res <- run_checks_and_write_issues(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)

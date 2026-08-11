@@ -11,7 +11,8 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | Project description / Pre-Analysis Plan (pdf/doc/docx/txt/md, also in the Input Data Directory) | optional (read once for background context; never a data source) |
 | `hfc/structure.html` reviewed + confirmed (Wrap-up window's Structure tab) | yes |
 | Setup window (A1): data found, Instructions confirmed | yes |
-| Entity & Country window (A1): Entity, country/timezone confirmed (+ completion signal, if detected) | yes |
+| Entity & Country window (A1): Entity, country/timezone confirmed | yes |
+| Completion Signals window (A1): gate question(s)/reasons or roster/primary-secondary confirmed, if a signal was detected; daily enumerator target confirmed or declined | yes |
 | Module-config windows (A2): Keys & Hours, Dates/Variables/GPS, Media/Map/Grouping, Wrap-up (Consent + Extra checks + Structure + Excel columns) all confirmed | yes |
 | `hfc/project.yaml` | yes |
 | `hfc/config/modules.yaml` + `hfc/config/role_map.yaml` | yes (agent writes from confirmed options before build) |
@@ -19,7 +20,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 | `hfc/code/checks/` modules (real, runnable per-module scripts + custom) | yes |
 | `hfc/outputs/issues.csv` with stable, content-derived `finding_id` (Issue ID) | yes |
 | Live `issue_tracking.xlsx` in OneDrive, with `Status` | yes (defaults Open; the one shared file — agent, RA, and field team all edit it; no local copy) |
-| `hfc/outputs/report.html` | yes (navigable; searchable tables) |
+| `hfc/outputs/<MMDD>_HFCs.html` | yes (navigable; searchable tables) |
 | Project `README.md` drafted from `assets/README_template.md` | yes (drafted automatically, no confirmation) |
 
 ## OneDrive (required)
@@ -41,7 +42,7 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 
 ## Smoke
 
-- [ ] Open `hfc/structure.html` then `hfc/outputs/report.html` in a browser
+- [ ] Open `hfc/structure.html` then `hfc/outputs/<MMDD>_HFCs.html` in a browser
 - [ ] Report tables searchable; GPS map present when M8 on; flagged points render in a distinct color from non-flagged points
 - [ ] Last Day tab present and populated when a last date was confirmed
 - [ ] Every table sorted by enumerator, then unique ID, then date (most recent first)
@@ -49,6 +50,6 @@ Use after Pipeline A (setup) and again after Pipeline B (post-feedback).
 - [ ] Grep: no hardcoded user home paths outside `hfc/code/main.R`
 - [ ] If survey has pictures/audio: M11 on; filename cols not mis-filed under M12; M11 findings are dataset-level (one per fully-empty column), never per-row file-hygiene findings
 - [ ] Nested skip-logic blanks not flagged as missing when form available
-- [ ] If a completion signal was confirmed: M1 reports target-vs-actual (or primary/secondary composition) by group (Treatment/Control by default) and by enumerator; a "status" signal's Incomplete/Refused rows do not appear in any M2-M13 finding
+- [ ] If a completion signal was confirmed: M1 reports target-vs-actual (or primary/secondary composition) by group (Treatment/Control by default) and by enumerator; a "gating" signal's non-completed rows do not appear in any M2-M13 finding; a Reasons breakdown renders when gating found more than zero non-completions
 - [ ] M9 straightlining fires at the 90% default unless explicitly overridden
 - [ ] Country was inferred from data content (or an explicit column), not the input folder's name

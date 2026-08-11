@@ -266,7 +266,7 @@ merge_resolution_updates <- function(current, resolution_clone) {
 # finding whose finding_id no longer appears in the live tracking file at
 # all (re-running the checks may no longer reproduce it, even if nobody
 # explicitly marked it Resolved). `issue_tracking.xlsx` itself is untouched —
-# this only changes what report.html shows; the tracking file keeps its full
+# this only changes what the <MMDD>_HFCs.html report shows; the tracking file keeps its full
 # history exactly as merge_preserve_existing() already guarantees elsewhere.
 filter_findings_by_tracking_status <- function(findings, tracking_tbl) {
     if (is.null(findings) || nrow(findings) == 0) return(findings)
@@ -347,6 +347,8 @@ module_desc <- function(code, modules = NULL) {
 # fallback to the raw code.
 CATEGORY_LABELS <- c(
     low_completion = "Low completion",
+    low_completion_enum_day = "Below daily target",
+    replacement_sequence_gap = "Replacement sequence gap",
     duplicates = "Duplicate submission",
     form_version_mismatch = "Form version mismatch",
     long_duration = "Interview too long",
@@ -454,7 +456,12 @@ html_searchable_table <- function(df, cols, table_id, show_n = 10L, col_labels =
     truncate <- nrow(df) >= TRUNCATE_THRESHOLD
     initial_shown <- if (truncate) min(show_n, nrow(df)) else nrow(df)
     labels <- if (!is.null(col_labels)) {
-        vapply(cols, function(cn) col_labels[[cn]] %||% cn, character(1))
+        # `[[` on a named CHARACTER VECTOR (unlike a list) errors on a
+        # missing name instead of returning NULL — check membership first
+        # so an unmapped column (e.g. a stats table with its own already-
+        # human-readable column names) falls back to itself instead of
+        # crashing the whole render.
+        vapply(cols, function(cn) if (cn %in% names(col_labels)) col_labels[[cn]] else cn, character(1))
     } else cols
     head_cells <- paste0("<th>", esc(labels), "</th>", collapse = "")
     rows <- vapply(seq_len(nrow(df)), function(i) {
@@ -505,14 +512,19 @@ format_pct_cols <- function(df) {
 
 # Column header labels for render_stats_block()'s tables, keyed by module —
 # not one flat map, since the same column name means different things in
-# different modules (e.g. `n` is "Target" in M1's completion tables but a
-# plain observation count in M4/M7). Only M1 has user-specified exact
-# labels; the rest get sensible Title-Case-or-better labels for their real
-# columns. M13 is already Title-Case — included for uniformity.
+# different modules (e.g. `n` is "Surveys Submitted" in M1's completion
+# tables but a plain observation count in M4/M7). Only M1 has user-specified
+# exact labels; the rest get sensible Title-Case-or-better labels for their
+# real columns. M13 is already Title-Case — included for uniformity.
 STATS_COL_LABELS <- list(
-    M1 = c(n = "Target", n_complete = "Completed surveys", pct_complete = "Completion",
+    # `n` is a base default here — actually submitted surveys for every
+    # completion_signal EXCEPT "roster", where group_source_ds is the
+    # target/roster file itself and `n` is a genuine planned/target count,
+    # not something submitted. write_html_report() swaps this one label back
+    # to "Target" for that specific case before rendering M1's stats.
+    M1 = c(n = "Surveys Submitted", n_complete = "Completed", pct_complete = "Completion",
             group = "Group", group_var = "Group", value = "Value",
-            enumerator = "Enumerator", date = "Date"),
+            enumerator = "Enumerator", date = "Date", reason = "Reason", count = "Count"),
     M3 = c(version = "Version", n = "N", date_min = "First seen", date_max = "Last seen",
             date_start = "Window start", date_end = "Window end"),
     M4 = c(level = "Section", n = "N", mean = "Mean", median = "Median", sd = "SD",
@@ -596,6 +608,8 @@ FINDINGS_COLS_ROW_VALUE_VAR    <- c("entity_display", "group_display", "enumerat
 
 CATEGORY_COLS <- list(
     low_completion         = FINDINGS_COLS_AGGREGATE_GROUP,
+    replacement_sequence_gap = FINDINGS_COLS_AGGREGATE_GROUP,
+    low_completion_enum_day = FINDINGS_COLS_AGGREGATE_ENUM_VALUE,
     duplicates             = FINDINGS_COLS_ROW_BASE,
     form_version_mismatch  = FINDINGS_COLS_ROW_VALUE,
     long_duration          = FINDINGS_COLS_ROW_VALUE,
@@ -629,6 +643,60 @@ DEFAULT_FINDINGS_COLS <- FINDINGS_COLS_ROW_VALUE
 # while a row-level finding shows every column that applies to it.
 ALL_FINDINGS_COLS <- c("entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
 
+#' When `df`'s natural unit column (enumerator_display, falling back to
+#' group_display) has real repetition — at least 2 distinct units and at
+#' least one with more than one row — render one small searchable table per
+#' unit instead of a single flat one, using the same <details>/jump-index
+#' visual pattern as render_stats_block() so the two look identical. The
+#' worst unit (most rows) stays open under <h4>; the rest collapse. Returns
+#' NULL (not a string) when there's nothing to group — a table that's
+#' already one row per unit (e.g. mk_aggregate_finding() output) or has no
+#' enumerator/group column at all falls straight through to the caller's
+#' flat rendering, unchanged from before this existed.
+render_findings_grouped_by_unit <- function(df, cols, id_prefix, show_n, col_labels) {
+    unit_col <- if ("enumerator_display" %in% names(df) && any(nzchar(as.character(df$enumerator_display)))) {
+        "enumerator_display"
+    } else if ("group_display" %in% names(df) && any(nzchar(as.character(df$group_display)))) {
+        "group_display"
+    } else NA_character_
+    if (is.na(unit_col)) return(NULL)
+
+    unit <- as.character(df[[unit_col]])
+    unit[!nzchar(unit) %in% TRUE] <- NA_character_
+    present <- unit[!is.na(unit)]
+    if (length(unique(present)) < 2 || !any(table(present) > 1)) return(NULL)
+
+    esc <- function(x) {
+        x <- as.character(x); x[is.na(x)] <- ""
+        x <- gsub("&", "&amp;", x, fixed = TRUE); x <- gsub("<", "&lt;", x, fixed = TRUE); x <- gsub(">", "&gt;", x, fixed = TRUE)
+        x
+    }
+    counts <- sort(table(present), decreasing = TRUE)
+    ordered_units <- names(counts)
+    if (any(is.na(unit))) ordered_units <- c(ordered_units, NA_character_)
+
+    index_links <- character(); blocks <- character()
+    for (i in seq_along(ordered_units)) {
+        u <- ordered_units[[i]]
+        idx <- if (is.na(u)) which(is.na(unit)) else which(unit == u)
+        grp_df <- df[idx, , drop = FALSE]
+        label <- if (is.na(u)) "Unassigned" else u
+        tid <- paste0(id_prefix, "-u", i)
+        table_html <- html_searchable_table(grp_df, cols, tid, show_n, col_labels = col_labels)
+        if (i == 1) {
+            blocks <- c(blocks, paste0("<h4>", esc(label), "</h4>", table_html))
+        } else {
+            index_links <- c(index_links, sprintf("<a href='#%s-details'>%s</a>", tid, esc(label)))
+            blocks <- c(blocks, sprintf(
+                "<details class='stats-details' id='%s-details'><summary>%s</summary>%s</details>",
+                tid, esc(label), table_html
+            ))
+        }
+    }
+    idx_html <- if (length(index_links)) paste0("<nav class='stats-index'>", paste(index_links, collapse = " &middot; "), "</nav>") else ""
+    paste0(idx_html, paste(blocks, collapse = ""))
+}
+
 #' Render one or more searchable tables for `sub`'s findings, splitting into
 #' separate tables whenever the categories present require different display
 #' columns (e.g. one module section mixing a by-enumerator aggregate check
@@ -637,7 +705,10 @@ ALL_FINDINGS_COLS <- c("entity_display", "group_display", "enumerator_display", 
 #' filler columns or hidden real data, exactly the "unnecessary columns"
 #' problem this whole per-category scheme exists to avoid. Categories that
 #' already share identical columns stay in one table together (the common
-#' case), so most modules render exactly as before — just one table.
+#' case), so most modules render exactly as before — just one table. Within
+#' each category group, render_findings_grouped_by_unit() gets first refusal
+#' — it only actually changes anything when a unit (enumerator/group)
+#' genuinely has more than one row.
 render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
     if (is.null(sub) || nrow(sub) == 0) {
         return(html_searchable_table(sub, DEFAULT_FINDINGS_COLS, id_prefix, show_n, col_labels = col_labels))
@@ -646,6 +717,8 @@ render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
     sigs <- unique(col_sig)
     if (length(sigs) <= 1) {
         cols <- CATEGORY_COLS[[sub$category[[1]]]] %||% DEFAULT_FINDINGS_COLS
+        grouped <- render_findings_grouped_by_unit(sub, cols, id_prefix, show_n, col_labels)
+        if (!is.null(grouped)) return(grouped)
         return(html_searchable_table(sub, cols, id_prefix, show_n, col_labels = col_labels))
     }
     esc <- function(x) {
@@ -659,8 +732,9 @@ render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
         cols <- CATEGORY_COLS[[grp_df$category[[1]]]] %||% DEFAULT_FINDINGS_COLS
         lbl <- category_label(grp_df$category[[1]])
         sub_id <- paste0(id_prefix, "-", i)
-        parts <- c(parts, paste0("<h4>", esc(lbl), "</h4>"),
-                    html_searchable_table(grp_df, cols, sub_id, show_n, col_labels = col_labels))
+        grouped <- render_findings_grouped_by_unit(grp_df, cols, sub_id, show_n, col_labels)
+        body <- if (!is.null(grouped)) grouped else html_searchable_table(grp_df, cols, sub_id, show_n, col_labels = col_labels)
+        parts <- c(parts, paste0("<h4>", esc(lbl), "</h4>"), body)
     }
     paste(parts, collapse = "")
 }
@@ -689,7 +763,10 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         suppressPackageStartupMessages({ library(dplyr) })
         report_dir <- hfc_path(code_output_dir, "outputs")
         dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
-        html_path <- file.path(report_dir, "report.html")
+        # Dated per build (today's date, not the last day of data collection)
+        # so successive days' reports accumulate as separate snapshots rather
+        # than each rebuild silently overwriting the last.
+        html_path <- file.path(report_dir, paste0(format(Sys.Date(), "%m%d"), "_HFCs.html"))
 
         esc <- function(x) {
             x <- as.character(x)
@@ -771,7 +848,14 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
             FALSE
         }
         present_from_stats <- names(stats)[vapply(stats, stats_nonempty, logical(1))]
-        modules_present <- intersect(MODULE_ORDER, union(present_from_findings, present_from_stats))
+        # A module that's on but produced neither findings nor stats still
+        # gets its own section, showing "No issues found!" rather than being
+        # silently omitted — an on-and-clean check should look different from
+        # a check that never ran at all. An off module stays fully absent.
+        present_from_on <- if (!is.null(modules)) {
+            names(modules)[vapply(names(modules), function(m) isTRUE(modules[[m]]$on), logical(1))]
+        } else character()
+        modules_present <- intersect(MODULE_ORDER, Reduce(union, list(present_from_findings, present_from_stats, present_from_on)))
         # M13 Summary Statistics is a reference table, not an issue list — push it
         # last among module sections, immediately before "All issues", instead of
         # its numeric M1..M13 slot.
@@ -803,14 +887,22 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
                 paste(items, collapse = ""), "</ul></div>"
             )
             }
-            stats_html <- render_stats_block(stats[[mod]], tolower(mod), col_labels = STATS_COL_LABELS[[mod]])
+            col_labels_mod <- STATS_COL_LABELS[[mod]]
+            if (identical(mod, "M1") && identical(modules$M1$completion_signal, "roster")) {
+            col_labels_mod["n"] <- "Target"
+            }
+            stats_html <- render_stats_block(stats[[mod]], tolower(mod), col_labels = col_labels_mod)
             # M13 Summary Statistics never has findings rows — skip the (always-empty,
             # otherwise-misleading) findings table and "N issues found" count for it.
             is_stats_only <- identical(mod, "M13")
-            heading_suffix <- if (is_stats_only) "" else paste0(" · ", nrow(sub), " issues found")
-            tbl <- if (is_stats_only) "" else render_findings_tables(
-            sub, paste0("tbl-", aid), findings_col_labels
-            )
+            heading_suffix <- if (is_stats_only || nrow(sub) == 0) "" else paste0(" · ", nrow(sub), " issues found")
+            tbl <- if (is_stats_only) {
+            ""
+            } else if (nrow(sub) == 0) {
+            "<p class='no-issues'>No issues found!</p>"
+            } else {
+            render_findings_tables(sub, paste0("tbl-", aid), findings_col_labels)
+            }
             mod_sections <- c(mod_sections, paste0(
             "<section id='", aid, "' class='card'><h2>", esc(module_label(mod)),
             " <span class='mod-code'>", esc(mod), "</span>", heading_suffix,
@@ -882,10 +974,34 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         last_day_f <- if (nrow(findings)) {
         findings %>% filter(start_date == last_date | end_date == last_date)
         } else findings
+        # Duration stats for just that day, alongside its flagged issues -
+        # "how did today go" operational info in one place, distinct from
+        # M4's own Overall/By Enumerator tables. Same minutes conversion as
+        # check_m4()/check_m13() (SurveyCTO duration is always in seconds).
+        lastday_duration_html <- ""
+        dc <- modules$M4$duration %||% roles$duration %||% NA_character_
+        if (!is.null(ds) && !is.na(dc) && dc %in% names(ds) && !is.na(roles$start) && roles$start %in% names(ds)) {
+        day_d <- suppressWarnings(as.Date(as.character(ds[[roles$start]])))
+        day_rows <- ds[!is.na(day_d) & as.character(day_d) == last_date, , drop = FALSE]
+        dur_day <- safe_num(day_rows[[dc]]) / 60
+        ok_day <- is.finite(dur_day)
+        if (any(ok_day)) {
+            lastday_duration_html <- render_stats_block(
+            list(`Duration on this day` = tibble(
+                level = "Last day", n = sum(ok_day),
+                mean = round(mean(dur_day[ok_day]), 3), median = round(stats::median(dur_day[ok_day]), 3),
+                sd = round(stats::sd(dur_day[ok_day]), 3),
+                min = round(min(dur_day[ok_day]), 3), max = round(max(dur_day[ok_day]), 3)
+            )),
+            "lastday-duration", col_labels = STATS_COL_LABELS[["M4"]]
+            )
+        }
+        }
         lastday_html <- paste0(
         "<section id='lastday' class='card'><h2>Last Day: ", esc(last_date), "</h2>",
         "<p class='mod-desc'>Every issue from the most recent day of data collection, across all modules: ",
         "a quick way to see what's most urgent.</p>",
+        lastday_duration_html,
         html_searchable_table(
             last_day_f,
             ALL_FINDINGS_COLS,
@@ -986,6 +1102,7 @@ tr.match-show{display:table-row}
   font-weight:400;margin-left:.35rem;vertical-align:middle}
 h2 .mod-code{font-size:.62rem;border:1px solid var(--line);border-radius:4px;padding:.05rem .35rem}
 .mod-desc{color:var(--muted);font-size:.95rem;margin:.15rem 0 .9rem}
+.no-issues{color:var(--accent);font-weight:600;font-size:.9rem;margin:.4rem 0}
 .card h4{font-size:.85rem;font-family:'IBM Plex Sans',system-ui,sans-serif;font-weight:600;
   color:var(--muted);margin:1rem 0 .35rem;text-transform:uppercase;letter-spacing:.03em}
 dl.glossary{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;margin:.4rem 0 0}
@@ -1020,8 +1137,7 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     map_html,
     "<section id='all' class='card'><h2>All issues</h2>", all_tbl, "</section>",
     "<p class='note footer'>Field edits go in the shared <code>issue_tracking.xlsx</code> in your ",
-    "OneDrive-synced folder (see <code>hfc-fieldloop/config.json</code>). When ready, say ",
-    "<strong>Process HFC feedback</strong>.</p>",
+    "OneDrive-synced folder (see <code>.claude/skills/hfc-fieldloop/config.json</code>)</p>",
     "</main>",
     "<script>
 (function(){

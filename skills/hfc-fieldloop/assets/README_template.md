@@ -71,7 +71,7 @@ Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merg
 | Artifact | Path | Purpose |
 |---|---|---|
 | Product map | `hfc/structure.html` | Review tree in browser before Continue |
-| HTML report | `hfc/outputs/report.html` | Navigable findings (searchable tables, GPS map) |
+| HTML report | `hfc/outputs/<MMDD>_HFCs.html` | Navigable findings (searchable tables, GPS map) |
 | Issue tracking | OneDrive-synced `issue_tracking.xlsx` (required, no local copy) | The one shared file — agent, RA, and field team all edit it |
 | Findings | `hfc/outputs/issues.csv` | Machine-readable findings |
 | Fixed data | `<sibling of Input Data Directory>/intermediate/<stem>.<ext>` | After Pipeline B; raw unchanged |

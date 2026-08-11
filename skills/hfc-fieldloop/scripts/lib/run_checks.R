@@ -66,6 +66,40 @@ local_daypart <- function(dt, tz_vec) {
     list(hour = hr, wday = wd)
 }
 
+#' Same per-timezone-group force_tz() approach as local_daypart(), extended
+#' to also return each row's local calendar date and exact minute (not just
+#' fractional hour) - needed for grouping by day and formatting an exact
+#' HH:MM clock time (the daily earliest/latest start/end table), which
+#' local_daypart()'s hour-only contract doesn't provide. Extraction happens
+#' entirely inside each per-timezone group's loop iteration and is never
+#' recombined as POSIXct afterward - a POSIXct vector has exactly one
+#' tzone attribute for its whole length, so values force_tz()'d to
+#' different zones and then merged into one vector would each still be
+#' numerically correct, but every subsequent as.Date()/format() call would
+#' silently reinterpret them all in whatever zone that merged vector
+#' happens to carry (confirmed: as.Date.POSIXct()'s default tz="" argument
+#' uses the SYSTEM timezone, not the input's own attached tzone - an easy,
+#' silent date-off-by-one trap this sidesteps by always passing tz=
+#' explicitly and only ever combining plain numbers/strings, never POSIXct,
+#' across timezone groups).
+local_date_hm <- function(dt, tz_vec) {
+    n <- length(dt)
+    date <- rep(NA_character_, n)
+    hour <- rep(NA_integer_, n)
+    minute <- rep(NA_integer_, n)
+    tz_vec <- as.character(tz_vec)
+    tz_vec[is.na(tz_vec) | !nzchar(tz_vec)] <- Sys.timezone()
+    for (tz in unique(tz_vec)) {
+        idx <- which(tz_vec == tz & !is.na(dt))
+        if (!length(idx)) next
+        sub <- tryCatch(lubridate::force_tz(dt[idx], tzone = tz), error = function(e) dt[idx])
+        date[idx] <- as.character(as.Date(sub, tz = tz))
+        hour[idx] <- lubridate::hour(sub)
+        minute[idx] <- lubridate::minute(sub)
+    }
+    list(date = date, hour = hour, minute = minute)
+}
+
 #' Parse a start/end timestamp column into a naive POSIXct vector, trying a
 #' couple of common SurveyCTO export formats.
 parse_datetime_col <- function(x) {
@@ -235,6 +269,24 @@ check_m1 <- function(ds, roles, modules) {
         }
     } else if (identical(sig, "status")) {
         complete_flag <- ds$.hfc_completed
+    } else if (identical(sig, "gating")) {
+        # A respondent is complete only if they passed EVERY confirmed gate
+        # (Completion Signals window, A1) — a failing value on any one gate
+        # means the rest of the survey was never asked. gate_pass_values
+        # gives each gate's own "pass"/continue value; a gate with no
+        # configured pass value is treated as non-blocking (always passes).
+        gate_cols <- modules$M1$gate_cols %||% character()
+        gate_cols <- gate_cols[!is.na(gate_cols) & gate_cols %in% names(ds)]
+        gate_pass <- modules$M1$gate_pass_values %||% list()
+        if (length(gate_cols)) {
+        pass_mat <- vapply(gate_cols, function(gc) {
+            pv <- gate_pass[[gc]] %||% NA_character_
+            if (is.na(pv)) rep(TRUE, nrow(ds)) else tolower(trimws(as.character(ds[[gc]]))) == tolower(pv)
+        }, logical(nrow(ds)))
+        complete_flag <- apply(pass_mat, 1, all)
+        } else {
+        complete_flag <- rep(TRUE, nrow(ds))
+        }
     } else if (!identical(sig, "roster")) {
         completion_var <- modules$M1$completion_var %||% NA_character_
         complete_flag <- if (!is.na(completion_var) && completion_var %in% names(ds)) {
@@ -266,6 +318,42 @@ check_m1 <- function(ds, roles, modules) {
     } else tibble()
     stats <- list(overall = stats_overall, by_group = by_group_df,
                     by_enumerator = by_enum_df, by_date = by_date_df)
+
+    # Reasons for non-completion (gating mode only) — for each incomplete
+    # respondent, the reason is the FIRST gate (in confirmed order) they
+    # failed, since nothing after it was ever asked. The reason label
+    # decodes the failing value's own labels when the gate column is
+    # value-labelled (decode_labelled_chr()), else falls back to the gate's
+    # own question label/name.
+    by_reason_df <- tibble()
+    if (identical(sig, "gating") && length(gate_cols)) {
+        gate_labels <- modules$M1$gate_labels %||% list()
+        reason_vec <- rep(NA_character_, nrow(ds))
+        for (gc in gate_cols) {
+        pv <- gate_pass[[gc]] %||% NA_character_
+        if (is.na(pv)) next
+        failed <- tolower(trimws(as.character(ds[[gc]]))) != tolower(pv)
+        assign_idx <- is.na(reason_vec) & failed
+        if (any(assign_idx)) {
+            decoded <- decode_labelled_chr(ds[[gc]])
+            raw <- as.character(ds[[gc]])
+            gc_label <- gate_labels[[gc]] %||% gc
+            reason_vec[assign_idx] <- ifelse(
+            nzchar(decoded[assign_idx]) & decoded[assign_idx] != raw[assign_idx],
+            decoded[assign_idx], gc_label
+            )
+        }
+        }
+        reasons_present <- reason_vec[!complete_flag & !is.na(reason_vec)]
+        if (length(reasons_present)) {
+        # Named "count", not "n" — M1's column-label map maps `n` to "Surveys
+        # Submitted" for the by_group/by_enumerator/by_date tables, which
+        # would be a wrong label here (this is a respondent count per
+        # reason, not a submitted-surveys count).
+        by_reason_df <- tibble(reason = reasons_present) %>% count(reason, sort = TRUE, name = "count")
+        }
+    }
+    stats$by_reason <- by_reason_df
 
     findings <- empty_findings()
     # complete_flag is only row-aligned with `ds` for "status"/"primary_
@@ -306,6 +394,195 @@ check_m1 <- function(ds, roles, modules) {
             roles, unit_type = "group", value_col = ".value", sort_value_col = ".sortv"
             )
         }
+        }
+    }
+
+    # Day-by-day enumerator productivity, against a user-stated daily target
+    # (Completion Signals window) — NOT a median: an enumerator whose count
+    # on a given day falls short of the confirmed target is flagged for that
+    # day. One aggregate finding per enumerator, listing every under-target
+    # day (mirrors M7/M9's "one row per enumerator, list every instance").
+    daily_target <- suppressWarnings(as.numeric(modules$M1$daily_target_per_enum %||% NA_real_))
+    if (!is.na(daily_target) && !is.na(roles$enum) && roles$enum %in% names(ds) &&
+        !is.na(roles$start) && roles$start %in% names(ds)) {
+        enum_raw <- as.character(ds[[roles$enum]])
+        day_full <- suppressWarnings(as.Date(as.character(ds[[roles$start]])))
+        day_counts <- tibble::tibble(enum = enum_raw, day = day_full) %>%
+        filter(!is.na(enum), nzchar(enum), !is.na(day)) %>%
+        count(enum, day, name = "n") %>%
+        filter(n < daily_target)
+        if (nrow(day_counts)) {
+        enum_lookup <- enum_name_lookup(ds, roles)
+        by_enum_day <- day_counts %>%
+            arrange(day) %>%
+            group_by(enum) %>%
+            summarise(
+            .vars = paste(sprintf("%s (%d)", day, n), collapse = " & "),
+            .n_days = n(),
+            .worst = min(n),
+            .groups = "drop"
+            )
+        ename <- if (!is.null(enum_lookup)) enum_lookup$.ename[match(by_enum_day$enum, enum_lookup$.enum)] else NA_character_
+        unit_df2 <- tibble::tibble(
+            unit_id = by_enum_day$enum,
+            unit_name = ename,
+            .issue = sprintf(
+            "Below the daily target of %s on %d day%s: %s",
+            daily_target, by_enum_day$.n_days, ifelse(by_enum_day$.n_days == 1, "", "s"), by_enum_day$.vars
+            ),
+            .value = by_enum_day$.vars,
+            .sortv = by_enum_day$.worst
+        )
+        day_findings <- mk_aggregate_finding(
+            unit_df2, "low_completion_enum_day", "M1", "low_completion_enum_day", unit_df2$.issue,
+            roles, unit_type = "enumerator", value_col = ".value", sort_value_col = ".sortv"
+        )
+        findings <- bind_rows(findings, day_findings)
+        }
+    }
+
+    # Replacement-sample analysis (Completion Signals window) — independent
+    # of `sig`/completion_signal: whenever the roster (target_ds) has
+    # confirmed primary/replacement/rank/group columns, report the
+    # replacement rate and check the replacement sequence was followed
+    # correctly, regardless of which signal is actually driving M1's own
+    # completion accounting above.
+    repl_status_col <- modules$M1$replacement_status_col %||% NA_character_
+    repl_rank_col <- modules$M1$replacement_rank_col %||% NA_character_
+    repl_group_col <- modules$M1$replacement_group_col %||% NA_character_
+    if (!is.null(target_ds) && !is.na(repl_status_col) && repl_status_col %in% names(target_ds) &&
+        !is.na(repl_rank_col) && repl_rank_col %in% names(target_ds) &&
+        !is.na(repl_group_col) && repl_group_col %in% names(target_ds) &&
+        !is.na(roles$entity_id[[1]] %||% NA_character_) && roles$entity_id[[1]] %in% names(ds)) {
+        entity_col <- roles$entity_id[[1]]
+        roster_key_col <- roles$completion_roster_key_col %||% entity_col
+
+        # Every row that exists in `ds` is a completed survey under "roster"
+        # mode by construction (ds there only ever contains completed
+        # submissions — same convention already documented elsewhere in
+        # this function); otherwise reuse this project's own per-row
+        # completion flag, already computed above and row-aligned with ds.
+        ds_complete_flag <- if (identical(sig, "roster")) rep(TRUE, nrow(ds)) else complete_flag
+
+        surveyed_key <- as.character(ds[[entity_col]])
+        completed_key <- unique(surveyed_key[ds_complete_flag %in% TRUE])
+        attempted_key <- unique(surveyed_key)
+
+        primary_values <- tolower(trimws(as.character(modules$M1$replacement_primary_values %||% "primary")))
+        is_primary <- tolower(trimws(as.character(target_ds[[repl_status_col]]))) %in% primary_values
+        roster_key <- as.character(target_ds[[roster_key_col]])
+        roster_grp <- as.character(target_ds[[repl_group_col]])
+        roster_rank <- suppressWarnings(as.numeric(target_ds[[repl_rank_col]]))
+
+        roster_tbl <- tibble::tibble(key = roster_key, group = roster_grp, is_primary = is_primary, rank = roster_rank) %>%
+        filter(!is.na(key), nzchar(key), !is.na(group), nzchar(group))
+
+        if (nrow(roster_tbl)) {
+        by_group_repl <- roster_tbl %>%
+            group_by(group) %>%
+            summarise(
+            n_primary = sum(is_primary),
+            n_primary_completed = sum(is_primary & key %in% completed_key),
+            n_replaced = sum(!is_primary & key %in% completed_key),
+            .groups = "drop"
+            ) %>%
+            filter(n_primary > 0) %>%
+            mutate(pct_replaced = round(100 * n_replaced / n_primary, 1))
+
+        if (nrow(by_group_repl)) {
+            stats$by_replacement <- by_group_repl %>%
+            transmute(
+                Group = group, `Primary targeted` = n_primary,
+                `Primary completed` = n_primary_completed, Replaced = n_replaced,
+                `% Replaced` = pct_replaced
+            )
+        }
+
+        # Validity: within each group's shared replacement queue (ordered
+        # by rank), if the highest COMPLETED rank is K, every rank < K
+        # must have a row in ds at all (attempted) — a rank with no row is
+        # a genuine gap, skipped without being attempted.
+        repl_tbl <- roster_tbl %>% filter(!is_primary, !is.na(rank))
+        violations <- list()
+        for (g in unique(repl_tbl$group)) {
+            g_repl <- repl_tbl %>% filter(group == g) %>% arrange(rank)
+            completed_ranks <- g_repl$rank[g_repl$key %in% completed_key]
+            if (!length(completed_ranks)) next
+            max_completed_rank <- max(completed_ranks)
+            earlier <- g_repl %>% filter(rank < max_completed_rank)
+            missing <- earlier %>% filter(!(key %in% attempted_key))
+            if (nrow(missing)) {
+            violations[[g]] <- tibble::tibble(
+                group = g,
+                .issue = sprintf(
+                "Replacement rank %s was completed, but replacement rank%s %s in this group %s no row in the submitted data at all",
+                max_completed_rank,
+                if (nrow(missing) > 1) "s" else "",
+                paste(sort(missing$rank), collapse = ", "),
+                if (nrow(missing) > 1) "have" else "has"
+                )
+            )
+            }
+        }
+        if (length(violations)) {
+            viol_df <- bind_rows(violations)
+            unit_df3 <- tibble::tibble(unit_id = viol_df$group, unit_name = NA_character_, .issue = viol_df$.issue)
+            repl_findings <- mk_aggregate_finding(
+            unit_df3, "replacement_sequence_gap", "M1", "replacement_sequence_gap", unit_df3$.issue,
+            roles, unit_type = "group"
+            )
+            findings <- bind_rows(findings, repl_findings)
+        }
+        }
+    }
+
+    # Full daily roster (latest day) - every enumerator who has EVER
+    # appeared in ds, with their attempted/completed tally for the most
+    # recent day in the data, and their most recent active day (most
+    # informative when Attempted is 0 today). Always present whenever
+    # roles$enum + roles$start exist, independent of daily_target_per_enum
+    # being configured - same posture as M4's always-present
+    # stats$by_day_times. Lets the Summary narrative name every
+    # enumerator's day, not just the ones flagged for falling below a
+    # target, including anyone who submitted nothing at all.
+    if (!is.na(roles$enum) && roles$enum %in% names(ds) &&
+        !is.na(roles$start) && roles$start %in% names(ds)) {
+        enum_raw <- as.character(ds[[roles$enum]])
+        day_all <- suppressWarnings(as.Date(as.character(ds[[roles$start]])))
+        # Same roster-mode convention as the replacement-sample block above:
+        # every ds row is a completed survey by construction under "roster"
+        # (complete_flag there is aligned to target_ds, not ds).
+        roster_complete_flag <- if (identical(sig, "roster")) rep(TRUE, nrow(ds)) else complete_flag
+
+        roster_df <- tibble::tibble(enum = enum_raw, day = day_all, complete = roster_complete_flag) %>%
+        filter(!is.na(enum), nzchar(enum), !is.na(day))
+
+        if (nrow(roster_df)) {
+        latest_day <- max(roster_df$day, na.rm = TRUE)
+        per_enum_today <- roster_df %>%
+            filter(day == latest_day) %>%
+            group_by(enum) %>%
+            summarise(attempted = n(), completed = sum(complete), .groups = "drop")
+        last_active <- roster_df %>%
+            group_by(enum) %>%
+            summarise(.last_active = max(day), .groups = "drop") %>%
+            left_join(per_enum_today, by = "enum") %>%
+            mutate(
+            attempted = ifelse(is.na(attempted), 0L, attempted),
+            completed = ifelse(is.na(completed), 0L, completed)
+            ) %>%
+            arrange(attempted, enum)
+
+        enum_lookup <- enum_name_lookup(ds, roles)
+        ename <- if (!is.null(enum_lookup)) enum_lookup$.ename[match(last_active$enum, enum_lookup$.enum)] else NA_character_
+        enum_disp <- resolve_display_vec(last_active$enum, ename, roles$enumerator_display %||% "name")
+
+        stats$by_enum_latest_day <- tibble::tibble(
+            Enumerator = enum_disp,
+            Attempted = last_active$attempted,
+            Completed = last_active$completed,
+            `Last Active Day` = as.character(last_active$.last_active)
+        )
         }
     }
     list(findings = findings, stats = stats)
@@ -498,6 +775,43 @@ check_m4 <- function(ds, roles, modules) {
     bind_rows(lapply(names(section_stats_extra), function(lbl) stat_row(lbl, section_stats_extra[[lbl]])))
   } else tibble()
   stats$by_section <- bind_rows(stats_section_precomputed, stats_section_pairs)
+
+  # Daily earliest/latest start/end times — always present (needs only
+  # roles$start; roles$end is optional), independent of whether a single
+  # duration column is configured at all. "How did today go" operational
+  # monitoring, not tied to the SD-outlier machinery above.
+  if (!is.na(roles$start) && roles$start %in% names(ds)) {
+    row_tz <- resolve_row_timezone(ds, roles)
+    fmt_hm <- function(hour, minute) {
+      tolower(format(ISOdatetime(2000, 1, 1, hour, minute, 0, tz = "UTC"), "%I:%M %p"))
+    }
+    start_parts <- local_date_hm(parse_datetime_col(ds[[roles$start]]), row_tz)
+    has_end <- !is.na(roles$end) && roles$end %in% names(ds)
+    end_parts <- if (has_end) {
+      local_date_hm(parse_datetime_col(ds[[roles$end]]), row_tz)
+    } else {
+      list(date = rep(NA_character_, nrow(ds)), hour = rep(NA_integer_, nrow(ds)), minute = rep(NA_integer_, nrow(ds)))
+    }
+    day_tbl <- tibble(
+      day = start_parts$date, s_hour = start_parts$hour, s_min = start_parts$minute,
+      e_hour = end_parts$hour, e_min = end_parts$minute
+    ) %>% filter(!is.na(day))
+    if (nrow(day_tbl)) {
+      by_day_time <- day_tbl %>%
+        mutate(.s = s_hour * 60 + s_min, .e = e_hour * 60 + e_min) %>%
+        group_by(day) %>%
+        summarise(
+          `Earliest Start` = fmt_hm(s_hour[which.min(.s)], s_min[which.min(.s)]),
+          `Latest Start` = fmt_hm(s_hour[which.max(.s)], s_min[which.max(.s)]),
+          `Earliest End` = if (all(is.na(.e))) NA_character_ else fmt_hm(e_hour[which.min(.e)], e_min[which.min(.e)]),
+          `Latest End` = if (all(is.na(.e))) NA_character_ else fmt_hm(e_hour[which.max(.e)], e_min[which.max(.e)]),
+          .groups = "drop"
+        ) %>%
+        arrange(day) %>%
+        rename(Day = day)
+      stats$by_day_times <- by_day_time
+    }
+  }
 
   if (length(section_findings)) findings <- bind_rows(section_findings)
   list(findings = findings, stats = stats)
@@ -811,10 +1125,18 @@ check_m9 <- function(ds, roles, modules) {
 check_m13 <- function(ds, roles, modules) {
   vars <- modules$M13$vars %||% character()
   vars <- vars[!is.na(vars) & vars %in% names(ds)]
+  # SurveyCTO's duration export is always in seconds; if the M4 duration
+  # column happens to be in this shortlist, convert it here too - same
+  # seconds->minutes convention check_m4() already applies to its own
+  # tables, so M13 doesn't show a raw, unconverted (and much larger) number
+  # for the same variable.
+  duration_col <- modules$M4$duration %||% roles$duration
 
   mk_table <- function(sub_ds) {
     rows <- lapply(vars, function(vc) {
-      v <- safe_num(sub_ds[[vc]]); ok <- is.finite(v)
+      v <- safe_num(sub_ds[[vc]])
+      if (!is.na(duration_col) && identical(vc, duration_col)) v <- v / 60
+      ok <- is.finite(v)
       tibble(Variable = vc, Mean = round(mean(v[ok]), 3), SD = round(stats::sd(v[ok]), 3),
             Min = round(suppressWarnings(min(v[ok])), 3), Max = round(suppressWarnings(max(v[ok])), 3),
             Missing = sum(!ok), Obs = sum(ok))

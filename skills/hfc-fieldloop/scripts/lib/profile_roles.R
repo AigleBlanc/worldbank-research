@@ -789,12 +789,35 @@ default_modules <- function(roles) {
         M1 = list(
         on = TRUE,
         completion_var = if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else NA_character_,
-        # Which of detect_completion_signal()'s signal types (status/roster/
-        # primary_secondary) is actually driving check_m1()'s complete_flag
-        # for this project, or "row_missingness" when none was detected —
-        # round-tripped through modules.yaml so the report's Completion
-        # section (module_desc.R's m1_desc()) can state it concretely.
+        # Which signal type is actually driving check_m1()'s complete_flag
+        # for this project ("gating" — the preferred, instrument-read
+        # signal — "roster"/"primary_secondary", or "row_missingness" when
+        # none was detected) — round-tripped through modules.yaml so the
+        # report's Completion section (module_desc.R's m1_desc()) can state
+        # it concretely.
         completion_signal = roles$completion_primary_signal %||% "row_missingness",
+        # Gating (Completion Signals window, A1): agent-confirmed screening
+        # question(s), in form order, plus each one's "pass"/continue value
+        # and (optional) a human label for the report/desc text. Blank
+        # until the agent identifies + confirms real gates for this survey.
+        gate_cols = character(),
+        gate_pass_values = list(),
+        gate_labels = list(),
+        # Day-by-day enumerator productivity vs. a user-stated target
+        # (Completion Signals window) — NA/unset skips that check entirely.
+        daily_target_per_enum = NA_real_,
+        # Replacement-sample analysis (Completion Signals window, A1) —
+        # columns in the roster/target file (target_ds), independent of
+        # completion_signal: which column marks Primary vs Secondary/
+        # Replacement, which values count as "Primary", the numeric
+        # position-in-the-replacement-queue column, and the roster's own
+        # group column (matched by raw value against roles$group). Blank
+        # until the agent identifies + confirms them for this survey; blank
+        # skips the whole feature.
+        replacement_status_col = NA_character_,
+        replacement_primary_values = "primary",
+        replacement_rank_col = NA_character_,
+        replacement_group_col = NA_character_,
         group_vars = m1_group_vars,
         by_enum = TRUE,
         by_date = TRUE,

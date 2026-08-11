@@ -21,7 +21,14 @@ m1_desc <- function(modules) {
     sig <- modules$M1$completion_signal %||% NA_character_
     var <- modules$M1$completion_var %||% NA_character_
     pct_median <- round(100 * (modules$M1$pct_median %||% 0.5))
-    method <- if (identical(sig, "status")) {
+    method <- if (identical(sig, "gating")) {
+        gates <- fmt_var_list(modules$M1$gate_cols %||% character(), n = 4)
+        if (nzchar(gates)) {
+        sprintf("complete only if it passes every confirmed gate: %s (a fail on any one is a non-completion, with a Reason recorded)", gates)
+        } else {
+        "complete only if it passes every confirmed gate"
+        }
+    } else if (identical(sig, "status")) {
         sprintf("complete when its%s status column marks it Complete", if (!is.na(var)) sprintf(" `%s`", var) else "")
     } else if (identical(sig, "roster")) {
         "complete when it matches an entry in the project's target/roster file"
@@ -32,9 +39,19 @@ m1_desc <- function(modules) {
     } else {
         "complete once at least 90% of its fields are filled in"
     }
+    daily_target <- suppressWarnings(as.numeric(modules$M1$daily_target_per_enum %||% NA_real_))
+    daily_clause <- if (!is.na(daily_target)) {
+        sprintf(" Also flags any enumerator whose submissions on a given day fall below the confirmed daily target of %s.", daily_target)
+    } else ""
+    repl_configured <- !is.na(modules$M1$replacement_status_col %||% NA_character_) &&
+        !is.na(modules$M1$replacement_rank_col %||% NA_character_) &&
+        !is.na(modules$M1$replacement_group_col %||% NA_character_)
+    repl_clause <- if (repl_configured) {
+        " Also reports, by group, what share of the targeted primary sample was replaced, and flags any group where a replacement completed out of order (an earlier-ranked replacement with no row in the data at all)."
+    } else ""
     sprintf(
-        "A submission counts %s. Reports these counts overall, by group, enumerator, and date, and flags any group below %s%% of the median completion count.",
-        method, pct_median
+        "A submission counts %s. Reports these counts overall, by group, enumerator, and date, and flags any group below %s%% of the median completion count.%s%s",
+        method, pct_median, daily_clause, repl_clause
     )
 }
 

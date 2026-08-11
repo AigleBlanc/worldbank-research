@@ -121,7 +121,10 @@ copy_report_to_sync_folder <- function(project_id, skill_dir = NULL, html_path) 
     }
     tryCatch({
         ensure_local_folder(cfg$onedrive_output_dir)
-        dest_name <- paste0(gsub("[^A-Za-z0-9_-]+", "_", project_id), "_report.html")
+        # Mirror the source file's own (dated) name exactly, rather than
+        # reconstructing a fixed suffix — the report is now written as
+        # <MMDD>_HFCs.html and rebuilds accumulate as separate snapshots.
+        dest_name <- basename(html_path)
         dest_path <- file.path(cfg$onedrive_output_dir, dest_name)
         ok <- file.copy(html_path, dest_path, overwrite = TRUE)
         if (isTRUE(ok)) {

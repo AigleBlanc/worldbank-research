@@ -30,7 +30,7 @@
 | F27 | Getting the duplicate-check key wrong without it being visibly correctable — it's auto-resolved in A1 (Entity ID alone if already unique, else + detected round/wave-like candidates) and restated in the Keys & Hours window's Duplicate key tab precisely so a wrong resolution can be corrected there |
 | F28 | Overwriting `issue_tracking.xlsx` (via `merge_issues.R`/`merge_resolutions.R`'s output) without an explicit AskUserQuestion confirmation first — always review the `merged_*.xlsx` file with the user before running `commit_merged_issue_tracking.R` |
 | F29 | Skipping or silently bypassing the config pre-flight check (A0) — if Input Data Directory, HFC Output Directory, or Code Output Directory isn't configured/reachable in `config.json`, stop and direct the user to `install.R` + confirming OneDrive desktop sync is running + editing `config.json`; never proceed with a build that has nowhere to write `issue_tracking.xlsx` |
-| F30 | Skipping the mandatory post-commit report rebuild in Pipeline B (step 7) — leaving `hfc/outputs/report.html` showing findings that were already fixed/resolved |
+| F30 | Skipping the mandatory post-commit report rebuild in Pipeline B (step 7) — leaving `hfc/outputs/<MMDD>_HFCs.html` showing findings that were already fixed/resolved |
 | F31 | Skipping the mandatory important-variables shortlist step (A2) before build, or letting M6/M9/M13 fall back to their old independent auto-pools when a unified list was never confirmed |
 | F32 | Presenting two near-duplicate variables (e.g. `treat` vs. `treat_ext`) as if they were independently meaningful in any shortlist — always silently keep the single most reasonable one |
 | F33 | Inferring the data-collection country from the input folder's name/basename instead of geography actually present in the data (district/region/village names, GPS bounding box) |
@@ -38,3 +38,5 @@
 | F35 | Confusing assent and consent, or bundling the Consent tab (A2, Wrap-up window) with any other module's confirmation |
 | F36 | Defaulting M1's completion-by-group breakdown to a geographic column when a Treatment/Control column exists and geography wasn't explicitly opted into (default: declined) |
 | F37 | Treating a project description/PAP document as a data source (parsing findings or role fields out of it) or letting it silently override what the actual microdata shows |
+| F38 | Including a skip-logic-dependent (conditional) variable in the missingness variable pool (unified shortlist or M7's extra vars) without an explicit user request to include that specific variable |
+| F39 | Reading the survey instrument/form via a raw `Read` of the `.xlsx` (surfaces only its first sheet) instead of `scripts/lib/form_text.R`'s all-sheet dump — silently misses the `choices` sheet's value labels and the `settings` sheet's form metadata |

@@ -246,12 +246,13 @@ module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes
 
 # Steps 15-16: the actual work — run every confirmed M1–M13 + custom check,
 # then write hfc/outputs/ artifacts (shared with scripts/rebuild_report.R).
-# When the confirmed completion signal is "roster", load the target/sample
-# list (read-only, never mutated, never copied anywhere) so check_m1() can
-# compute target-vs-actual completion against it.
+# Load the roster/target-sample list (read-only, never mutated, never
+# copied anywhere) whenever one was found — not just when the confirmed
+# completion signal is "roster": check_m1()'s replacement-sample analysis
+# (primary/replacement/rank columns) is independent of which signal is
+# actually driving completion, so it needs target_ds too.
 target_ds <- NULL
-if (identical(roles$completion_primary_signal, "roster") &&
-    !is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
+if (!is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
     target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
     if (is.null(target_ds)) message("Could not load roster/target file: ", roles$completion_roster_candidate$path)
 }

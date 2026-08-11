@@ -66,6 +66,22 @@ relevant_parents <- function(expr) {
     }, character(1))
 }
 
+# Fan-out per column: how many OTHER questions' `relevant` expressions name
+# it as a parent. A cheap, purely mechanical supporting signal for spotting
+# candidate gating/eligibility questions (Completion Signals window, A1) —
+# a column with a high count gates a large share of the rest of the form,
+# which is exactly what a true screening question looks like. Judgment
+# still decides which candidates are actually gates; this only ranks them.
+# @return named integer vector (parent column -> fan-out count), sorted
+#   descending, empty if form_map has no relevant expressions at all.
+gate_fanout_counts <- function(form_map) {
+    if (is.null(form_map) || nrow(form_map) == 0) return(integer())
+    parents <- unlist(lapply(form_map$relevant, relevant_parents), use.names = FALSE)
+    if (!length(parents)) return(integer())
+    counts <- sort(table(parents), decreasing = TRUE)
+    stats::setNames(as.integer(counts), names(counts))
+}
+
 # Best-effort: is a row "relevant" for a child column given parent values in ds?
 # Conservative: if we cannot evaluate, assume relevant (flag blanks).
 # For common yes/no parents: relevant when parent is 1 / Yes / yes / TRUE.

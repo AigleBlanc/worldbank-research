@@ -58,7 +58,7 @@ The agent will ask you questions along the way using clickable option cards (nev
 
 1. The agent finds your data (and form, if you have one) and shows you its own best guess for a handful of things: what column identifies each respondent, what to call it in the report, and the data-collection country, all in one screen. Type a correction if anything's wrong; otherwise just confirm it looks right.
 2. It proposes how it'll run each check (M1–M13: duplicates, outliers, GPS, timing, missing data, etc.); again as its own best guess, grouped into a couple of screens, never a long list of options to choose from.
-3. It builds the report and opens `hfc/outputs/report.html` in your browser.
+3. It builds the report and opens `hfc/outputs/<MMDD>_HFCs.html` in your browser.
 4. It creates (or updates) `issue_tracking.xlsx` — one row per flagged issue.
 
 If `issue_tracking.xlsx` already exists (a second run), the agent doesn't overwrite it blindly — it shows you exactly what changed and asks you to confirm before anything is replaced. Nothing the field team already wrote is ever lost or silently dropped.
@@ -91,7 +91,7 @@ You don't have to set `Accepted` before the agent will act — it picks up any `
 
 | What | Where |
 |---|---|
-| HTML report | `<Code Output Directory>/hfc/outputs/report.html` |
+| HTML report | `<Code Output Directory>/hfc/outputs/<MMDD>_HFCs.html` |
 | Shared tracking file | `issue_tracking.xlsx` — in your configured **HFC Output Directory** (required, no local copy) |
 | Fixed data (raw is never touched) | a sibling `intermediate/` folder next to your **Input Data Directory** |
 | Your original data | your **Input Data Directory** — never modified |
