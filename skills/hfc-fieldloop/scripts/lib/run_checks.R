@@ -298,11 +298,34 @@ check_m1 <- function(ds, roles, modules) {
 
     stats_overall <- completion_summary(complete_flag)
     group_vars <- modules$M1$group_vars %||% character()
-    by_group <- lapply(group_vars[group_vars %in% names(group_source_ds)], function(gv) {
-        completion_summary(complete_flag, group_source_ds[[gv]]) %>%
+    # Under "roster" mode, group_source_ds IS target_ds - the roster's own
+    # strata column can carry a different name than ds's (e.g. ds has
+    # "village", the roster has "village_name"). Without reconciling that,
+    # a name mismatch would silently drop the variable from by_group_df
+    # entirely (no error, nothing computed) rather than compute anything -
+    # roles$completion_roster_group_map (role_map.yaml) bridges the gap,
+    # agent-resolved at setup the same way completion_roster_key_col
+    # already bridges the entity-key name mismatch; identity (no map entry
+    # needed) whenever the names already match, the common case.
+    roster_group_map <- roles$completion_roster_group_map %||% list()
+    resolve_group_var <- function(gv) {
+        if (gv %in% names(group_source_ds)) return(gv)
+        if (!identical(sig, "roster")) return(NA_character_)
+        mapped <- roster_group_map[[gv]] %||% NA_character_
+        if (!is.na(mapped) && mapped %in% names(group_source_ds)) mapped else NA_character_
+    }
+    by_group <- lapply(group_vars, function(gv) {
+        gv_resolved <- resolve_group_var(gv)
+        if (is.na(gv_resolved)) return(NULL)
+        # Table's own `group_var` label stays the name as known in the
+        # primary survey data (gv), never the roster's internal column
+        # name (gv_resolved) - that's an implementation detail, not
+        # something the report should surface.
+        completion_summary(complete_flag, group_source_ds[[gv_resolved]]) %>%
         mutate(group_var = gv, .before = 1) %>%
         rename(value = group)
     })
+    by_group <- by_group[!vapply(by_group, is.null, logical(1))]
     by_group_df <- if (length(by_group)) bind_rows(by_group) else tibble()
     by_enum_df <- if (isTRUE(modules$M1$by_enum %||% TRUE) && !is.na(roles$enum) && roles$enum %in% names(group_source_ds)) {
         enum_disp <- resolve_display_vec(
@@ -490,12 +513,18 @@ check_m1 <- function(ds, roles, modules) {
             mutate(pct_replaced = round(100 * n_replaced / n_primary, 1))
 
         if (nrow(by_group_repl)) {
-            stats$by_replacement <- by_group_repl %>%
+            by_repl_tbl <- by_group_repl %>%
             transmute(
-                Group = group, `Primary targeted` = n_primary,
+                group, `Primary targeted` = n_primary,
                 `Primary completed` = n_primary_completed, Replaced = n_replaced,
                 `% Replaced` = pct_replaced
             )
+            # What roles$group actually denotes for this survey (e.g.
+            # "Village", "Farmer group"), never the generic "Group" -
+            # derive_group_label()'s guess, same source as every other
+            # dynamically-labelled M1 table.
+            names(by_repl_tbl)[1] <- roles$group_label %||% "Group"
+            stats$by_replacement <- by_repl_tbl
         }
 
         # Validity: within each group's shared replacement queue (ordered
@@ -515,10 +544,11 @@ check_m1 <- function(ds, roles, modules) {
             violations[[g]] <- tibble::tibble(
                 group = g,
                 .issue = sprintf(
-                "Replacement rank %s was completed, but replacement rank%s %s in this group %s no row in the submitted data at all",
+                "Replacement rank %s was completed, but replacement rank%s %s in this %s %s no row in the submitted data at all",
                 max_completed_rank,
                 if (nrow(missing) > 1) "s" else "",
                 paste(sort(missing$rank), collapse = ", "),
+                tolower(roles$group_label %||% "group"),
                 if (nrow(missing) > 1) "have" else "has"
                 )
             )
@@ -681,7 +711,7 @@ check_m3 <- function(ds, roles, modules) {
     long_flag <- ok & dur > mu + sd_rule * sdv
     short_flag <- ok & dur < mu - sd_rule * sdv & dur > 0
     if (any(long_flag)) {
-      tmp <- ds[long_flag, , drop = FALSE]; tmp$.v <- dur[long_flag]
+      tmp <- ds[long_flag, , drop = FALSE]; tmp$.v <- round1(dur[long_flag])
       parts$long <- mk_findings(
         tmp, "long_duration", "M4", "long_duration",
         sprintf("%s more than %s SD above the mean", variable_name, sd_rule), roles, ".v",
@@ -689,7 +719,7 @@ check_m3 <- function(ds, roles, modules) {
       )
     }
     if (any(short_flag)) {
-      tmp <- ds[short_flag, , drop = FALSE]; tmp$.v <- dur[short_flag]
+      tmp <- ds[short_flag, , drop = FALSE]; tmp$.v <- round1(dur[short_flag])
       parts$short <- mk_findings(
         tmp, "short_duration", "M4", "short_duration",
         sprintf("%s more than %s SD below the mean", variable_name, sd_rule), roles, ".v",
@@ -721,17 +751,21 @@ check_m4 <- function(ds, roles, modules) {
     sec_dur <- as.numeric(difftime(
       parse_datetime_col(ds[[pr$end]]), parse_datetime_col(ds[[pr$start]]), units = "mins"
     ))
-    var_label <- paste0(label, " duration")
-    section_stats_extra[[var_label]] <- sec_dur
-    section_findings[[label]] <- .m4_flag_outliers(ds, sec_dur, sd_rule, roles, var_label)
+    # Bare section name (e.g. "Consent") for the stats-table row - the
+    # "<name> duration" phrasing only belongs in the outlier finding's
+    # sentence ("Consent duration is more than 3 SD above the mean"),
+    # never as the Section column's own value.
+    finding_label <- paste0(label, " duration")
+    section_stats_extra[[label]] <- sec_dur
+    section_findings[[label]] <- .m4_flag_outliers(ds, sec_dur, sd_rule, roles, finding_label)
   }
 
   stat_row <- function(label, vals) {
     tibble(level = label, n = sum(is.finite(vals)),
-          mean = round(mean(vals, na.rm = TRUE), 3), median = round(stats::median(vals, na.rm = TRUE), 3),
-          sd = round(stats::sd(vals, na.rm = TRUE), 3),
-          min = round(suppressWarnings(min(vals, na.rm = TRUE)), 3),
-          max = round(suppressWarnings(max(vals, na.rm = TRUE)), 3))
+          mean = round1(mean(vals, na.rm = TRUE)), median = round1(stats::median(vals, na.rm = TRUE)),
+          sd = round1(stats::sd(vals, na.rm = TRUE)),
+          min = round1(suppressWarnings(min(vals, na.rm = TRUE))),
+          max = round1(suppressWarnings(max(vals, na.rm = TRUE))))
   }
 
   if (!is.na(dc) && dc %in% names(ds)) {
@@ -759,8 +793,8 @@ check_m4 <- function(ds, roles, modules) {
       )
       ds %>% mutate(.dur = dur, .enum_disp = enum_disp) %>% filter(is.finite(.dur)) %>%
         group_by(enumerator = .enum_disp) %>%
-        summarise(n = n(), mean = round(mean(.dur), 3), median = round(stats::median(.dur), 3),
-                  sd = round(stats::sd(.dur), 3), min = round(min(.dur), 3), max = round(max(.dur), 3),
+        summarise(n = n(), mean = round1(mean(.dur)), median = round1(stats::median(.dur)),
+                  sd = round1(stats::sd(.dur)), min = round1(min(.dur)), max = round1(max(.dur)),
                   .groups = "drop")
     } else tibble()
 
@@ -873,7 +907,7 @@ check_m6 <- function(ds, roles, modules) {
     flag <- ok & abs(v - mu) > sd_rule * sdv
     if (!any(flag)) next
     tmp <- ds[flag, , drop = FALSE]
-    tmp$.v <- round(v[flag], 3)
+    tmp$.v <- round1(v[flag])
     # Sort worst-first by deviation magnitude (SDs from the mean), not the
     # raw value — a raw value alone isn't comparable across variables or
     # across low/high outliers on the same variable.
@@ -881,7 +915,9 @@ check_m6 <- function(ds, roles, modules) {
     tmp$.direction <- ifelse(v[flag] > mu, "more", "less")
     catg <- if (identical(vc, roles$age) || grepl("age", vc, ignore.case = TRUE)) "age_outlier" else "numeric_outlier"
     tmp <- utils::head(tmp, 200)
-    label <- sprintf("Outlier value for %s; the value is %s than %s SD from the mean", vc, tmp$.direction, sd_rule)
+    # var_label() for the human-facing sentence; `vc` itself stays raw for
+    # the check_id and variable_name (-> issue_tracking.xlsx's DIME column).
+    label <- sprintf("Outlier value for %s; the value is %s than %s SD from the mean", var_label(vc, roles), tmp$.direction, sd_rule)
     parts[[vc]] <- mk_findings(
       tmp, sprintf("outlier_%s", vc), "M6", catg, label, roles, ".v",
       variable_name = vc, sort_value_col = ".sortv"
@@ -933,7 +969,7 @@ check_m7 <- function(ds, roles, modules) {
     # Gate 1: only real population-level issues get a row at all — "do not
     # create rows for variables who don't have more than 50% missing."
     if (is.na(pct_missing) || pct_missing <= var_issue_threshold * 100) next
-    by_var[[vc]] <- tibble(variable = vc, pct_missing = pct_missing,
+    by_var[[vc]] <- tibble(variable = var_label(vc, roles), pct_missing = pct_missing,
                             n_missing = sum(miss), n = n_applicable)
 
     if (by_enum) {
@@ -946,7 +982,10 @@ check_m7 <- function(ds, roles, modules) {
         filter(!is.na(enumerator), nzchar(enumerator), applicable) %>%
         group_by(enumerator) %>%
         summarise(pct_missing = round(100 * mean(miss), 1), n = n(), .groups = "drop") %>%
-        mutate(variable = vc)
+        # Clean label, not the raw column name - feeds both the by_enumerator
+        # stats table and the aggregate finding's sentence below, neither of
+        # which is a DIME-facing raw-name column.
+        mutate(variable = var_label(vc, roles))
       by_e_display <- by_e
       by_e_display$enumerator <- resolve_display_vec(
         by_e$enumerator,
@@ -1025,10 +1064,10 @@ check_m8 <- function(ds, roles, modules) {
     }
     flagged <- tmp %>% filter(is.finite(dist_m), dist_m > thr)
     if (nrow(flagged) > 0) {
-      flagged$.v <- as.character(round(flagged$dist_m, 3))
+      flagged$.v <- as.character(round1(flagged$dist_m))
       findings <- mk_findings(
         flagged, "gps_distance", "M8", "gps_distance",
-        sprintf("Distance between reference and survey coordinates is %.3f meters", round(flagged$dist_m, 3)),
+        sprintf("Distance between reference and survey coordinates is %.1f meters", round1(flagged$dist_m)),
         roles, ".v", sort_value_col = "dist_m"
       )
     }
@@ -1063,7 +1102,9 @@ check_m9 <- function(ds, roles, modules) {
         ) %>%
         filter(n >= min_n_per_enum, top_share >= enum_thr)
       if (!nrow(tab)) next
-      flagged_rows[[vc]] <- tab %>% mutate(variable = vc)
+      # Clean label - this feeds the aggregate finding's sentence below,
+      # not a DIME-facing raw-name column.
+      flagged_rows[[vc]] <- tab %>% mutate(variable = var_label(vc, roles))
     }
     # One row per enumerator, not one per (enumerator, variable) pair: an
     # enumerator flagged on several variables gets every variable listed in
@@ -1103,11 +1144,16 @@ check_m9 <- function(ds, roles, modules) {
     flag <- share >= survey_thr
     if (any(flag)) {
       tmp <- ds[flag, , drop = FALSE]
-      tmp$.v <- round(share[flag], 3)
+      # Reported as a percentage (matching M7's pct_missing convention),
+      # not the raw 0-1 fraction - a bare 1-decimal fraction (e.g. 0.9)
+      # would lose the precision a percentage keeps (85.3%). .sortv keeps
+      # the plain numeric share for ordering, separate from the display string.
+      tmp$.sortv <- share[flag]
+      tmp$.v <- sprintf("%s%%", round1(share[flag] * 100))
       parts$survey <- mk_findings(
         tmp, "straightlining_survey", "M9", "straightlining_survey",
         sprintf("%.0f%%+ of this submission's ordinal answers are identical", survey_thr * 100),
-        roles, ".v", sort_value_col = ".v"
+        roles, ".v", sort_value_col = ".sortv"
       )
     }
   }
@@ -1137,8 +1183,8 @@ check_m13 <- function(ds, roles, modules) {
       v <- safe_num(sub_ds[[vc]])
       if (!is.na(duration_col) && identical(vc, duration_col)) v <- v / 60
       ok <- is.finite(v)
-      tibble(Variable = vc, Mean = round(mean(v[ok]), 3), SD = round(stats::sd(v[ok]), 3),
-            Min = round(suppressWarnings(min(v[ok])), 3), Max = round(suppressWarnings(max(v[ok])), 3),
+      tibble(Variable = var_label(vc, roles), Mean = round1(mean(v[ok])), SD = round1(stats::sd(v[ok])),
+            Min = round1(suppressWarnings(min(v[ok]))), Max = round1(suppressWarnings(max(v[ok]))),
             Missing = sum(!ok), Obs = sum(ok))
     })
     if (length(rows)) bind_rows(rows) else tibble()
@@ -1193,14 +1239,14 @@ check_m12 <- function(ds, roles, modules) {
             category = paste0(category, "_column_empty"),
             issue = sprintf(
             "%s. Every one of %d surveyed rows is missing/0/No on column '%s'. Likely the wrong column was detected, or this field was never actually captured, not a per-row gap.",
-            issue, nrow(ds), col
+            issue, nrow(ds), var_label(col, roles)
             ),
             submission_id = "", group_id = "", enumerator = "", start_date = "", end_date = "",
             key = "", value = "", variable = col, entity_name = "", group_name = "", enumerator_name = "",
             sort_value = NA_real_
         ))
         }
-        mk_findings(miss, check_id, "M12", category, sprintf("%s (column '%s')", issue, col), roles)
+        mk_findings(miss, check_id, "M12", category, sprintf("%s (column '%s')", issue, var_label(col, roles)), roles)
     }
     parts <- list()
     if (!is.na(roles$assent)) {

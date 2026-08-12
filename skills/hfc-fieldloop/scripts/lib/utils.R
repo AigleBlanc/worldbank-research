@@ -18,6 +18,53 @@ safe_num <- function(x) {
     suppressWarnings(as.numeric(x))
 }
 
+# Single shared rounding convention for every data-derived value shown in
+# the HTML report or issue tracking sheet (means/medians/SDs, GPS distance,
+# outlier values, durations, percentages) - 1 decimal place, never 3.
+# Does NOT apply to threshold-describing prose (e.g. "flags values below
+# 50% missing") - those describe a configured setting, not a measured
+# value, and stay at 0 decimals via their own sprintf("%.0f%%", ...) calls.
+round1 <- function(x) round(suppressWarnings(as.numeric(x)), 1)
+
+# One finding-date-per-row, truncated to a bare "YYYY-MM-DD" string,
+# preferring start_date and falling back to end_date - shared by every
+# place that needs to compare a finding against a specific calendar day
+# (the Last Day filter, the issues-table Date column, chronological sort).
+# `findings$start_date`/`end_date` (mk_findings(), this file) store the
+# RAW, untruncated roles$start/roles$end value (e.g. a full timestamp
+# string) - as.Date() safely truncates that to just the date (confirmed:
+# as.Date("2026-06-30 10:00:00") -> "2026-06-30", NA-safe on blank/NA
+# input), unlike a naive exact-string comparison against a bare date like
+# roles$last_date, which never matches a full-timestamp start/end column.
+finding_date_vec <- function(df) {
+    if (is.null(df) || !nrow(df)) return(character())
+    sd <- if ("start_date" %in% names(df)) as.character(df$start_date) else rep(NA_character_, nrow(df))
+    ed <- if ("end_date" %in% names(df)) as.character(df$end_date) else rep(NA_character_, nrow(df))
+    raw <- ifelse(!is.na(sd) & nzchar(sd), sd, ed)
+    suppressWarnings(as.character(as.Date(raw)))
+}
+
+# Clean, human-readable display name for a raw survey column (e.g.
+# price_rice_kg -> "Rice price (kg)") - roles$var_labels (role_map.yaml) is
+# a {colname: "Clean Label"} map generated once, silently, by agent
+# judgment at setup time (SKILL.md A2, same posture as M7's extra-vars
+# pick) from the column name + its instrument question label, covering
+# every column that can actually surface in a finding. Falls back to the
+# raw column name when unset - matters for a rebuild against an older
+# config that predates this field, or any column outside that pool. Use
+# this ONLY for human-facing sentence/table text; the raw column name
+# stays in mk_findings()'s `variable_name` (-> issue_tracking.xlsx's
+# "Variable (DIME use)" column), documented for programmatic/DIME reuse.
+# Vectorized: a single colname or a vector of them (e.g. joining several
+# flagged variables into one sentence).
+var_label <- function(colname, roles) {
+    labels <- roles$var_labels %||% list()
+    vapply(colname, function(cn) {
+        if (is.na(cn) || !nzchar(as.character(cn))) return(as.character(cn))
+        labels[[cn]] %||% cn
+    }, character(1), USE.NAMES = FALSE)
+}
+
 #' Decode a Stata/SurveyCTO value-labelled column (e.g. 1/2/3 with attached
 #' labels "Name 1"/"Name 2"/"Name 3") to its label text. Common SurveyCTO
 #' pattern: the enumerator/group field IS the labelled ID, with no separate

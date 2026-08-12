@@ -384,9 +384,10 @@ category_label <- function(category) {
 # Which direction counts as "worse" for a category's sort_value (see
 # mk_findings()'s sort_value_col) — "asc" means smaller = worse (e.g. a very
 # short interview), "desc" means larger = worse (e.g. a large GPS distance).
-# Categories absent from this map have no continuous badness measure (binary/
-# categorical checks like duplicates, form version, consent) and fall back to
-# the old enumerator/entity-ID order untouched.
+# No longer used for ROW ordering (sort_findings_for_display() below is now
+# purely chronological) - kept only as a reference of which categories carry
+# a continuous "how bad is this" magnitude in mk_findings()'s sort_value,
+# should some future feature (e.g. a severity badge) want it again.
 FINDING_SORT_DIRECTION <- c(
     low_completion = "asc",
     long_duration = "desc", short_duration = "asc",
@@ -397,36 +398,25 @@ FINDING_SORT_DIRECTION <- c(
     straightlining_enum = "desc", straightlining_survey = "desc"
 )
 
-# Order findings by module (M1..M13, in MODULE_ORDER), then "worst first"
-# within each module's block (direction from FINDING_SORT_DIRECTION, keyed by
-# category, applied to mk_findings()'s sort_value), then enumerator, then
-# submission_id (entity ID), then date (most recent first) as a final
-# tiebreak. Categories with no sort_value (NA) keep the old enumerator/
-# entity-ID/date order, matching pre-existing behavior exactly. Blank/NA
-# values in enumerator/submission_id are grouped last (they mean "not
-# applicable to this check") so individually traceable rows surface first
-# instead of interleaving with N/A rows.
+# Order findings by module (M1..M13, in MODULE_ORDER, since each module still
+# gets its own page section), then fully chronologically WITHIN that module's
+# tables: date (most recent first, via finding_date_vec(), utils.R - blank/
+# unparseable dates, e.g. aggregate-level findings, sort last), then
+# enumerator (blank last, else alphabetical), then submission_id as a final,
+# not user-visible, stable tiebreak. Replaces the old worst-first/severity
+# ordering entirely - every issues table now reads as a straightforward,
+# date-ordered log rather than a triage-by-badness list.
 sort_findings_for_display <- function(df) {
     if (is.null(df) || nrow(df) == 0) return(df)
     module_rank <- match(df$check_module, MODULE_ORDER)
     module_rank[is.na(module_rank)] <- length(MODULE_ORDER) + 1L
-    direction <- unname(FINDING_SORT_DIRECTION[as.character(df$category)])
-    sv <- if ("sort_value" %in% names(df)) suppressWarnings(as.numeric(df$sort_value)) else rep(NA_real_, nrow(df))
-    has_badness <- !is.na(direction) & !is.na(sv)
-    badness <- ifelse(has_badness, ifelse(direction == "asc", -sv, sv), NA_real_)
     enum <- if ("enumerator" %in% names(df)) as.character(df$enumerator) else rep("", nrow(df))
     sid  <- if ("submission_id" %in% names(df)) as.character(df$submission_id) else rep("", nrow(df))
     enum[is.na(enum)] <- ""
     sid[is.na(sid)] <- ""
-    raw_date <- if ("start_date" %in% names(df) || "end_date" %in% names(df)) {
-        sd <- if ("start_date" %in% names(df)) as.character(df$start_date) else rep("", nrow(df))
-        ed <- if ("end_date" %in% names(df)) as.character(df$end_date) else rep("", nrow(df))
-        ifelse(!is.na(sd) & nzchar(sd), sd, ed)
-    } else rep(NA_character_, nrow(df))
-    date_key <- suppressWarnings(as.numeric(as.Date(raw_date)))
+    date_key <- suppressWarnings(as.numeric(as.Date(finding_date_vec(df))))
     date_key[is.na(date_key)] <- -Inf
-    ord <- order(module_rank, !has_badness, -ifelse(has_badness, badness, 0),
-                 enum == "", enum, sid == "", sid, -date_key)
+    ord <- order(module_rank, -date_key, enum == "", enum, sid == "", sid)
     df[ord, , drop = FALSE]
 }
 
@@ -497,15 +487,19 @@ html_searchable_table <- function(df, cols, table_id, show_n = 10L, col_labels =
 # of data.frames e.g. M1's overall/by_group/by_enumerator/by_date) as one or
 # more small labeled searchable tables. Used for M1/M3/M4/M7/M13, which
 # report summary statistics rather than (only) row-level findings.
-#' Any column named `pct_*` gets rendered as a whole-number percentage
-#' string with a literal "%" suffix (87.3 -> "87%") — module-agnostic (scans
-#' for the naming pattern rather than hardcoding specific modules), so it
+#' Any column named `pct_*` gets rendered as a 1-decimal percentage string
+#' with a literal "%" suffix (87.3 -> "87.3%") — module-agnostic (scans for
+#' the naming pattern rather than hardcoding specific modules), so it
 #' automatically covers any future pct_* column. Display-only: operates on
 #' a copy, never the underlying stats data other code might still use.
+#' 1 decimal to match the value's own source rounding (run_checks.R already
+#' rounds every pct_* value to 1 decimal at computation time) - re-rounding
+#' to 0 decimals here would silently show less precision than the same
+#' number gets in findings text.
 format_pct_cols <- function(df) {
     pct_cols <- grep("^pct_", names(df), value = TRUE)
     for (cn in pct_cols) {
-        df[[cn]] <- paste0(round(suppressWarnings(as.numeric(df[[cn]]))), "%")
+        df[[cn]] <- paste0(round1(suppressWarnings(as.numeric(df[[cn]]))), "%")
     }
     df
 }
@@ -521,9 +515,15 @@ STATS_COL_LABELS <- list(
     # completion_signal EXCEPT "roster", where group_source_ds is the
     # target/roster file itself and `n` is a genuine planned/target count,
     # not something submitted. write_html_report() swaps this one label back
-    # to "Target" for that specific case before rendering M1's stats.
+    # to "Target" for that specific case before rendering M1's stats. `group`
+    # is swapped the same way, to roles$group_label (e.g. "Village") — never
+    # left as the generic "Group". `group_var` is a DIFFERENT concept (the
+    # by_group table's own column can mix several distinct grouping-variable
+    # NAMES, e.g. both a Treatment/Control column and a geography column in
+    # one table), so it keeps a generic fallback rather than forcing one
+    # single dynamic label onto a column that isn't one single concept.
     M1 = c(n = "Surveys Submitted", n_complete = "Completed", pct_complete = "Completion",
-            group = "Group", group_var = "Group", value = "Value",
+            group = "Group", group_var = "Breakdown", value = "Value",
             enumerator = "Enumerator", date = "Date", reason = "Reason", count = "Count"),
     M3 = c(version = "Version", n = "N", date_min = "First seen", date_max = "Last seen",
             date_start = "Window start", date_end = "Window end"),
@@ -602,9 +602,9 @@ FINDINGS_COLS_AGGREGATE_GROUP       <- c("group_display", "issue")
 FINDINGS_COLS_AGGREGATE_ENUM        <- c("enumerator_display", "issue")
 FINDINGS_COLS_AGGREGATE_ENUM_VALUE  <- c("enumerator_display", "issue", "value")
 FINDINGS_COLS_AGGREGATE_SURVEY      <- c("issue")
-FINDINGS_COLS_ROW_BASE         <- c("entity_display", "group_display", "enumerator_display", "issue")
-FINDINGS_COLS_ROW_VALUE        <- c("entity_display", "group_display", "enumerator_display", "issue", "value")
-FINDINGS_COLS_ROW_VALUE_VAR    <- c("entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
+FINDINGS_COLS_ROW_BASE         <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue")
+FINDINGS_COLS_ROW_VALUE        <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue", "value")
+FINDINGS_COLS_ROW_VALUE_VAR    <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
 
 CATEGORY_COLS <- list(
     low_completion         = FINDINGS_COLS_AGGREGATE_GROUP,
@@ -641,7 +641,7 @@ DEFAULT_FINDINGS_COLS <- FINDINGS_COLS_ROW_VALUE
 # missingness finding) shows blank Entity/Group cells there — genuinely
 # blank because mk_aggregate_finding() never populated them, not clutter —
 # while a row-level finding shows every column that applies to it.
-ALL_FINDINGS_COLS <- c("entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
+ALL_FINDINGS_COLS <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
 
 #' When `df`'s natural unit column (enumerator_display, falling back to
 #' group_display) has real repetition — at least 2 distinct units and at
@@ -757,6 +757,56 @@ read_summary_message <- function(code_output_dir) {
     txt
 }
 
+# Converts the agent-drafted Summary narrative's plain-text markdown-lite
+# (numbered "1. ..." lines for a real enumerated list, "- ..." for a plain
+# bullet, blank-line-separated prose otherwise) into real HTML structure -
+# <ol>/<ul>/<p> - rather than escaping the whole block and turning every
+# newline into <br/>, which left literal "1." and "-" characters sitting in
+# a flat wall of text with no actual list markup. Every line's text content
+# is still escaped; only the list/paragraph structure is real markup.
+render_summary_narrative <- function(txt) {
+    esc <- function(x) {
+        x <- as.character(x)
+        x[is.na(x)] <- ""
+        x <- gsub("&", "&amp;", x, fixed = TRUE)
+        x <- gsub("<", "&lt;", x, fixed = TRUE)
+        x <- gsub(">", "&gt;", x, fixed = TRUE)
+        x
+    }
+    lines <- trimws(strsplit(txt, "\n", fixed = TRUE)[[1]])
+
+    blocks <- list()
+    buf <- character()
+    buf_type <- NA_character_
+
+    flush <- function() {
+        if (!length(buf)) return(invisible())
+        html <- if (identical(buf_type, "ol")) {
+            paste0("<ol>", paste0("<li>", esc(buf), "</li>", collapse = ""), "</ol>")
+        } else if (identical(buf_type, "ul")) {
+            paste0("<ul>", paste0("<li>", esc(buf), "</li>", collapse = ""), "</ul>")
+        } else {
+            paste0("<p>", paste(esc(buf), collapse = "<br/>"), "</p>")
+        }
+        blocks[[length(blocks) + 1]] <<- html
+        buf <<- character()
+        buf_type <<- NA_character_
+    }
+
+    for (ln in lines) {
+        if (!nzchar(ln)) { flush(); next }
+        is_ol <- grepl("^\\d+\\.\\s+", ln)
+        is_ul <- !is_ol && grepl("^-\\s+", ln)
+        item_type <- if (is_ol) "ol" else if (is_ul) "ul" else "p"
+        item_text <- if (is_ol) sub("^\\d+\\.\\s+", "", ln) else if (is_ul) sub("^-\\s+", "", ln) else ln
+        if (!identical(item_type, buf_type) && length(buf)) flush()
+        buf_type <- item_type
+        buf <- c(buf, item_text)
+    }
+    flush()
+    paste(unlist(blocks), collapse = "")
+}
+
 write_html_report <- function(findings, code_output_dir, project_id, open = FALSE,
                                     roles = NULL, ds = NULL, report_cfg = NULL,
                                     module_notes = NULL, stats = NULL, modules = NULL) {
@@ -802,14 +852,18 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         entity_label <- roles$entity_label %||% "Entity ID"
         group_label <- roles$group_label %||% "Group"
         findings_col_labels <- list(
-            entity_display = entity_label, group_display = group_label,
+            date_display = "Date", entity_display = entity_label, group_display = group_label,
             enumerator_display = "Enumerator", issue = "Issue", value = "Value", variable = "Variable"
         )
 
-        # Display order only — sorted by enumerator, then submission ID, then date
-        # (most recent first) wherever available; the on-disk issues.csv /
+        # Display order only — sorted chronologically (most recent first),
+        # then enumerator, then submission ID; the on-disk issues.csv /
         # tracking workbook keep natural order.
         findings <- sort_findings_for_display(findings)
+        # The survey date the issue was found (finding_date_vec(), utils.R) -
+        # bare date, truncated from the raw start/end timestamp, blank for
+        # aggregate-level findings (never tied to one day by design).
+        findings$date_display <- finding_date_vec(findings)
         findings$entity_display <- resolve_display_vec(findings$submission_id, findings$entity_name, roles$entity_display %||% "id")
         findings$group_display <- resolve_display_vec(findings$group_id, findings$group_name, roles$group_display %||% "name")
         findings$enumerator_display <- resolve_display_vec(findings$enumerator, findings$enumerator_name, roles$enumerator_display %||% "name")
@@ -830,7 +884,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
 
         summary_msg <- read_summary_message(code_output_dir)
         summary_msg_html <- if (!is.na(summary_msg)) {
-            paste0("<div class='summary-narrative'>", gsub("\n", "<br/>", esc(summary_msg), fixed = TRUE), "</div>")
+            paste0("<div class='summary-narrative'>", render_summary_narrative(summary_msg), "</div>")
         } else {
             paste0("<div class='summary-narrative summary-placeholder'><em>", esc(SUMMARY_PLACEHOLDER_TEXT), "</em></div>")
         }
@@ -888,8 +942,15 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
             )
             }
             col_labels_mod <- STATS_COL_LABELS[[mod]]
-            if (identical(mod, "M1") && identical(modules$M1$completion_signal, "roster")) {
-            col_labels_mod["n"] <- "Target"
+            if (identical(mod, "M1")) {
+            # What roles$group actually denotes (e.g. "Village") instead of
+            # the generic "Group" - applies to the Overall table's single
+            # "Group" column (always just says "Overall", but still
+            # shouldn't be mislabeled).
+            col_labels_mod["group"] <- roles$group_label %||% "Group"
+            if (identical(modules$M1$completion_signal, "roster")) {
+                col_labels_mod["n"] <- "Target"
+            }
             }
             stats_html <- render_stats_block(stats[[mod]], tolower(mod), col_labels = col_labels_mod)
             # M13 Summary Statistics never has findings rows — skip the (always-empty,
@@ -971,8 +1032,13 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
     # generic per-module loop above, same as every other module.
     lastday_html <- ""
     if (!is.na(last_date)) {
+        # Compare truncated dates, not raw strings - start_date/end_date
+        # carry the RAW roles$start/roles$end value (often a full
+        # timestamp), while last_date is always a bare "YYYY-MM-DD"; an
+        # exact-string match between the two silently matched nothing,
+        # even for genuine last-day findings (finding_date_vec(), utils.R).
         last_day_f <- if (nrow(findings)) {
-        findings %>% filter(start_date == last_date | end_date == last_date)
+        findings[finding_date_vec(findings) == last_date, , drop = FALSE]
         } else findings
         # Duration stats for just that day, alongside its flagged issues -
         # "how did today go" operational info in one place, distinct from
@@ -987,11 +1053,11 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         ok_day <- is.finite(dur_day)
         if (any(ok_day)) {
             lastday_duration_html <- render_stats_block(
-            list(`Duration on this day` = tibble(
+            list(`Survey duration on this day` = tibble(
                 level = "Last day", n = sum(ok_day),
-                mean = round(mean(dur_day[ok_day]), 3), median = round(stats::median(dur_day[ok_day]), 3),
-                sd = round(stats::sd(dur_day[ok_day]), 3),
-                min = round(min(dur_day[ok_day]), 3), max = round(max(dur_day[ok_day]), 3)
+                mean = round1(mean(dur_day[ok_day])), median = round1(stats::median(dur_day[ok_day])),
+                sd = round1(stats::sd(dur_day[ok_day])),
+                min = round1(min(dur_day[ok_day])), max = round1(max(dur_day[ok_day]))
             )),
             "lastday-duration", col_labels = STATS_COL_LABELS[["M4"]]
             )
@@ -1026,7 +1092,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
     # a term the report never uses is exactly the kind of unnecessary
     # information this redesign is about cutting.
     glossary_all <- list(
-        Finding = c("Finding", "One flagged row: a single thing that looks off in one submission (or one enumerator/site) and may be worth a closer look."),
+        Finding = c("Issue", "One flagged row: a single thing that looks off in one submission (or one enumerator/site) and may be worth a closer look."),
         Category = c("Category", "A short label grouping similar findings together, e.g. \"irregular_time\" or \"gps_distance\"."),
         Consent = c("Consent", "The guardian or head-of-household's agreement for the interview to take place."),
         Assent = c("Assent", "The child's own agreement to participate, separate from and in addition to a guardian's consent."),
@@ -1067,7 +1133,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
     html <- paste0(
         "<!DOCTYPE html><html lang='en'><head><meta charset='utf-8'/>",
         "<meta name='viewport' content='width=device-width, initial-scale=1'/>",
-        "<title>HFC Checks</title>",
+        "<title>HFCs</title>",
         "<style>
 :root{--bg:#f4efe6;--ink:#1c1914;--muted:#5c564c;--card:#fffdf8;--line:#ddd4c4;--accent:#2a6f5e;--nav:#1a222c}
 *{box-sizing:border-box}

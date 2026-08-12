@@ -80,7 +80,7 @@ run_m11_media_checks <- function(ds, roles, modules) {
         category = "media_column_empty",
         issue = sprintf(
           "The %s column '%s' is empty across all %d surveyed rows. Likely a form/coding problem (the field isn't showing up in the app, or the question is misconfigured), not a data-entry gap on any one row",
-          kind, col, nrow(ds)
+          kind, var_label(col, roles), nrow(ds)
         ),
         submission_id = "", group_id = "", enumerator = "", start_date = "", end_date = "",
         key = "", value = "", variable = col, entity_name = "", group_name = "", enumerator_name = "",
