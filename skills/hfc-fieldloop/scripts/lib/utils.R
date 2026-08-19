@@ -7,11 +7,6 @@
     a
 }
 
-# Undo macOS's "~+~" space-encoding in an Rscript --file= path.
-decode_file_arg <- function(path) {
-    gsub("~+~", " ", path, fixed = TRUE)
-}
-
 # Coerce a (possibly labelled) column to plain numeric, NA on failure.
 safe_num <- function(x) {
     if (inherits(x, "haven_labelled")) x <- as.vector(x)
@@ -281,10 +276,19 @@ mk_findings <- function(df, check_id, module, category, issue_chr, roles, value_
 #' (e.g. check_m7()'s `by_e` table filtered to the flagged enumerators) — NOT
 #' the raw microdata. Must have a `unit_id` column (the raw enumerator/group
 #' ID); an optional `unit_name` column (display name, NA/blank if
-#' unavailable) is used for `enumerator_name`/`group_name`.
+#' unavailable) is used for `enumerator_name`/`group_name`. Optional
+#' `date_col`: for a unit-level check that's scoped to a single day (e.g.
+#' M8's per-enumerator-per-day straightlining), the column in `unit_df`
+#' holding that day's date — populates start_date/end_date (both, so
+#' finding_date_vec()'s start-preferred/end-fallback logic sees it either
+#' way) instead of leaving them blank, AND is folded into finding_id so the
+#' same unit flagged on two different days gets two distinct findings, not a
+#' collision. Omitted (default) preserves the fully dateless aggregate
+#' finding used by M1/M7 (a standing structural flag, not tied to one day).
 mk_aggregate_finding <- function(unit_df, check_id, module, category, issue_chr, roles,
                                   unit_type = c("enumerator", "group"),
-                                  value_col = NULL, variable_name = NULL, sort_value_col = NULL) {
+                                  value_col = NULL, variable_name = NULL, sort_value_col = NULL,
+                                  date_col = NULL) {
     unit_type <- match.arg(unit_type)
     if (is.null(unit_df) || nrow(unit_df) == 0) return(empty_findings())
     n <- nrow(unit_df)
@@ -292,8 +296,10 @@ mk_aggregate_finding <- function(unit_df, check_id, module, category, issue_chr,
     unit_name <- if ("unit_name" %in% names(unit_df)) as.character(unit_df$unit_name) else rep(NA_character_, n)
     unit_name <- ifelse(is.na(unit_name), "", unit_name)
     var_suffix <- if (!is.null(variable_name) && nzchar(variable_name)) paste0(":", variable_name) else ""
+    date_vals <- if (!is.null(date_col) && date_col %in% names(unit_df)) as.character(unit_df[[date_col]]) else rep("", n)
+    date_suffix <- ifelse(nzchar(date_vals), paste0(":", date_vals), "")
     tibble::tibble(
-        finding_id = paste0(tolower(module), ":", unit_type, ":", unit_id, var_suffix),
+        finding_id = paste0(tolower(module), ":", unit_type, ":", unit_id, var_suffix, date_suffix),
         check_id = check_id,
         check_module = module,
         category = category,
@@ -301,8 +307,8 @@ mk_aggregate_finding <- function(unit_df, check_id, module, category, issue_chr,
         submission_id = "",
         group_id = if (unit_type == "group") unit_id else "",
         enumerator = if (unit_type == "enumerator") unit_id else "",
-        start_date = "",
-        end_date = "",
+        start_date = date_vals,
+        end_date = date_vals,
         key = "",
         value = if (!is.null(value_col) && value_col %in% names(unit_df)) as.character(unit_df[[value_col]]) else "",
         variable = variable_name %||% "",
@@ -311,6 +317,73 @@ mk_aggregate_finding <- function(unit_df, check_id, module, category, issue_chr,
         enumerator_name = if (unit_type == "enumerator") unit_name else "",
         sort_value = if (!is.null(sort_value_col) && sort_value_col %in% names(unit_df)) suppressWarnings(as.numeric(unit_df[[sort_value_col]])) else NA_real_
     )
+}
+
+#' Row-selection for a single module — the full dataset vs. the completed/
+#' surveyed subset only, per `modules[[mod_code]]$full_data` (default_
+#' modules(), profile_roles.R, sets this TRUE only for M1 — M1 needs the
+#' complete picture to compute completion rates; every other module defaults
+#' to completed rows only, per the completion redesign). Shared by
+#' run_check_modules() (the live build, run_checks.R) AND every standalone
+#' assets/check_templates/*.R script, so a hand-edited full_data in
+#' modules.yaml is honored identically in both places — a template can no
+#' longer silently diverge from the live report by hardcoding its own
+#' completed-only filter (the drift this helper replaces).
+ds_for_module_selection <- function(ds_full, mod_code, modules) {
+    if (isTRUE(modules[[mod_code]]$full_data)) return(ds_full)
+    if (!".hfc_completed" %in% names(ds_full) || all(ds_full$.hfc_completed)) return(ds_full)
+    filtered <- ds_full[ds_full$.hfc_completed, , drop = FALSE]
+    attr(filtered, "hfc_form_map") <- attr(ds_full, "hfc_form_map")
+    filtered
+}
+
+#' One finding per DUPLICATE-KEY GROUP (M2 Duplicates only), never one per
+#' underlying duplicate row (report_sections.json: "one row per duplicate
+#' GROUP rather than one row per individual duplicate submission" — every
+#' submission's timestamp goes into Value instead, e.g. "2 submissions:
+#' 2026-08-13 03:16, 2026-08-13 04:01"). `df` is already filtered to
+#' duplicate rows only; `group_cols` is the key the duplicates were detected
+#' on (may include disambiguating extra_keys beyond the entity ID itself);
+#' `id_cols` is the entity ID column(s) actually shown (report_sections.json:
+#' the only identifying column on this table — no Date/Group/Enumerator).
+#' start_date/end_date are deliberately left blank, same as M1/M7's
+#' enumerator/group aggregates — a duplicate group can span several
+#' different days, so there is no single "the" date for it, only the list
+#' already captured in Value (finding_date_vec()/sort_findings_for_display()
+#' already treat a blank date as a dateless aggregate finding, sorting it
+#' last within its module, same as those). `time_col`: roles$start, falling
+#' back to roles$end, used only to format Value's per-submission list.
+mk_duplicate_group_findings <- function(df, group_cols, id_cols, check_id, module, category, issue_chr, roles, time_col = NA_character_) {
+    if (is.null(df) || nrow(df) == 0) return(empty_findings())
+    group_cols <- group_cols[group_cols %in% names(df)]
+    if (!length(group_cols)) return(empty_findings())
+    grp_key <- composite_id_string(df, group_cols, sep = "")
+    splits <- split(seq_len(nrow(df)), grp_key)
+    rows <- lapply(splits, function(idx) {
+        sub <- df[idx, , drop = FALSE]
+        sub_id <- composite_id_string(sub[1, , drop = FALSE], id_cols, roles$entity_id_sep %||% " / ")
+        times <- if (!is.na(time_col) && time_col %in% names(sub)) {
+            format(parse_datetime_col(sub[[time_col]]), "%Y-%m-%d %H:%M")
+        } else {
+            rep(NA_character_, nrow(sub))
+        }
+        times <- times[!is.na(times)]
+        val <- if (length(times)) {
+            sprintf("%d submissions: %s", nrow(sub), paste(times, collapse = ", "))
+        } else {
+            sprintf("%d submissions", nrow(sub))
+        }
+        tibble::tibble(
+            finding_id = paste0(tolower(module), ":", sub_id),
+            check_id = check_id, check_module = module, category = category,
+            issue = issue_chr, submission_id = sub_id,
+            group_id = "", enumerator = "", start_date = "", end_date = "", key = "",
+            value = val, variable = "",
+            entity_name = "", group_name = "", enumerator_name = "",
+            sort_value = NA_real_
+        )
+    })
+    dplyr::bind_rows(rows)
 }
 
 # mk_findings() assigns finding_id = "<module>:<entity>[:<variable>]" per call,

@@ -1,11 +1,11 @@
-# HFC FieldLoop generated check: M13
-# Standalone, runnable script: reproduces this project's M13 (Summary Statistics)
+# HFC FieldLoop generated check: M14
+# Standalone, runnable script: reproduces this project's M14 (Consent & Assent)
 # findings using the same shared logic the build itself calls. Copied into
-# hfc/code/checks/M13_sumstats.R at build time with the skill/code_output_dir lines below
+# hfc/code/checks/M14_consent.R at build time with the skill/code_output_dir lines below
 # substituted for this machine's real paths — this file, as shipped in the
 # skill's assets/check_templates/, is the copy-source template.
 #
-# Usage: Rscript hfc/code/checks/M13_sumstats.R
+# Usage: Rscript hfc/code/checks/M14_consent.R
 
 # Set skill + code output paths (substituted automatically on setup build) ----
 skill <- "your/path/to/hfc-fieldloop/"
@@ -25,8 +25,9 @@ modules <- yaml::read_yaml(hfc_path(code_output_dir, "config", "modules.yaml"))
 proj_yaml <- yaml::read_yaml(hfc_path(code_output_dir, "project.yaml"))
 ds <- load_latest_dataset(cfg$input_data_dir, proj_yaml$data_file)
 ds <- prepare_ds_for_checks(ds, roles, code_output_dir)
-if (any(!ds$.hfc_completed)) ds <- ds[ds$.hfc_completed, , drop = FALSE]
+ds <- ds_for_module_selection(ds, "M14", modules)
 
-res <- check_m13(ds, roles, modules)
-message("M13 (Summary Statistics) — descriptive only, never produces findings rows:")
-print(res$stats)
+res <- check_m14(ds, roles, modules)
+res$findings <- dedupe_finding_ids(res$findings)
+message("M14 (Consent & Assent): ", nrow(res$findings), " findings")
+print(as.data.frame(res$findings))

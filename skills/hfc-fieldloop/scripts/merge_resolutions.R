@@ -23,6 +23,7 @@ source(file.path(lib, "utils.R"))
 source(file.path(lib, "build_outputs.R"))
 source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
+source(file.path(lib, "verify_merge.R"))
 
 cfg_ctx <- require_fieldloop_config_ready(skill)
 cfg <- cfg_ctx$cfg
@@ -37,10 +38,26 @@ if (is.null(clone)) {
   stop("No resolutions/ clone found for today — run `apply_feedback.R clone` first.")
 }
 
-merged <- merge_resolution_updates(current, clone)
+# Only overwrite Status/Corrections/Correction Author for rows the agent
+# actually touched today (record_touched_id(), issue_store.R) — protects a
+# concurrent field/RA edit made directly to the live file on any other row
+# from being silently clobbered by the clone's stale value for it.
+touched_ids <- read_touched_ids(ctx)
+merged <- merge_resolution_updates(current, clone, touched_ids = touched_ids)
+
+v <- verify_resolution_merge(current, clone, merged)
+message(format_merge_verification(v))
+if (!isTRUE(v$ok)) {
+  stop("merge_resolutions.R: verification failed — merged_issue_resolutions.xlsx NOT written. See the verification output above.")
+}
+
 write_named_tracking_file(ctx, merged, "merged_issue_resolutions.xlsx", entity_label = entity_label, group_label = group_label)
 
-n_changed <- sum(current$finding_id %in% clone$finding_id &
+# Scoped to touched_ids, matching what merge_resolution_updates() actually
+# applied — an untouched row's differing clone value is never merged in, so
+# it shouldn't be counted as a "change from this pass" either.
+n_changed <- sum(as.character(current$finding_id) %in% touched_ids &
+                 current$finding_id %in% clone$finding_id &
                  (current$status != clone$status[match(current$finding_id, clone$finding_id)]))
 message("Wrote merged_issue_resolutions.xlsx (", nrow(merged), " rows, ", n_changed, " Status changes from this pass).")
 message("Review it, then run commit_merged_issue_tracking.R to replace issue_tracking.xlsx.")

@@ -1,11 +1,15 @@
 # Refresh hfc/outputs/<MMDD>_HFCs.html after a "Process HFC feedback" pass —
-# re-runs M1-M13 against the latest data (<sibling of input_data_dir>/intermediate/
+# re-runs M1-M14 against the latest data (<sibling of input_data_dir>/intermediate/
 # if any fixes were applied, else the original file in input_data_dir) using
 # the project's already-confirmed hfc/config/role_map.yaml + modules.yaml
-# (read as-is, never re-profiled or re-derived), then drops from the REPORT (not from issue_tracking.xlsx,
-# which keeps full history unchanged) any finding whose live-tracking Status
-# is now Resolved, or whose Issue ID no longer appears in the live tracking
-# file at all.
+# (read as-is, never re-profiled or re-derived), regenerates today's
+# intermediate/ tracking snapshot from these fresh findings (so merge_issues.R
+# always diffs against data that reflects any correction just applied), then
+# drops from the REPORT (not from issue_tracking.xlsx, which keeps full
+# history unchanged) any finding whose live-tracking Status is now Resolved,
+# or whose Issue ID no longer appears in the live tracking file at all. This
+# one script is now the complete "data correction -> rebuild" path (Fix+
+# Rebuild workflow) — no separate bridge script needed.
 #
 # Deliberately NOT another call to run_setup_build.R: that script always
 # diffs fresh findings against the live tracking file via
@@ -41,7 +45,10 @@ source(file.path(lib, "geo_timezone.R"))
 source(file.path(lib, "media.R"))
 source(file.path(lib, "form_logic.R"))
 source(file.path(lib, "run_checks.R"))
+source(file.path(lib, "balance_tables.R"))
 source(file.path(lib, "build_outputs.R"))
+source(file.path(lib, "report_contract.R"))
+source(file.path(lib, "validate_config.R"))
 source(file.path(lib, "module_desc.R"))
 source(file.path(lib, "pipeline_core.R"))
 source(file.path(lib, "sync_fpaths.R"))
@@ -95,12 +102,28 @@ target_ds <- NULL
 if (!is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roster_candidate$path %||% NA_character_)) {
     target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
 }
+
+# Fail fast on a structurally broken config — same check run_setup_build.R
+# does, re-run here since a hand-edited role_map.yaml/modules.yaml or a
+# re-exported data file can drift after the original setup build.
+format_config_validation(validate_modules_config(modules, roles, ds = ds), stop_on_error = TRUE)
+
 res <- run_checks_and_write_issues(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
 
 ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label, group_label = group_label)
 if (is.null(ctx$tbl)) {
     stop("No issue_tracking.xlsx found in the configured OneDrive output folder — nothing to filter the report against. Run the setup build first.")
 }
+
+# Regenerate today's intermediate/ tracking snapshot from these fresh
+# findings (previously only run_setup_build.R did this) — closes the
+# fix+rebuild workflow gap: after a data correction lands in
+# data/intermediate/ and this script re-runs the checks against it,
+# merge_issues.R needs a snapshot that actually reflects the corrected
+# data, not a stale one from the original setup build.
+fb_fresh <- findings_to_issue_tracking(res$findings, roles = roles)
+write_tracking_snapshot(ctx, fb_fresh, entity_label = entity_label, group_label = group_label)
+
 filtered <- filter_findings_by_tracking_status(res$findings, ctx$tbl)
 message("Findings after dropping Resolved/untracked: ", nrow(filtered), " of ", nrow(res$findings))
 
@@ -108,8 +131,15 @@ report_cfg <- list(map_focus = roles$map_focus %||% "country")
 html_path <- write_html_report(
     filtered, cfg$code_output_dir, project_id, open = do_open,
     roles = roles, ds = ds, report_cfg = report_cfg, module_notes = module_notes,
-    stats = res$stats, modules = modules
+    stats = res$stats, modules = modules, target_ds = target_ds
 )
+# Non-fatal report-contract check (scripts/lib/report_contract.R) — a
+# quality signal, not a build gate; failures print but never abort.
+tryCatch({
+    modules_present <- compute_modules_present(filtered, res$stats, modules)
+    v <- validate_report_contract(html_path, file.path(skill, "assets", "report_sections.json"), modules_present, modules)
+    message(format_report_contract(v))
+}, error = function(e) message("Report contract check skipped: ", e$message))
 
 report_copy <- copy_report_to_sync_folder(project_id, skill_dir = skill, html_path)
 

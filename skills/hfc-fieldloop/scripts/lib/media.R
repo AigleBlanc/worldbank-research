@@ -1,4 +1,4 @@
-# SurveyCTO media helpers + M11 checks (audio / pictures).
+# SurveyCTO media helpers + M13 checks (audio / pictures).
 # Filename columns hold paths like media\uuid.m4a; binaries live under media_folder.
 
 AUDIO_EXTS <- "m4a|mp3|wav|ogg|aac|amr"
@@ -43,7 +43,7 @@ is_empty_media_cell <- function(x) {
   is.na(x) | !nzchar(trimws(as.character(x)))
 }
 
-#' Run M11 media checks. Redesigned around a single question per
+#' Run M13 media checks. Redesigned around a single question per
 #' media-indicating column: is this column COMPLETELY empty across every
 #' surveyed row? That's a strong signal of a form/coding problem — the
 #' field isn't showing up in the enumerator's app, or the question was
@@ -55,13 +55,13 @@ is_empty_media_cell <- function(x) {
 #' code-detected — see profile_roles.R) covers open-ended text fields
 #' expected to capture qualitative data, alongside the usual audio/image
 #' filename columns.
-run_m11_media_checks <- function(ds, roles, modules) {
+run_m13_media_checks <- function(ds, roles, modules) {
   suppressPackageStartupMessages({ library(dplyr); library(tibble) })
-  if (!isTRUE(modules$M11$on)) return(empty_findings())
+  if (!isTRUE(modules$M13$on)) return(empty_findings())
 
-  audio_cols <- modules$M11$audio_cols %||% roles$audio_file_cols %||% character()
-  image_cols <- modules$M11$image_cols %||% roles$image_file_cols %||% character()
-  other_cols <- modules$M11$other_cols %||% roles$qualitative_text_cols %||% character()
+  audio_cols <- modules$M13$audio_cols %||% roles$audio_file_cols %||% character()
+  image_cols <- modules$M13$image_cols %||% roles$image_file_cols %||% character()
+  other_cols <- modules$M13$other_cols %||% roles$qualitative_text_cols %||% character()
   audio_cols <- intersect(as.character(audio_cols), names(ds))
   image_cols <- intersect(as.character(image_cols), names(ds))
   other_cols <- intersect(as.character(other_cols), names(ds))
@@ -74,9 +74,9 @@ run_m11_media_checks <- function(ds, roles, modules) {
     vals <- as.character(ds[[col]])
     if (nrow(ds) > 0 && all(is_empty_media_cell(vals))) {
       out[[col]] <- tibble(
-        finding_id = paste0("m11:column_empty:", col),
+        finding_id = paste0("m13:column_empty:", col),
         check_id = sprintf("media_column_empty_%s", col),
-        check_module = "M11",
+        check_module = "M13",
         category = "media_column_empty",
         issue = sprintf(
           "The %s column '%s' is empty across all %d surveyed rows. Likely a form/coding problem (the field isn't showing up in the app, or the question is misconfigured), not a data-entry gap on any one row",

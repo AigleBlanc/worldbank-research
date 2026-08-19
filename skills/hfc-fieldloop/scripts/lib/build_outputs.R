@@ -3,8 +3,9 @@
 # tracking.xlsx + feedback twin.
 
 # Single source of truth for the issue-tracking schema: internal snake_case
-# name (used everywhere in R) -> assets/issue_tracking_template.csv header
-# label (used only at the file read/write boundary). Column order here is
+# name (used everywhere in R) -> the xlsx/csv header label (used only at the
+# file read/write boundary; see references/issue_tracking_schema.md). Column
+# order here is
 # the column order in every written file. `finding_id` (displayed as "Issue
 # ID") isn't part of the literal template — it's a stable, content-derived
 # tracking key (<module>:<entity>[:<variable>][:N], or <module>:enumerator|
@@ -26,12 +27,12 @@ issue_tracking_header_map <- function(entity_label = NA_character_, group_label 
     eid <- if (!is.na(entity_label) && nzchar(entity_label)) entity_label else "Entity ID"
     grp <- if (!is.na(group_label) && nzchar(group_label)) group_label else "Group"
     c(
+        startdate             = "Startdate",
+        enddate               = "Enddate",
         today_date            = "Today's Date",
         entity_id             = eid,
         group                 = grp,
         enumerator            = "Enumerator",
-        startdate             = "Startdate",
-        enddate               = "Enddate",
         issue                 = "Issue",
         value                 = "Value",
         comment               = "Comment",
@@ -86,12 +87,12 @@ findings_to_issue_tracking <- function(findings, roles = NULL) {
     enum_mode <- roles$enumerator_display %||% "name"
     findings %>%
         transmute(
+            startdate = start_date,
+            enddate = end_date,
             today_date = format(Sys.time(), "%Y%m%d%H%M"),
             entity_id = resolve_display_vec(submission_id, entity_name, entity_mode),
             group = resolve_display_vec(group_id, group_name, group_mode),
             enumerator = resolve_display_vec(enumerator, enumerator_name, enum_mode),
-            startdate = start_date,
-            enddate = end_date,
             issue,
             value,
             comment = "",
@@ -209,6 +210,19 @@ blank_na_to_empty <- function(tbl) {
 }
 
 # Read the issue-tracking csv/xlsx back into internal snake_case columns.
+# Read-time counterpart to verify_tracking_integrity()'s write-time guard
+# (scripts/lib/issue_store.R): a raw edit made OUTSIDE this skill's own
+# write path (Excel, or ad hoc code using openxlsx/readr directly) can
+# silently rewrite the header row itself, not just cell values — e.g.
+# writeData() defaulting to a data.frame's R-sanitized column names
+# ("Issue.ID") instead of the real header text ("Issue ID"). When that
+# happens, rename_from_issue_tracking_headers() can't recognize the header
+# at all, and the result silently has NO finding_id column — every
+# downstream `%in%` comparison against a NULL column quietly returns
+# nothing-matches instead of erroring, so a merge treats every row as new
+# instead of failing loudly. Checked here, not only at commit time, since a
+# corrupted file might get *read* (by merge_issues.R, a preview, etc.)
+# long before anything tries to commit it.
 read_issue_tracking <- function(path, sheet = "Tracking", entity_label = NA_character_, group_label = NA_character_) {
     suppressPackageStartupMessages({ library(readr); library(openxlsx) })
     ext <- tolower(tools::file_ext(path))
@@ -217,7 +231,16 @@ read_issue_tracking <- function(path, sheet = "Tracking", entity_label = NA_char
     } else {
         read_xlsx_verbatim_headers(path, sheet)
     }
-    normalize_issue_tracking_status(blank_na_to_empty(rename_from_issue_tracking_headers(raw, entity_label, group_label)))
+    renamed <- rename_from_issue_tracking_headers(raw, entity_label, group_label)
+    if (!"finding_id" %in% names(renamed)) {
+        stop(
+        "read_issue_tracking(): '", path, "' has no recognizable 'Issue ID' column after header mapping ",
+        "(found: ", paste(names(raw), collapse = ", "), "). The header row may have been overwritten by a ",
+        "raw edit outside this skill's own write functions (read_named_tracking_file()/write_named_tracking_file()) ",
+        "— restore the file from a backup/snapshot rather than proceeding."
+        )
+    }
+    normalize_issue_tracking_status(blank_na_to_empty(renamed))
 }
 
 # Incrementally merge a freshly-computed snapshot (e.g. today's
@@ -241,16 +264,30 @@ merge_preserve_existing <- function(current, new_snapshot) {
 # Corrections/Correction Author edits from a "Process HFC feedback" pass)
 # back into whatever issue_tracking.xlsx currently contains (`current`) —
 # in case field/RA edited something else concurrently while the agent worked:
-#   - Issue ID in both -> take the CLONE's status/corrections/correction_author,
-#     keep every other column from `current`.
+#   - Issue ID in both, AND in `touched_ids` -> take the CLONE's status/
+#     corrections/correction_author, keep every other column from `current`.
+#   - Issue ID in both, but NOT in `touched_ids` -> the agent's clone still
+#     carries whatever it read at clone time for this row, but never
+#     actually changed it this pass — keep `current`'s value instead, so a
+#     concurrent field/RA edit made directly to the live file on a row the
+#     agent didn't touch is never silently clobbered by the stale clone
+#     (the data-loss bug the pre-deployment audit found: previously this
+#     branch didn't exist, and EVERY id present in both got overwritten
+#     unconditionally). `touched_ids = NULL` (the default) disables this
+#     restriction entirely, matching the old unconditional-overwrite
+#     behavior — only merge_resolutions.R's real production call passes a
+#     populated `touched_ids` (from read_touched_ids(), issue_store.R).
 #   - Issue ID only in `current` -> untouched by this pass, kept as-is.
 #   - Issue ID only in the clone -> shouldn't normally happen (the clone is a
 #     copy of a past `current`), but appended defensively rather than lost.
-merge_resolution_updates <- function(current, resolution_clone) {
+merge_resolution_updates <- function(current, resolution_clone, touched_ids = NULL) {
     if (is.null(current) || !nrow(current)) return(resolution_clone)
     update_cols <- c("status", "corrections", "correction_author")
     idx <- match(current$finding_id, resolution_clone$finding_id)
     matched <- !is.na(idx)
+    if (!is.null(touched_ids)) {
+        matched <- matched & as.character(current$finding_id) %in% touched_ids
+    }
     merged <- current
     for (col in update_cols) {
         if (col %in% names(resolution_clone)) {
@@ -280,36 +317,82 @@ filter_findings_by_tracking_status <- function(findings, tracking_tbl) {
 
 # Module code -> plain-English label + <=3-sentence description.
 # Keep in sync with references/check_modules.md ("Report display labels & descriptions").
-MODULE_ORDER <- paste0("M", 1:13)
+MODULE_ORDER <- paste0("M", 1:14)
 
+# content_type: "findings" (default, omitted) | "stats" (descriptive-only,
+# never a findings table/count — see is_stats_only below) | "custom_html"
+# (module supplies its own body via CUSTOM_HTML_RENDERERS instead of the
+# generic findings/stats block; may ALSO carry findings if the module opts
+# into flagging something, e.g. M10's advanced_distance_flag).
 MODULE_META <- list(
     M1 = list(label = "Completion",
                 desc = "Reports how many submissions are complete overall, and by group, enumerator, and date, so gaps in fieldwork show up early. By default, also flags any group whose completed-submission count falls below 50% of the target."),
     M2 = list(label = "Duplicates",
-                desc = "Flags submissions that share the same unique ID or survey key, which usually means the same interview was uploaded or entered more than once."),
+                desc = "Flags submissions that share the same unique ID or survey key, one row per duplicate group rather than one row per individual duplicate submission."),
     M3 = list(label = "Form Version",
                 desc = "Tracks which version of the survey instrument was in use on each date, and flags any submission whose recorded version doesn't match the expected window for its date."),
     M4 = list(label = "Survey Duration",
-                desc = "Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews that were unusually long or short."),
+                desc = "Reports how long interviews took, in minutes, overall, by section, and by enumerator, and flags individual interviews (or sections) that ran unusually long or short."),
     M5 = list(label = "Irregular Timing",
-                desc = "Flags interviews conducted at unusual times: weekends or outside normal working hours, using each submission's local time zone."),
+                desc = "Flags interviews conducted at unusual times: weekends (if configured) or outside normal working hours, using each submission's local time zone."),
     M6 = list(label = "Numeric Outliers",
-                desc = "Flags unusually high or low values on key numeric questions (e.g. ages, scores) that fall outside the normal range for this survey."),
+                desc = "Flags unusually high or low values on key numeric questions against fixed, literature/analyst-supplied thresholds."),
     M7 = list(label = "Missingness",
-                desc = "Flags variables and enumerators with unusually high rates of missing or sentinel-coded (e.g. 99, -9999) responses on key survey questions."),
-    M8 = list(label = "GPS Location",
-                desc = "Flags submissions recorded far from where other submissions at that site were recorded, which can mean the interview happened somewhere unexpected."),
-    M9 = list(label = "Straightlining",
-                desc = "Flags enumerators who gave the same answer on a question in most of their interviews, and submissions where most ordinal/Likert-style questions share one identical value."),
-    M10 = list(label = "Survey-Specific",
-                desc = "Flags logic issues specific to this survey's content (for example, a mismatch between a record saying something happened and the respondent's own answer), including any custom checks requested for this project."),
-    M11 = list(label = "Media Files",
-                desc = "Flags problems with recorded audio/photo files: missing files, empty filename cells, unexpectedly small files, wrong file types, or duplicates."),
-    M12 = list(label = "Consent & Assent",
-                desc = "Flags cases missing a required consent (guardian agreement) or assent (the child's own agreement) flag, which the survey should always capture before proceeding."),
-    M13 = list(label = "Summary Statistics",
-                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important variables, overall and broken out per enumerator.")
+                desc = "A reference table of missingness on key survey questions — descriptive only, never produces findings, on either the question or the enumerator level.",
+                content_type = "stats"),
+    M8 = list(label = "Straightlining",
+                desc = "Flags enumerators who gave the same answer on a question in 100%+ of their interviews on a single day (minimum 3 that day), and submissions where 90%+ of ordinal/Likert-style answers are identical."),
+    M9 = list(label = "Field Request",
+                desc = "The field team and user's own daily reconciliation view — a custom, survey-specific check whose rows are a status snapshot, not a problem to fix. Any finding that isn't a Field Request reconciliation item renders in 'Other' instead.",
+                issue_col_label = "Info", no_issues_word = "No entries.", count_noun = "entries"),
+    M10 = list(label = "GPS Map",
+                desc = "An interactive map plotting every submission's GPS location, for visual review — descriptive only, this section never flags an issue by default.",
+                content_type = "custom_html"),
+    M11 = list(label = "Summary Statistics",
+                desc = "A simple reference table of mean, SD, min, max, and observation count for the survey's most important variables, overall and broken out per enumerator.",
+                content_type = "stats"),
+    M12 = list(label = "Balance Tables",
+                desc = "Standard RCT balance check: compares baseline covariates across treatment arms and other configured splits, alongside a completed-vs-submitted reconciliation and a differential-completion regression. Descriptive only, never produces findings.",
+                content_type = "custom_html"),
+    M13 = list(label = "Media Files",
+                desc = "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row — a single finding per affected column, not per row."),
+    M14 = list(label = "Consent & Assent",
+                desc = "Flags cases missing a required consent (guardian agreement) or assent (the child's own agreement) flag, which the survey should always capture before proceeding.")
 )
+
+#' Which modules get their own report section, in final display order.
+#' A module appears if it produced row-level findings OR non-empty
+#' descriptive stats (stats-only modules like Missingness/Summary
+#' Statistics never produce findings rows at all; M1/M3/M4/M7 can have
+#' stats with zero findings) OR is simply configured `on` (an on-and-clean
+#' check still gets a section, showing its no-issues placeholder, rather
+#' than being silently omitted — different from a check that never ran at
+#' all, which stays fully absent). Factored out of write_html_report()'s
+#' render loop so scripts/lib/report_contract.R's validator can compute the
+#' exact same set independently and the two can never structurally drift
+#' apart.
+compute_modules_present <- function(findings, stats, modules) {
+    present_from_findings <- if (!is.null(findings) && nrow(findings) && "check_module" %in% names(findings)) {
+        unique(findings$check_module)
+    } else character()
+    stats_nonempty <- function(s) {
+        if (is.null(s)) return(FALSE)
+        if (is.data.frame(s)) return(nrow(s) > 0)
+        if (is.list(s)) return(any(vapply(s, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))))
+        FALSE
+    }
+    present_from_stats <- if (!is.null(stats)) names(stats)[vapply(stats, stats_nonempty, logical(1))] else character()
+    present_from_on <- if (!is.null(modules)) {
+        names(modules)[vapply(names(modules), function(m) isTRUE(modules[[m]]$on), logical(1))]
+    } else character()
+    modules_present <- intersect(MODULE_ORDER, Reduce(union, list(present_from_findings, present_from_stats, present_from_on)))
+    # Stats-only reference tables (Missingness, Summary Statistics) and
+    # Balance Tables are descriptive content, not issue lists — push them
+    # to the end among module sections, immediately before "All issues", in
+    # this fixed order, instead of their numeric slots.
+    PINNED_TO_END <- c("M11", "M12")
+    c(setdiff(modules_present, PINNED_TO_END), intersect(PINNED_TO_END, modules_present))
+}
 
 module_label <- function(code) {
     code <- as.character(code)
@@ -341,7 +424,7 @@ module_desc <- function(code, modules = NULL) {
 # category" report table and the xlsx/csv "Issue Category" export
 # (findings_to_issue_tracking()). The underlying `category` field itself
 # stays the raw machine value throughout findings processing; only display
-# surfaces apply this. M10 custom checks use arbitrary per-project category
+# surfaces apply this. M9 custom checks use arbitrary per-project category
 # strings that can't be pre-mapped here; any unmapped value falls back to a
 # Title-Case-from-snake_case transform, mirroring module_label()'s graceful
 # fallback to the raw code.
@@ -374,7 +457,7 @@ category_label <- function(category) {
     vapply(category, function(x) {
         lbl <- CATEGORY_LABELS[[x]]
         if (!is.null(lbl)) return(lbl)
-        # Fallback for unmapped (e.g. M10 custom) categories: snake_case -> Title Case.
+        # Fallback for unmapped (e.g. M9 custom) categories: snake_case -> Title Case.
         words <- strsplit(gsub("_", " ", x), " ")[[1]]
         words <- ifelse(nzchar(words), paste0(toupper(substr(words, 1, 1)), substr(words, 2, nchar(words))), words)
         paste(words, collapse = " ")
@@ -398,7 +481,7 @@ FINDING_SORT_DIRECTION <- c(
     straightlining_enum = "desc", straightlining_survey = "desc"
 )
 
-# Order findings by module (M1..M13, in MODULE_ORDER, since each module still
+# Order findings by module (M1..M14, in MODULE_ORDER, since each module still
 # gets its own page section), then fully chronologically WITHIN that module's
 # tables: date (most recent first, via finding_date_vec(), utils.R - blank/
 # unparseable dates, e.g. aggregate-level findings, sort last), then
@@ -485,7 +568,7 @@ html_searchable_table <- function(df, cols, table_id, show_n = 10L, col_labels =
 
 # Render a module's descriptive stats (a single data.frame, or a named list
 # of data.frames e.g. M1's overall/by_group/by_enumerator/by_date) as one or
-# more small labeled searchable tables. Used for M1/M3/M4/M7/M13, which
+# more small labeled searchable tables. Used for M1/M3/M4/M7/M11, which
 # report summary statistics rather than (only) row-level findings.
 #' Any column named `pct_*` gets rendered as a 1-decimal percentage string
 #' with a literal "%" suffix (87.3 -> "87.3%") — module-agnostic (scans for
@@ -509,7 +592,7 @@ format_pct_cols <- function(df) {
 # different modules (e.g. `n` is "Surveys Submitted" in M1's completion
 # tables but a plain observation count in M4/M7). Only M1 has user-specified
 # exact labels; the rest get sensible Title-Case-or-better labels for their
-# real columns. M13 is already Title-Case — included for uniformity.
+# real columns. M11 is already Title-Case — included for uniformity.
 STATS_COL_LABELS <- list(
     # `n` is a base default here — actually submitted surveys for every
     # completion_signal EXCEPT "roster", where group_source_ds is the
@@ -531,14 +614,14 @@ STATS_COL_LABELS <- list(
             min = "Min", max = "Max", enumerator = "Enumerator"),
     M7 = c(variable = "Variable", pct_missing = "% Missing", n_missing = "N Missing",
             n = "Obs", enumerator = "Enumerator"),
-    M13 = c(Variable = "Variable", Mean = "Mean", SD = "SD", Min = "Min", Max = "Max", Missing = "NA", Obs = "Obs")
+    M11 = c(Variable = "Variable", Mean = "Mean", SD = "SD", Min = "Min", Max = "Max", Missing = "NA", Obs = "Obs")
 )
 
 STATS_BLOCK_COLLAPSE_AFTER <- 4L
 
 # Renders one table per named element of `mod_stats` (or a single "Summary"
 # table when given a bare data.frame). When there are more than
-# STATS_BLOCK_COLLAPSE_AFTER non-empty entries (e.g. M13's per-enumerator
+# STATS_BLOCK_COLLAPSE_AFTER non-empty entries (e.g. M11's per-enumerator
 # breakdown), every entry except the first ("Overall", when present) renders
 # collapsed inside a <details> with a jump-index of links at the top — a flat
 # wall of 19 open tables (1 overall + 18 enumerators) isn't navigable
@@ -601,7 +684,17 @@ render_stats_block <- function(mod_stats, prefix, col_labels = NULL) {
 FINDINGS_COLS_AGGREGATE_GROUP       <- c("group_display", "issue")
 FINDINGS_COLS_AGGREGATE_ENUM        <- c("enumerator_display", "issue")
 FINDINGS_COLS_AGGREGATE_ENUM_VALUE  <- c("enumerator_display", "issue", "value")
+# M8's by-enumerator straightlining is aggregate (no Entity ID) but, unlike
+# M7's high_missingness/M1's low_completion_enum_day, IS scoped to a single
+# day (mk_aggregate_finding()'s date_col) - so it earns a real Date column
+# instead of inheriting the plain enum/issue/value set.
+FINDINGS_COLS_AGGREGATE_ENUM_DATE_VALUE <- c("date_display", "enumerator_display", "issue", "value")
 FINDINGS_COLS_AGGREGATE_SURVEY      <- c("issue")
+# M2 Duplicates is an entity-level aggregate (one row per duplicate GROUP,
+# see mk_duplicate_group_findings() in utils.R) but, unlike the enumerator/
+# group aggregates above, DOES show an identifying column — the entity ID
+# itself, plus its Value (every duplicate submission's timestamp).
+FINDINGS_COLS_AGGREGATE_ENTITY_VALUE <- c("entity_display", "issue", "value")
 FINDINGS_COLS_ROW_BASE         <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue")
 FINDINGS_COLS_ROW_VALUE        <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue", "value")
 FINDINGS_COLS_ROW_VALUE_VAR    <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
@@ -610,7 +703,7 @@ CATEGORY_COLS <- list(
     low_completion         = FINDINGS_COLS_AGGREGATE_GROUP,
     replacement_sequence_gap = FINDINGS_COLS_AGGREGATE_GROUP,
     low_completion_enum_day = FINDINGS_COLS_AGGREGATE_ENUM_VALUE,
-    duplicates             = FINDINGS_COLS_ROW_BASE,
+    duplicates             = FINDINGS_COLS_AGGREGATE_ENTITY_VALUE,
     form_version_mismatch  = FINDINGS_COLS_ROW_VALUE,
     long_duration          = FINDINGS_COLS_ROW_VALUE,
     short_duration         = FINDINGS_COLS_ROW_VALUE,
@@ -619,7 +712,7 @@ CATEGORY_COLS <- list(
     numeric_outlier        = FINDINGS_COLS_ROW_VALUE_VAR,
     high_missingness       = FINDINGS_COLS_AGGREGATE_ENUM_VALUE,
     gps_distance           = FINDINGS_COLS_ROW_BASE,
-    straightlining_enum    = FINDINGS_COLS_AGGREGATE_ENUM_VALUE,
+    straightlining_enum    = FINDINGS_COLS_AGGREGATE_ENUM_DATE_VALUE,
     straightlining_survey  = FINDINGS_COLS_ROW_VALUE,
     media_column_empty     = FINDINGS_COLS_AGGREGATE_SURVEY,
     assent                 = FINDINGS_COLS_ROW_BASE,
@@ -629,7 +722,7 @@ CATEGORY_COLS <- list(
     consent_column_empty   = FINDINGS_COLS_AGGREGATE_SURVEY,
     audio_column_empty     = FINDINGS_COLS_AGGREGATE_SURVEY
 )
-# Unmatched categories (e.g. an M10 custom check's own category string)
+# Unmatched categories (e.g. an M9 custom check's own category string)
 # default to the full row-level set — a custom check is arbitrary enough
 # that erring toward showing more, not less, is the safer default.
 DEFAULT_FINDINGS_COLS <- FINDINGS_COLS_ROW_VALUE
@@ -643,72 +736,61 @@ DEFAULT_FINDINGS_COLS <- FINDINGS_COLS_ROW_VALUE
 # while a row-level finding shows every column that applies to it.
 ALL_FINDINGS_COLS <- c("date_display", "entity_display", "group_display", "enumerator_display", "issue", "value", "variable")
 
-#' When `df`'s natural unit column (enumerator_display, falling back to
-#' group_display) has real repetition — at least 2 distinct units and at
-#' least one with more than one row — render one small searchable table per
-#' unit instead of a single flat one, using the same <details>/jump-index
-#' visual pattern as render_stats_block() so the two look identical. The
-#' worst unit (most rows) stays open under <h4>; the rest collapse. Returns
-#' NULL (not a string) when there's nothing to group — a table that's
-#' already one row per unit (e.g. mk_aggregate_finding() output) or has no
-#' enumerator/group column at all falls straight through to the caller's
-#' flat rendering, unchanged from before this existed.
-render_findings_grouped_by_unit <- function(df, cols, id_prefix, show_n, col_labels) {
-    unit_col <- if ("enumerator_display" %in% names(df) && any(nzchar(as.character(df$enumerator_display)))) {
-        "enumerator_display"
-    } else if ("group_display" %in% names(df) && any(nzchar(as.character(df$group_display)))) {
-        "group_display"
-    } else NA_character_
-    if (is.na(unit_col)) return(NULL)
-
-    unit <- as.character(df[[unit_col]])
-    unit[!nzchar(unit) %in% TRUE] <- NA_character_
-    present <- unit[!is.na(unit)]
-    if (length(unique(present)) < 2 || !any(table(present) > 1)) return(NULL)
-
+#' All Issues' own per-enumerator breakdown — the ONE place on the page a
+#' findings table splits by enumerator (report_sections.json's "Table
+#' grouping rule": explicitly the only exception). Unlike the old, removed
+#' render_findings_grouped_by_unit(), this always breaks out one panel per
+#' enumerator with any finding at all (not gated on repetition), worst
+#' (most-issues) enumerator first, using the sample design's `enum-issues`
+#' class rather than `stats-details` so it's styleable independently. Each
+#' panel gets its own fully independent searchable table (own search box,
+#' own show-all toggle), same as every other table on the page. Findings
+#' with no enumerator (blank/aggregate-level with no enumerator_display) are
+#' grouped into a trailing "Unassigned" panel when present.
+render_all_issues_by_enumerator <- function(findings, col_labels) {
+    if (is.null(findings) || nrow(findings) == 0 || !"enumerator_display" %in% names(findings)) return("")
     esc <- function(x) {
         x <- as.character(x); x[is.na(x)] <- ""
         x <- gsub("&", "&amp;", x, fixed = TRUE); x <- gsub("<", "&lt;", x, fixed = TRUE); x <- gsub(">", "&gt;", x, fixed = TRUE)
         x
     }
-    counts <- sort(table(present), decreasing = TRUE)
-    ordered_units <- names(counts)
-    if (any(is.na(unit))) ordered_units <- c(ordered_units, NA_character_)
-
-    index_links <- character(); blocks <- character()
-    for (i in seq_along(ordered_units)) {
-        u <- ordered_units[[i]]
-        idx <- if (is.na(u)) which(is.na(unit)) else which(unit == u)
-        grp_df <- df[idx, , drop = FALSE]
+    enum <- as.character(findings$enumerator_display)
+    enum[!nzchar(enum) %in% TRUE] <- NA_character_
+    if (!any(!is.na(enum))) return("")
+    counts <- sort(table(enum[!is.na(enum)]), decreasing = TRUE)
+    ordered <- names(counts)
+    if (any(is.na(enum))) ordered <- c(ordered, NA_character_)
+    blocks <- character()
+    for (i in seq_along(ordered)) {
+        u <- ordered[[i]]
+        idx <- if (is.na(u)) which(is.na(enum)) else which(enum == u)
+        grp_df <- findings[idx, , drop = FALSE]
         label <- if (is.na(u)) "Unassigned" else u
-        tid <- paste0(id_prefix, "-u", i)
-        table_html <- html_searchable_table(grp_df, cols, tid, show_n, col_labels = col_labels)
-        if (i == 1) {
-            blocks <- c(blocks, paste0("<h4>", esc(label), "</h4>", table_html))
-        } else {
-            index_links <- c(index_links, sprintf("<a href='#%s-details'>%s</a>", tid, esc(label)))
-            blocks <- c(blocks, sprintf(
-                "<details class='stats-details' id='%s-details'><summary>%s</summary>%s</details>",
-                tid, esc(label), table_html
-            ))
-        }
+        tid <- paste0("tbl-all-enum-", i)
+        table_html <- html_searchable_table(grp_df, ALL_FINDINGS_COLS, tid, 10L, col_labels = col_labels)
+        blocks <- c(blocks, sprintf(
+            "<details class='enum-issues'><summary>%s <span class='meta'>(%d issue%s)</span></summary>%s</details>",
+            esc(label), length(idx), if (length(idx) == 1) "" else "s", table_html
+        ))
     }
-    idx_html <- if (length(index_links)) paste0("<nav class='stats-index'>", paste(index_links, collapse = " &middot; "), "</nav>") else ""
-    paste0(idx_html, paste(blocks, collapse = ""))
+    paste(blocks, collapse = "")
 }
 
 #' Render one or more searchable tables for `sub`'s findings, splitting into
 #' separate tables whenever the categories present require different display
 #' columns (e.g. one module section mixing a by-enumerator aggregate check
-#' with a row-level one — M9 straightlining is the current example). Sharing
+#' with a row-level one — M8 straightlining is the current example). Sharing
 #' a single table across mismatched granularities would force either blank
 #' filler columns or hidden real data, exactly the "unnecessary columns"
 #' problem this whole per-category scheme exists to avoid. Categories that
 #' already share identical columns stay in one table together (the common
-#' case), so most modules render exactly as before — just one table. Within
-#' each category group, render_findings_grouped_by_unit() gets first refusal
-#' — it only actually changes anything when a unit (enumerator/group)
-#' genuinely has more than one row.
+#' case), so most modules render exactly as before — just one table.
+#' NEVER splits or collapses by enumerator (report_sections.json's "Table
+#' grouping rule": every findings table on the page is a single table,
+#' sorted by date then enumerator — the ONLY exception is "All Issues",
+#' which gets its own dedicated per-enumerator breakdown via
+#' render_all_issues_by_enumerator() below, appended beneath its own single
+#' main table, not instead of it).
 render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
     if (is.null(sub) || nrow(sub) == 0) {
         return(html_searchable_table(sub, DEFAULT_FINDINGS_COLS, id_prefix, show_n, col_labels = col_labels))
@@ -717,8 +799,6 @@ render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
     sigs <- unique(col_sig)
     if (length(sigs) <= 1) {
         cols <- CATEGORY_COLS[[sub$category[[1]]]] %||% DEFAULT_FINDINGS_COLS
-        grouped <- render_findings_grouped_by_unit(sub, cols, id_prefix, show_n, col_labels)
-        if (!is.null(grouped)) return(grouped)
         return(html_searchable_table(sub, cols, id_prefix, show_n, col_labels = col_labels))
     }
     esc <- function(x) {
@@ -732,8 +812,7 @@ render_findings_tables <- function(sub, id_prefix, col_labels, show_n = 10L) {
         cols <- CATEGORY_COLS[[grp_df$category[[1]]]] %||% DEFAULT_FINDINGS_COLS
         lbl <- category_label(grp_df$category[[1]])
         sub_id <- paste0(id_prefix, "-", i)
-        grouped <- render_findings_grouped_by_unit(grp_df, cols, sub_id, show_n, col_labels)
-        body <- if (!is.null(grouped)) grouped else html_searchable_table(grp_df, cols, sub_id, show_n, col_labels = col_labels)
+        body <- html_searchable_table(grp_df, cols, sub_id, show_n, col_labels = col_labels)
         parts <- c(parts, paste0("<h4>", esc(lbl), "</h4>"), body)
     }
     paste(parts, collapse = "")
@@ -807,9 +886,96 @@ render_summary_narrative <- function(txt) {
     paste(unlist(blocks), collapse = "")
 }
 
+#' M10 GPS Map's custom_html body: an interactive Leaflet map plotting every
+#' submission with a valid coordinate, no outer <section> wrapper (the
+#' per-module render loop supplies that generically, same as every other
+#' module). Pure visualization by default — points only render red when
+#' modules$M10$advanced_distance_flag is on AND produced findings; the
+#' caption never claims flagging happens unless it actually does. Gracefully
+#' degrades to a plain note when no GPS coordinates are configured, since
+#' M10 can now appear in modules_present via `on` alone, same as any other
+#' module.
+render_gps_map_body <- function(ds, roles, modules, findings = NULL, target_ds = NULL, report_cfg = NULL) {
+    esc <- function(x) {
+        x <- as.character(x); x[is.na(x)] <- ""
+        x <- gsub("&", "&amp;", x, fixed = TRUE); x <- gsub("<", "&lt;", x, fixed = TRUE); x <- gsub(">", "&gt;", x, fixed = TRUE)
+        x
+    }
+    xc <- roles$x; yc <- roles$y
+    has_gps <- !is.null(roles) && isTRUE(roles$has_gps) && !is.null(ds) &&
+        !is.na(xc) && !is.na(yc) && xc %in% names(ds) && yc %in% names(ds)
+    if (!has_gps) {
+        return("<p class='no-issues'>No GPS coordinates are configured for this survey.</p>")
+    }
+    map_focus <- tolower(as.character((report_cfg %||% list())$map_focus %||% "country"))
+    xx <- safe_num(ds[[xc]])
+    yy <- safe_num(ds[[yc]])
+    ok <- is.finite(xx) & is.finite(yy)
+    idx <- which(ok)
+    if (length(idx) > 2000) idx <- sample(idx, 2000)
+    ids <- if (".hfc_id_display" %in% names(ds)) ds$.hfc_id_display[idx] else rep("", length(idx))
+    ids[is.na(ids)] <- ""
+    flagged_ids <- if (!is.null(findings) && "check_module" %in% names(findings)) {
+        unique(findings$submission_id[findings$check_module == "M10"])
+    } else character()
+    flagged <- ids %in% flagged_ids & nzchar(ids)
+    n_flagged <- sum(flagged)
+    pts_json <- as.character(jsonlite::toJSON(
+        data.frame(lat = yy[idx], lon = xx[idx], id = ids, flagged = flagged, stringsAsFactors = FALSE),
+        dataframe = "rows", auto_unbox = TRUE
+    ))
+    pts_json <- gsub("</script", "<\\/script", pts_json, fixed = TRUE)
+    zoom <- switch(map_focus, world = 2, city = 11, country = 6, 6)
+    center_lat <- if (length(idx)) median(yy[idx], na.rm = TRUE) else 0
+    center_lon <- if (length(idx)) median(xx[idx], na.rm = TRUE) else 0
+    flag_clause <- if (n_flagged > 0) {
+        " Points flagged as distance outliers (an opt-in advanced check for this project) are red."
+    } else ""
+    paste0(
+        "<p class='meta'>Focus: ", esc(map_focus), " · ", length(idx),
+        " points (sampled if &gt;2000). Coordinates from ", esc(xc), " / ", esc(yc),
+        ". All points with a valid coordinate are shown.", flag_clause,
+        " Click a point to see its unique ID.</p>",
+        "<div id='gps-map' style='height:420px;border-radius:8px;'></div>",
+        "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>",
+        "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>",
+        "<script>(function(){",
+        "var map=L.map('gps-map').setView([", center_lat, ",", center_lon, "],", zoom, ");",
+        "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{",
+        "attribution:'&copy; OpenStreetMap'}).addTo(map);",
+        "var pts=", pts_json, ";",
+        "var latlngs=pts.map(function(p){return [p.lat,p.lon];});",
+        "pts.forEach(function(p){",
+        "L.circleMarker([p.lat,p.lon],{radius:3,color:p.flagged?'#c0392b':'#2a6f5e',fillOpacity:0.7})",
+        ".bindPopup('ID: '+(p.id||'(none)')).addTo(map);",
+        "});",
+        "if(latlngs.length){map.fitBounds(latlngs,{padding:[20,20]});}",
+        "})();</script>"
+    )
+}
+
+#' M12 Balance Tables' custom_html body — see scripts/lib/balance_tables.R
+#' for the real implementation (render_balance_tables_body, defined there
+#' and sourced alongside this file). This fallback only fires if that file
+#' hasn't been sourced for some reason, so a missing dependency degrades to
+#' a visible note rather than a build error.
+if (!exists("render_balance_tables_body", mode = "function")) {
+    render_balance_tables_body <- function(ds, roles, modules, findings = NULL, target_ds = NULL, report_cfg = NULL) {
+        "<p class='no-issues'>Balance Tables is on, but scripts/lib/balance_tables.R wasn't loaded.</p>"
+    }
+}
+
+# Module code -> custom_html renderer, dispatched from the per-module render
+# loop below whenever MODULE_META[[mod]]$content_type == "custom_html".
+CUSTOM_HTML_RENDERERS <- list(
+    M10 = render_gps_map_body,
+    M12 = render_balance_tables_body
+)
+
 write_html_report <- function(findings, code_output_dir, project_id, open = FALSE,
                                     roles = NULL, ds = NULL, report_cfg = NULL,
-                                    module_notes = NULL, stats = NULL, modules = NULL) {
+                                    module_notes = NULL, stats = NULL, modules = NULL,
+                                    target_ds = NULL) {
         suppressPackageStartupMessages({ library(dplyr) })
         report_dir <- hfc_path(code_output_dir, "outputs")
         dir.create(report_dir, showWarnings = FALSE, recursive = TRUE)
@@ -868,8 +1034,14 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         findings$group_display <- resolve_display_vec(findings$group_id, findings$group_name, roles$group_display %||% "name")
         findings$enumerator_display <- resolve_display_vec(findings$enumerator, findings$enumerator_name, roles$enumerator_display %||% "name")
 
-        by_mod <- if (nrow(findings) && "check_module" %in% names(findings)) {
-            findings %>% count(check_module, sort = TRUE)
+        # "By category" (report_sections.json's Summary section) counts only
+        # the last day of data collection's own issues, not the cumulative
+        # total — aggregate-level findings (no per-row date, e.g. a
+        # by-enumerator straightlining finding) naturally drop out here,
+        # consistent with the "last day" framing: they're an ongoing signal,
+        # not something that happened specifically today.
+        by_mod <- if (nrow(findings) && "check_module" %in% names(findings) && !is.na(last_date)) {
+            findings %>% filter(date_display == last_date) %>% count(check_module, sort = TRUE)
         } else tibble(check_module = character(), n = integer())
 
         summary_cards <- if (nrow(by_mod)) {
@@ -889,38 +1061,27 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
             paste0("<div class='summary-narrative summary-placeholder'><em>", esc(SUMMARY_PLACEHOLDER_TEXT), "</em></div>")
         }
 
-        # Per-module sections. A module appears if it produced row-level findings
-        # OR non-empty descriptive stats (M13 Summary Statistics never produces
-        # findings rows at all; M1/M3/M4/M7 can have stats with zero findings).
-        present_from_findings <- if (nrow(findings) && "check_module" %in% names(findings)) {
-            unique(findings$check_module)
-        } else character()
-        stats_nonempty <- function(s) {
-            if (is.null(s)) return(FALSE)
-            if (is.data.frame(s)) return(nrow(s) > 0)
-            if (is.list(s)) return(any(vapply(s, function(x) is.data.frame(x) && nrow(x) > 0, logical(1))))
-            FALSE
-        }
-        present_from_stats <- names(stats)[vapply(stats, stats_nonempty, logical(1))]
-        # A module that's on but produced neither findings nor stats still
-        # gets its own section, showing "No issues found!" rather than being
-        # silently omitted — an on-and-clean check should look different from
-        # a check that never ran at all. An off module stays fully absent.
-        present_from_on <- if (!is.null(modules)) {
-            names(modules)[vapply(names(modules), function(m) isTRUE(modules[[m]]$on), logical(1))]
-        } else character()
-        modules_present <- intersect(MODULE_ORDER, Reduce(union, list(present_from_findings, present_from_stats, present_from_on)))
-        # M13 Summary Statistics is a reference table, not an issue list — push it
-        # last among module sections, immediately before "All issues", instead of
-        # its numeric M1..M13 slot.
-        modules_present <- c(setdiff(modules_present, "M13"), intersect(modules_present, "M13"))
+        modules_present <- compute_modules_present(findings, stats, modules)
 
         mod_sections <- character()
         nav_links <- c('<a href="#about">About</a>', '<a href="#summary">Summary</a>')
         if (!is.na(last_date)) nav_links <- c(nav_links, '<a href="#lastday">Last Day</a>')
 
         for (mod in modules_present) {
+            meta_mod <- MODULE_META[[mod]] %||% list()
+            content_type <- meta_mod$content_type %||% "findings"
             sub <- findings %>% filter(check_module == mod)
+            other_sub <- NULL
+            if (identical(mod, "M9")) {
+            # Field Request / Other split (report_sections.json): only rows
+            # a custom check explicitly tags category == "field_request"
+            # stay in M9's own Info-labeled table; every other M9 finding
+            # (a custom check with any other category) renders in the
+            # adjacent "Other" section instead, standard Issue-labeled.
+            is_fr <- !is.na(sub$category) & sub$category == "field_request"
+            other_sub <- sub %>% filter(!is_fr)
+            sub <- sub %>% filter(is_fr)
+            }
             aid <- paste0("mod-", tolower(mod))
             nav_links <- c(nav_links, sprintf(
             '<a href="#%s">%s <sup class="mod-code">%s</sup></a>', aid, esc(module_label(mod)), esc(mod)
@@ -929,7 +1090,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
             desc_text <- if (!is.null(desc_override) && nzchar(desc_override)) desc_override else module_desc(mod, modules)
             desc_html <- if (nzchar(desc_text)) paste0("<p class='mod-desc'>", esc(desc_text), "</p>") else ""
             custom_html <- ""
-            if (identical(mod, "M10") && length(module_notes$custom)) {
+            if (identical(mod, "M9") && length(module_notes$custom)) {
             items <- vapply(names(module_notes$custom), function(nm) {
                 entry <- module_notes$custom[[nm]]
                 lbl <- entry$label %||% nm
@@ -949,86 +1110,88 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
             # shouldn't be mislabeled).
             col_labels_mod["group"] <- roles$group_label %||% "Group"
             if (identical(modules$M1$completion_signal, "roster")) {
+                # "Progress" (completed / planned target), never "Completion"
+                # (completed / submitted) — the BY GROUP table's denominator
+                # under roster mode is the roster's target count, a
+                # deliberately different ratio from every other completion
+                # table on the page (see report_sections.json's Completion
+                # section Notes).
                 col_labels_mod["n"] <- "Target"
+                col_labels_mod["pct_complete"] <- "Progress"
             }
             }
-            stats_html <- render_stats_block(stats[[mod]], tolower(mod), col_labels = col_labels_mod)
-            # M13 Summary Statistics never has findings rows — skip the (always-empty,
-            # otherwise-misleading) findings table and "N issues found" count for it.
-            is_stats_only <- identical(mod, "M13")
-            heading_suffix <- if (is_stats_only || nrow(sub) == 0) "" else paste0(" · ", nrow(sub), " issues found")
-            tbl <- if (is_stats_only) {
-            ""
+            # Per-module override of the findings table's "Issue" column
+            # label and the "N issues found" heading noun (report_sections.
+            # json: Field Request reads "Info"/"entries" instead) — a
+            # per-call copy, never mutating the shared findings_col_labels
+            # used by Last Day/All Issues, which always say "Issue" even for
+            # Field-Request-sourced rows there.
+            col_labels_findings <- findings_col_labels
+            if (!is.null(meta_mod$issue_col_label)) col_labels_findings$issue <- meta_mod$issue_col_label
+            count_noun <- meta_mod$count_noun %||% "issues found"
+            no_issues_word <- meta_mod$no_issues_word %||% "No issues found!"
+
+            stats_html <- if (identical(content_type, "custom_html")) "" else {
+            render_stats_block(stats[[mod]], tolower(mod), col_labels = col_labels_mod)
+            }
+            is_stats_only <- identical(content_type, "stats")
+            # A stats-only module (Missingness, Summary Statistics) never
+            # shows the empty "No issues found!" placeholder — it's a
+            # reference table, not an issue list, so having zero findings
+            # is its normal, unremarkable state. It CAN still carry real
+            # findings if it opted into an advanced flag (e.g. M7's
+            # advanced_enum_flag) — appended below its stats block using
+            # the same conventions as every other module, same treatment
+            # as a custom_html module's optional findings table.
+            heading_suffix <- if (nrow(sub) == 0) "" else paste0(" · ", nrow(sub), " ", count_noun)
+            body_html <- if (identical(content_type, "custom_html")) {
+            renderer <- CUSTOM_HTML_RENDERERS[[mod]]
+            custom_body <- if (!is.null(renderer)) {
+                renderer(ds, roles, modules, findings = findings, target_ds = target_ds, report_cfg = report_cfg)
+            } else ""
+            findings_tbl <- if (nrow(sub) == 0) "" else render_findings_tables(sub, paste0("tbl-", aid), col_labels_findings)
+            paste0(custom_body, findings_tbl)
+            } else if (is_stats_only) {
+            findings_tbl <- if (nrow(sub) == 0) "" else render_findings_tables(sub, paste0("tbl-", aid), col_labels_findings)
+            paste0(stats_html, findings_tbl)
             } else if (nrow(sub) == 0) {
-            "<p class='no-issues'>No issues found!</p>"
+            paste0(stats_html, "<p class='no-issues'>", esc(no_issues_word), "</p>")
             } else {
-            render_findings_tables(sub, paste0("tbl-", aid), findings_col_labels)
+            paste0(stats_html, render_findings_tables(sub, paste0("tbl-", aid), col_labels_findings))
             }
             mod_sections <- c(mod_sections, paste0(
             "<section id='", aid, "' class='card'><h2>", esc(module_label(mod)),
             " <span class='mod-code'>", esc(mod), "</span>", heading_suffix,
-            "</h2>", desc_html, custom_html, stats_html, tbl, "</section>"
+            "</h2>", desc_html, custom_html, body_html, "</section>"
             ))
+
+            # "Other" — every M9 (Field Request) custom-check finding that
+            # isn't itself a field_request-tagged reconciliation row, per
+            # report_sections.json: a genuinely separate section, standard
+            # Issue-labeled, immediately after Field Request.
+            if (identical(mod, "M9")) {
+            other_n <- if (is.null(other_sub)) 0L else nrow(other_sub)
+            other_heading <- if (other_n == 0) "" else paste0(" · ", other_n, " issues found")
+            other_tbl <- if (other_n == 0) {
+                "<p class='no-issues'>No issues found!</p>"
+            } else {
+                render_findings_tables(other_sub, "tbl-other", findings_col_labels)
+            }
+            # Dynamic description (report_sections.json: "Other" should
+            # specify what's actually in it) — see other_section_desc()
+            # (module_desc.R).
+            other_desc <- other_section_desc(other_sub, module_notes$custom)
+            nav_links <- c(nav_links, '<a href="#other">Other</a>')
+            mod_sections <- c(mod_sections, paste0(
+                "<section id='other' class='card'><h2>Other", other_heading, "</h2>",
+                "<p class='mod-desc'>", esc(other_desc), "</p>",
+                other_tbl, "</section>"
+            ))
+            }
         }
 
-        # GPS map — tied to the M8 check being on, not just GPS data existing:
-        # declining the GPS check should also drop the map, not leave a map
-        # with nothing checked behind it.
-        map_html <- ""
-        map_focus <- tolower(as.character(report_cfg$map_focus %||% "country"))
-        has_gps <- !is.null(roles) && isTRUE(roles$has_gps) && !is.null(ds) &&
-            !is.na(roles$x) && !is.na(roles$y) &&
-            roles$x %in% names(ds) && roles$y %in% names(ds) &&
-            isTRUE(modules$M8$on %||% TRUE)
-        if (has_gps) {
-            nav_links <- c(nav_links, '<a href="#map">Map</a>')
-            xx <- safe_num(ds[[roles$x]])
-            yy <- safe_num(ds[[roles$y]])
-            ok <- is.finite(xx) & is.finite(yy)
-            # Cap points for browser performance
-            idx <- which(ok)
-            if (length(idx) > 2000) idx <- sample(idx, 2000)
-            ids <- if (".hfc_id_display" %in% names(ds)) {
-            ds$.hfc_id_display[idx]
-            } else rep("", length(idx))
-            ids[is.na(ids)] <- ""
-            flagged_ids <- unique(findings$submission_id[findings$check_module == "M8"])
-            flagged <- ids %in% flagged_ids & nzchar(ids)
-            pts_json <- as.character(jsonlite::toJSON(
-            data.frame(lat = yy[idx], lon = xx[idx], id = ids, flagged = flagged, stringsAsFactors = FALSE),
-            dataframe = "rows", auto_unbox = TRUE
-            ))
-            pts_json <- gsub("</script", "<\\/script", pts_json, fixed = TRUE)
-            # Focus zoom defaults
-            zoom <- switch(map_focus, world = 2, city = 11, country = 6, 6)
-            center_lat <- if (length(idx)) median(yy[idx], na.rm = TRUE) else 0
-            center_lon <- if (length(idx)) median(xx[idx], na.rm = TRUE) else 0
-            map_html <- paste0(
-            "<section id='map' class='card'><h2>GPS map</h2>",
-            "<p class='meta'>Focus: ", esc(map_focus), " · ", length(idx),
-            " points (sampled if &gt;2000). Coordinates from ", esc(roles$x), " / ",
-            esc(roles$y), ". All points are shown; points flagged by GPS Location ",
-            "(M8) are red. Click a point to see its unique ID.</p>",
-            "<div id='gps-map' style='height:420px;border-radius:8px;'></div>",
-            "<link rel='stylesheet' href='https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'/>",
-            "<script src='https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'></script>",
-            "<script>(function(){",
-            "var map=L.map('gps-map').setView([", center_lat, ",", center_lon, "],", zoom, ");",
-            "L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{",
-            "attribution:'&copy; OpenStreetMap'}).addTo(map);",
-            "var pts=", pts_json, ";",
-            "var latlngs=pts.map(function(p){return [p.lat,p.lon];});",
-            "pts.forEach(function(p){",
-            "L.circleMarker([p.lat,p.lon],{radius:3,color:p.flagged?'#c0392b':'#2a6f5e',fillOpacity:0.7})",
-            ".bindPopup('ID: '+(p.id||'(none)')).addTo(map);",
-            "});",
-            "if(latlngs.length){map.fitBounds(latlngs,{padding:[20,20]});}",
-            "})();</script></section>"
-            )
-    }
-
     # Last Day tab — every finding from the most recent day of data collection,
-    # across all modules, for quick triage. M11 media findings folded into the
+    # across all modules, for quick triage. M13 media findings folded into the
     # generic per-module loop above, same as every other module.
     lastday_html <- ""
     if (!is.na(last_date)) {
@@ -1043,7 +1206,7 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         # Duration stats for just that day, alongside its flagged issues -
         # "how did today go" operational info in one place, distinct from
         # M4's own Overall/By Enumerator tables. Same minutes conversion as
-        # check_m4()/check_m13() (SurveyCTO duration is always in seconds).
+        # check_m4()/check_m11() (SurveyCTO duration is always in seconds).
         lastday_duration_html <- ""
         dc <- modules$M4$duration %||% roles$duration %||% NA_character_
         if (!is.null(ds) && !is.na(dc) && dc %in% names(ds) && !is.na(roles$start) && roles$start %in% names(ds)) {
@@ -1085,10 +1248,11 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
         "tbl-all", 10L,
         col_labels = findings_col_labels
     )
+    all_by_enum_html <- render_all_issues_by_enumerator(findings, findings_col_labels)
 
     # "About this dashboard" — orientation + glossary, always first. Only the
     # terms that can actually appear given which modules are on are shown
-    # (e.g. no "Consent"/"Assent" entry when M12 is off) — a glossary entry for
+    # (e.g. no "Consent"/"Assent" entry when M14 is off) — a glossary entry for
     # a term the report never uses is exactly the kind of unnecessary
     # information this redesign is about cutting.
     glossary_all <- list(
@@ -1104,11 +1268,11 @@ write_html_report <- function(findings, code_output_dir, project_id, open = FALS
     )
     glossary_keys <- c(
         "Finding", "Category",
-        if ("M12" %in% modules_present) c("Consent", "Assent"),
+        if ("M14" %in% modules_present) c("Consent", "Assent"),
         "Enumerator",
         if ("M2" %in% modules_present) "Duplicate",
         if ("M6" %in% modules_present) "Outlier",
-        if ("M9" %in% modules_present) "Straightlining",
+        if ("M8" %in% modules_present) "Straightlining",
         if (!is.na(last_date)) "LastDay"
     )
     glossary_terms <- glossary_all[glossary_keys]
@@ -1185,6 +1349,9 @@ dl.glossary dd{margin:0 0 .5rem;color:var(--muted);font-size:.9rem}
 .stats-index a:hover{text-decoration:underline}
 details.stats-details{margin:.5rem 0}
 details.stats-details summary{cursor:pointer;font-weight:600;padding:.3rem 0;font-family:'IBM Plex Sans',system-ui,sans-serif}
+details.enum-issues{margin:.5rem 0;border-top:1px solid var(--line);padding-top:.5rem}
+details.enum-issues summary{cursor:pointer;font-weight:600;padding:.3rem 0;font-family:'IBM Plex Sans',system-ui,sans-serif}
+details.enum-issues summary .meta{font-weight:400;color:var(--muted);font-size:.85rem}
 footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
 </style>
 <link href='https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;600&family=Source+Serif+4:opsz,wght@8..60,500;8..60,700&display=swap' rel='stylesheet'/>
@@ -1192,7 +1359,7 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     "<header class='nav'><span class='brand'>FieldLoop</span>",
     paste(nav_links, collapse = " "),
     "</header><main>",
-    "<h1>HFC Checks</h1>",
+    "<h1>HFCs</h1>",
     "<p class='meta'>Generated ", Sys.Date(), " · ", nrow(findings), " issues found · ",
     dplyr::n_distinct(findings$category), " categories</p>",
     about_html,
@@ -1200,8 +1367,7 @@ footer.note{margin-top:1.5rem;color:var(--muted);font-size:.9rem}
     "<h3>By category</h3>", summary_cards, "</section>",
     lastday_html,
     paste(mod_sections, collapse = "\n"),
-    map_html,
-    "<section id='all' class='card'><h2>All issues</h2>", all_tbl, "</section>",
+    "<section id='all' class='card'><h2>All issues</h2>", all_tbl, all_by_enum_html, "</section>",
     "<p class='note footer'>Field edits go in the shared <code>issue_tracking.xlsx</code> in your ",
     "OneDrive-synced folder (see <code>.claude/skills/hfc-fieldloop/config.json</code>)</p>",
     "</main>",
@@ -1285,13 +1451,15 @@ ensure_project_dirs <- function(code_output_dir) {
     dir.create(file.path(hfc, "code", "resolutions"), recursive = TRUE, showWarnings = FALSE)
 }
 
-# Module code -> its check_templates/ filename (M10 excluded: fully
-# agent-authored per project, nothing to copy).
+# Module code -> its check_templates/ filename (M9 Field Request excluded:
+# fully agent-authored per project, nothing to copy. M12 Balance Tables
+# excluded: descriptive-only, rendered directly by render_balance_tables_body(),
+# never produces a standard findings script the way the other modules do).
 CHECK_TEMPLATE_FILES <- c(
     M1 = "M1_completion.R", M2 = "M2_duplicates.R", M3 = "M3_form_version.R",
     M4 = "M4_duration.R", M5 = "M5_date_issues.R", M6 = "M6_outliers.R",
-    M7 = "M7_missingness.R", M8 = "M8_gps.R", M9 = "M9_straightlining.R",
-    M11 = "M11_media.R", M12 = "M12_consent.R", M13 = "M13_sumstats.R"
+    M7 = "M7_missingness.R", M8 = "M8_straightlining.R", M10 = "M10_gps.R",
+    M11 = "M11_sumstats.R", M13 = "M13_media.R", M14 = "M14_consent.R"
 )
 
 #' For every confirmed-on module, copy its real, runnable check_templates/
@@ -1314,7 +1482,7 @@ write_check_scripts <- function(code_output_dir, modules, skill_dir = NULL) {
     # "# HFC FieldLoop generated check: " first-line marker, not filename
     # alone, so a file the user renamed/repurposed into something custom is
     # never touched) for any module no longer confirmed on. Agent-authored
-    # M10 custom-check files (no marker) are never touched either way.
+    # M9 custom-check files (no marker) are never touched either way.
     for (f in list.files(checks_dir, pattern = "\\.R$", full.names = TRUE)) {
         first_line <- tryCatch(readLines(f, n = 1, warn = FALSE), error = function(e) "")
         if (length(first_line) && startsWith(first_line, "# HFC FieldLoop generated check: ")) {

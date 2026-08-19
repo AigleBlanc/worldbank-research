@@ -25,6 +25,7 @@ modules <- yaml::read_yaml(hfc_path(code_output_dir, "config", "modules.yaml"))
 proj_yaml <- yaml::read_yaml(hfc_path(code_output_dir, "project.yaml"))
 ds <- load_latest_dataset(cfg$input_data_dir, proj_yaml$data_file)
 ds <- prepare_ds_for_checks(ds, roles, code_output_dir)
+ds <- ds_for_module_selection(ds, "M1", modules)
 
 res <- check_m1(ds, roles, modules)
 res$findings <- dedupe_finding_ids(res$findings)

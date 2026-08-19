@@ -1,16 +1,23 @@
-# Test folders
-scratch/
-malawi2/
-test/
+# Track only the essentials: this file, LICENSE, README, and the
+# hfc-fieldloop skill. Everything else at the root (test data, other
+# skill drafts, local config) stays untracked.
 
-# Data files
-data/
+# Ignore everything by default
+/*
 
-# Claude specs
-.claude/
+# Un-ignore the files/dirs we do want tracked
+!/.gitignore
+!/LICENSE
+!/README.md
+!/skills
 
-# OS junk
-.DS_Store
+# Within skills/, ignore everything except hfc-fieldloop
+/skills/*
+!/skills/hfc-fieldloop
 
-# Skill test files
+# Skill-internal exclusion (test fixtures/scripts, not part of the product)
 skills/hfc-fieldloop/tests/
+
+# OS junk, anywhere
+.DS_Store
+**/.DS_Store

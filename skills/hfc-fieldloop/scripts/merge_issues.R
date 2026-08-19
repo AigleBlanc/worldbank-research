@@ -22,6 +22,7 @@ source(file.path(lib, "utils.R"))
 source(file.path(lib, "build_outputs.R"))
 source(file.path(lib, "sync_fpaths.R"))
 source(file.path(lib, "issue_store.R"))
+source(file.path(lib, "verify_merge.R"))
 
 suppressPackageStartupMessages({ library(dplyr) })
 
@@ -43,6 +44,15 @@ if (is.null(snapshot)) {
 }
 
 merged <- merge_preserve_existing(current, snapshot)
+
+# Verify before writing anything — dropped/unexpected finding_ids block the
+# write entirely (file not written); content-only diffs are a review note.
+v <- verify_findings_merge(current, snapshot, merged)
+message(format_merge_verification(v))
+if (!isTRUE(v$ok)) {
+  stop("merge_issues.R: verification failed — merged_issue_tracking.xlsx NOT written. See the verification output above.")
+}
+
 res <- write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label, group_label = group_label)
 
 message("Wrote merged_issue_tracking.xlsx (", nrow(merged), " rows: ", nrow(current), " existing + ",

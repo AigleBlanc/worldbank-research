@@ -3,12 +3,12 @@
 # (same columns as empty_findings() / mk_findings()).
 #
 # Register in hfc/config/modules.yaml:
-#   M10:
+#   M9:
 #     on: true
 #     custom: [example_check]
 # Also write a <=3-sentence plain-English description to
 # hfc/config/module_notes.yaml (custom.example_check.label / .description) so
-# the HTML report can show it under the M10 section — see
+# the HTML report can show it under the M9 section — see
 # references/check_modules.md.
 
 run_example_check <- function(ds, roles) {
@@ -27,6 +27,6 @@ run_example_check <- function(ds, roles) {
     drop = FALSE
   ]
   if (!nrow(tmp)) return(empty_findings())
-  mk_findings(tmp, "example_check", "M10", "example_check",
+  mk_findings(tmp, "example_check", "M9", "example_check",
               "Group A respondent missing expected benefit/treatment-received flag", roles, received_col)
 }

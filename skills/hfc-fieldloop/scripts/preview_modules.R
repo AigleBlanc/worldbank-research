@@ -1,5 +1,5 @@
 # Writes hfc/config/modules.yaml — a commented, human-readable draft of
-# every M1-M13 module's proposed default (on/off, description, thresholds/
+# every M1-M14 module's proposed default (on/off, description, thresholds/
 # variables) — shown to the user BEFORE the accept-all/review confirmation
 # (SKILL.md A2), so the agent can give them a real, already-existing path to
 # open and review/edit directly, in addition to the chat tabs. Reflects
@@ -79,7 +79,7 @@ roles <- profile_roles(ds, media_folder = media_folder, roster_candidate = disc$
 # A2, so role_map.yaml may already hold a partial config) — read-only, never
 # written back here. Applied BEFORE default_modules(roles) below, so these
 # adjustments actually reach the fresh guess (important_vars etc. feed
-# M6/M9/M13's guessed variable lists).
+# M6/M8/M11's guessed variable lists).
 role_map_path <- hfc_path(cfg$code_output_dir, "config", "role_map.yaml")
 if (file.exists(role_map_path)) {
     saved <- yaml::read_yaml(role_map_path)

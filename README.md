@@ -1,6 +1,6 @@
 # Claude Code FieldLoop staging
 
-This repo *is* the `.claude/` folder for a survey project — clone it directly into place, rename it, and you're set up. It contains the HFC FieldLoop skill (`skills/hfc-fieldloop/`). Turn on Claude Code's built-in **Auto** permission mode (`/permissions`, or the mode toggle) so the agent doesn't interrupt you for routine file reads/writes and `Rscript` calls — it's a setting you control yourself, not something this repo ships for you.
+This repo *is* the `.claude/` folder for a survey project — clone it directly into place, rename it, and you're set up. It contains the HFC FieldLoop skill (`skills/hfc-fieldloop/`), which runs a configurable set of high-frequency checks (M1–M14 — duplicates, outliers, GPS, timing, missingness, balance tables, and more), and validates its own config, report, and merge steps automatically as it builds. Turn on Claude Code's built-in **Auto** permission mode (`/permissions`, or the mode toggle) so the agent doesn't interrupt you for routine file reads/writes and `Rscript` calls — it's a setting you control yourself, not something this repo ships for you.
 
 ## Install into a survey project
 
@@ -53,5 +53,5 @@ In Claude Code, just talk to it in plain language. Two things to say:
 
 If your VS Code window has more than one survey project open, add the folder name: `"Run HFC FieldLoop for <folder_name>"`.
 
-The agent will ask you questions along the way using clickable option cards (never type long answers — just pick an option, or choose "Other" if nothing fits).
+Setup only stops for a handful of quick confirmations (finding your data, gathering any instructions, and a final review before anything is approved) — the agent decides everything else itself, using its own best guess, and you can always ask it to walk you through every module's settings before approving if you'd rather review them all. Whenever it does ask, it's always via clickable option cards (never type long answers — just pick an option, or choose "Other" if nothing fits).
 ---

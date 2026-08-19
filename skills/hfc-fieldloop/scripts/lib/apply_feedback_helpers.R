@@ -1,5 +1,5 @@
 # Post-feedback helpers. Fix logic itself is agent-authored per finding —
-# there is no built-in heuristic engine here (mirrors how M10 custom checks
+# there is no built-in heuristic engine here (mirrors how M9 custom checks
 # are AI-authored per project rather than a fixed catalog). All work happens
 # against today's resolutions/<date>_issues_resolution.xlsx clone, never the
 # live issue_tracking.xlsx directly — merge_resolutions.R + explicit
@@ -60,6 +60,11 @@ list_open_commented_rows <- function(cfg, skill_dir = NULL, date = Sys.Date()) {
     clone$corrections[clone$finding_id == finding_id] <- corrections_text
   }
   write_resolution_clone(ctx, clone, date = date, entity_label = entity_label, group_label = group_label)
+  # Record this id as agent-touched today — merge_resolutions.R uses this
+  # to scope its live-file overwrite to only rows the agent actually
+  # changed this pass, protecting a concurrent field/RA edit on any other
+  # row (see record_touched_id()'s header comment, issue_store.R).
+  record_touched_id(ctx, finding_id, date = date)
   invisible(clone)
 }
 
@@ -68,11 +73,25 @@ list_open_commented_rows <- function(cfg, skill_dir = NULL, date = Sys.Date()) {
 #' applies the fix, writes <sibling of input_data_dir>/intermediate/<stem>.<ext>,
 #' and records the Corrections text + Status = "Resolved" in today's
 #' resolutions clone.
+#'
+#' Idempotent against a crash-then-retry: if a previous call already wrote
+#' the intermediate fix for this finding_id today (record_fix_applied(),
+#' issue_store.R) but was interrupted before the clone update, a retry skips
+#' straight to catching up the clone (itself idempotent) instead of
+#' re-running fix(ds) against data that already has it applied — re-running
+#' a non-idempotent fix (e.g. an additive correction) would otherwise
+#' silently double-apply it.
 apply_one_fix <- function(cfg, finding_id, corrections_text, skill_dir = NULL, date = Sys.Date()) {
   fixes_dir <- hfc_path(cfg$code_output_dir, "code", "resolutions")
   fix_file <- file.path(fixes_dir, paste0(sanitize_finding_id(finding_id), ".R"))
   if (!file.exists(fix_file)) {
     stop("No fix file found: ", fix_file, " — write it first, defining fix(ds) -> ds.")
+  }
+
+  ctx <- fetch_issue_tracking(skill_dir = skill_dir)
+  if (is_fix_applied(ctx, finding_id, date = date)) {
+    .update_clone_row(cfg, skill_dir, date, finding_id, "Resolved", corrections_text)
+    return(list(status = "already_applied", intermediate_path = NA_character_, fix_file = fix_file))
   }
 
   env <- new.env(parent = globalenv())
@@ -90,6 +109,11 @@ apply_one_fix <- function(cfg, finding_id, corrections_text, skill_dir = NULL, d
   ds <- load_latest_dataset(cfg$input_data_dir, data_rel)
   fixed_ds <- env$fix(ds)
   out_path <- write_intermediate(fixed_ds, cfg$input_data_dir, stem, ext)
+  # Written immediately after the non-idempotent step succeeds, before the
+  # clone update below — narrows the crash window to "before the fix landed
+  # at all" (safe to fully retry) vs. "after" (a retry only catches up the
+  # clone, see is_fix_applied() above).
+  record_fix_applied(ctx, finding_id, date = date)
 
   .update_clone_row(cfg, skill_dir, date, finding_id, "Resolved", corrections_text)
 

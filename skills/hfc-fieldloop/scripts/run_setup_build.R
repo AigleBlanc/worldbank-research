@@ -36,7 +36,10 @@ source(file.path(lib, "discover.R"))
 source(file.path(lib, "profile_roles.R"))
 source(file.path(lib, "form_logic.R"))
 source(file.path(lib, "run_checks.R"))
+source(file.path(lib, "balance_tables.R"))
 source(file.path(lib, "build_outputs.R"))
+source(file.path(lib, "report_contract.R"))
+source(file.path(lib, "validate_config.R"))
 source(file.path(lib, "module_desc.R"))
 source(file.path(lib, "check_modules_preview.R"))
 source(file.path(lib, "pipeline_core.R"))
@@ -64,11 +67,14 @@ suppressPackageStartupMessages({
 cfg_ctx <- require_fieldloop_config_ready(skill)
 cfg <- cfg_ctx$cfg
 
-# Step 3: scaffold hfc/ under code_output_dir and drop the skill-tree browser page.
+# Step 3: scaffold hfc/ under code_output_dir. hfc/structure.html itself is
+# written (and, on a true first-ever setup, opened) at the very end
+# alongside the HTML report — see step 20b below — not here, since the
+# whole point of that final moment is reviewing the finished product as a
+# whole, not a mid-build placeholder.
 message("Input data dir: ", cfg$input_data_dir)
 message("Code output dir: ", cfg$code_output_dir)
 ensure_project_dirs(cfg$code_output_dir)
-write_product_structure_html(cfg, open = FALSE)
 
 # Step 4: find the microdata (+ optional form) inside the configured input_data_dir only.
 disc <- discover_project(cfg$input_data_dir)
@@ -97,13 +103,13 @@ if (!is.na(form_path) && file.exists(form_path)) {
 message("Loading: ", data_path)
 ds <- load_microdata(data_path, sample_n = sample_n)
 
-# Step 7: media folder for M11 on-disk audio/image checks — configured
+# Step 7: media folder for M13 on-disk audio/image checks — configured
 # directly via config.json's media_dir, optional.
 media_folder <- cfg$media_dir %||% NA_character_
 if (!is.na(media_folder) && nzchar(media_folder)) {
     message("Media folder: ", media_folder)
 } else {
-    message("Media folder: (not configured — M11 on-disk checks will be skipped if media cols exist)")
+    message("Media folder: (not configured — M13 on-disk checks will be skipped if media cols exist)")
 }
 
 # Step 8: heuristically detect column roles (id, group, gps, enum, …).
@@ -238,13 +244,13 @@ attr(ds, "hfc_form_map") <- form_map
 # (roles$map_focus, reloaded above), no separate report.yaml.
 report_cfg <- list(map_focus = roles$map_focus %||% "country")
 
-# Step 14: human-readable notes for custom/M10 checks (and optional per-module
+# Step 14: human-readable notes for custom/M9 checks (and optional per-module
 # description overrides), authored during the Additional-checks confirm step.
 # Optional file.
 module_notes_path <- hfc_path(cfg$code_output_dir, "config", "module_notes.yaml")
 module_notes <- if (file.exists(module_notes_path)) yaml::read_yaml(module_notes_path) else NULL
 
-# Steps 15-16: the actual work — run every confirmed M1–M13 + custom check,
+# Steps 15-16: the actual work — run every confirmed M1–M14 + custom check,
 # then write hfc/outputs/ artifacts (shared with scripts/rebuild_report.R).
 # Load the roster/target-sample list (read-only, never mutated, never
 # copied anywhere) whenever one was found — not just when the confirmed
@@ -256,32 +262,48 @@ if (!is.null(roles$completion_roster_candidate) && !is.na(roles$completion_roste
     target_ds <- tryCatch(load_microdata(roles$completion_roster_candidate$path), error = function(e) NULL)
     if (is.null(target_ds)) message("Could not load roster/target file: ", roles$completion_roster_candidate$path)
 }
+
+# Fail fast on a structurally broken config (missing columns, an
+# ungoverned gate, a version_map date gap, ...) with a readable, collected
+# message, rather than letting it surface downstream as a suspiciously
+# empty table with no explanation.
+format_config_validation(validate_modules_config(modules, roles, ds = ds), stop_on_error = TRUE)
+
 res <- run_checks_and_write_issues(cfg$code_output_dir, ds, roles, modules, skill, target_ds = target_ds)
 findings <- res$findings
 stats <- res$stats
 
 # Step 17: fetch the live issue_tracking.xlsx from the configured OneDrive
 # output folder (see scripts/lib/issue_store.R), write this run's fresh
-# findings as today's intermediate/ snapshot, then either commit directly
-# (first-ever run — nothing to merge against) or merge and stop for the agent
-# to confirm (a prior file exists: merging must never silently overwrite
-# field/RA/agent work on the live shared file).
+# findings as today's intermediate/ snapshot, then always write a PENDING
+# merge file rather than touching the live file directly — even on a true
+# first-ever build. The live file only ever changes once the agent's new
+# final Review & Approve gate is answered "All good!" (SKILL.md A4), via
+# commit_merged_issue_tracking.R. merge_preserve_existing() already
+# degrades correctly when there's no live file yet (is.null(current) ->
+# returns new_snapshot as-is), so a first build's "merge" is just "every
+# finding is new."
 entity_label <- roles$entity_label %||% NA_character_
 group_label <- roles$group_label %||% NA_character_
 ctx <- fetch_issue_tracking(skill_dir = skill, entity_label = entity_label, group_label = group_label)
 fb_new <- findings_to_issue_tracking(findings, roles = roles)
 write_tracking_snapshot(ctx, fb_new, entity_label = entity_label, group_label = group_label)
 
-merge_pending <- FALSE
-if (is.null(ctx$tbl)) {
-    commit_issue_tracking(fb_new, skill_dir = skill, fetch_ctx = ctx, entity_label = entity_label, group_label = group_label)
-    issue_tracking_status <- "created"
-} else {
-    merged <- merge_preserve_existing(ctx$tbl, fb_new)
-    write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label, group_label = group_label)
-    merge_pending <- TRUE
-    issue_tracking_status <- "merge_pending"
+if (!is.null(ctx$tbl)) {
+    # Drop any finding whose live-tracking Status is now Resolved (or whose
+    # Issue ID no longer appears in the live file) from what the report
+    # displays — same filter rebuild_report.R already applies, now also
+    # applied on this path so a data-correction re-run of run_setup_build.R
+    # (Fix+Rebuild workflow) doesn't show already-resolved issues either.
+    # Display-only: the live xlsx and today's snapshot both keep full
+    # history unchanged. Skipped on a first build: there's no live tracking
+    # yet, so nothing to have been marked Resolved against.
+    findings <- filter_findings_by_tracking_status(findings, ctx$tbl)
+    message("Findings after dropping Resolved/untracked: ", nrow(findings), " of ", nrow(res$findings))
 }
+merged <- merge_preserve_existing(ctx$tbl, fb_new)
+write_named_tracking_file(ctx, merged, "merged_issue_tracking.xlsx", entity_label = entity_label, group_label = group_label)
+merge_pending <- TRUE
 
 # Step 18: mirror config.json into hfc/ for the record (this copy is
 # informational only — the live config always stays at
@@ -309,12 +331,33 @@ proj_yaml <- list(
     n_findings = nrow(findings)
 )
 
-# Step 20: build the navigable HTML report (optionally auto-opened).
+# Step 20: build the navigable HTML report (optionally auto-opened via
+# --open; the agent's own workflow builds silently and opens it explicitly
+# itself later instead — SKILL.md A4).
 html_path <- write_html_report(
     findings, cfg$code_output_dir, project_id, open = do_open,
     roles = roles, ds = ds, report_cfg = report_cfg, module_notes = module_notes,
-    stats = stats, modules = modules
+    stats = stats, modules = modules, target_ds = target_ds
 )
+# Non-fatal report-contract check (scripts/lib/report_contract.R) — a
+# quality signal, not a build gate; failures print but never abort.
+tryCatch({
+    modules_present <- compute_modules_present(findings, stats, modules)
+    v <- validate_report_contract(html_path, file.path(skill, "assets", "report_sections.json"), modules_present, modules)
+    message(format_report_contract(v))
+}, error = function(e) message("Report contract check skipped: ", e$message))
+
+# Step 20b: write hfc/structure.html now, at the very end alongside the
+# report, so the agent's final Review & Approve gate (SKILL.md A4) can show
+# both together as one "here's the finished product" moment — never
+# opened by this script itself (see step 20's comment; same posture as the
+# report). structure_was_first tells the agent (via the printed message
+# below) whether this is a true first-ever setup — SKILL.md instructs it to
+# open structure.html too only in that case, and only the report on a
+# rebuild.
+structure_path <- hfc_path(cfg$code_output_dir, "structure.html")
+structure_was_first <- !file.exists(structure_path)
+write_product_structure_html(cfg, open = FALSE)
 
 # Step 21: copy the report into the OneDrive-synced folder (passive sharing
 # — OneDrive's own sync client propagates it to the cloud from there), then
@@ -324,12 +367,9 @@ yaml::write_yaml(proj_yaml, hfc_path(cfg$code_output_dir, "project.yaml"))
 
 message("Done. HTML: ", html_path)
 message("Product root: ", hfc_root(cfg$code_output_dir))
+message("Structure: ", structure_path, " (first_setup=", structure_was_first, ")")
 message("Issue tracking folder: ", ctx$local_dir %||% "(unavailable)", " (", ctx$reason %||% "", ")")
-if (merge_pending) {
-    message("MERGE_PENDING: review merged_issue_tracking.xlsx before overwriting issue_tracking.xlsx.")
-    message("  Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merged_issue_tracking.xlsx")
-} else {
-    message("issue_tracking.xlsx created fresh (first build).")
-}
+message("MERGE_PENDING: review merged_issue_tracking.xlsx, then after the final approval gate:")
+message("  Rscript .claude/skills/hfc-fieldloop/scripts/commit_merged_issue_tracking.R merged_issue_tracking.xlsx")
 message("Report copy: ", report_copy$status, " (", report_copy$reason %||% "", ") ", report_copy$dest_path %||% "(none)")
 message("When field edits issue_tracking, run: Process HFC feedback")

@@ -1,0 +1,514 @@
+{
+    "notes": {
+        "Placeholders": "<Respondent> and <Group> stand in for this project's own configured labels (e.g. 'Respondent', 'Subcounty', 'Treatment Arms', etc) - resolved per project, never literal column headers. <Respondent> is ID-only by default (never the real name); <Group>/Enumerator resolve to name-if-available by default.",
+        "Table grouping rule": "Every findings table in every section below is a SINGLE table, sorted by date (most recent first) then enumerator - never split or collapsed by enumerator. The ONLY exception is 'All Issues', which additionally breaks out one collapsible sub-table per enumerator below its own single main table. A section whose findings are inherently enumerator-level or group-level aggregates (no per-row date) sorts by whatever identifying column it has instead (e.g. Duplicates sorts by <Respondent>).",
+        "Completion note": "Completion (M1) does not include a 'by enumerator, latest day' table.",
+        "Issue Vs info": "Every findings table's third-to-last column is labeled 'Issue' except Field Request, which is labeled 'Info'. Field Request rows are the field team's own status reconciliation, not data-quality problems, and the section heading says 'N entries' there instead of 'N issues found'. Issues found relating to these can be reported in the section 'Other'",
+        "Sentinel codes": "A configured list of non-substantive numeric codes (e.g. -88 'Other, specify', -99 'Don't know') is excluded before computing any statistic that would otherwise treat them as real values. missingness, numeric-outlier thresholds, straightlining's 'same answer' share, and summary statistics all share this one list."
+    },
+    "sections": {
+        "About": {
+            "description": "Standard description of what the dashboard displays ",
+            "text": "This report is a first read of the data, not a verdict. The tables below are not necessarily proof that something is wrong, but results of an analysis that can be reviewed BUT is first AI-assisted (to err is also AI). Use the search box (or 'Show all') in any table to look up a specific submission, enumerator, or value.",
+            "content": {
+                "other": "A 'Terms you'll see' section listing relevant terms in the dashboard. Examples: Issue, Last day, Straighlining."
+            }
+        },
+        "Summary": {
+            "description": "Slack message summarizing data collection progress and the issues from last day of data collection. See template for more details",
+            "content": {
+                "other": "A 'By category' count of number of issues from the last day of data collection"
+            }
+        },
+        "Last Day": {
+            "description": "All compiled issues from the very last day of data collection",
+            "text": "Every issue from the most recent day of data collection, across all modules: a quick way to see what's most urgent.",
+            "content": {
+                "tables": {
+                    "SURVEY DURATION ON THIS DAY": {
+                        "description": "Summary statistics of total survey durations on the last day of data collection.",
+                        "columns": [
+                            "Date",
+                            "Min",
+                            "Median",
+                            "Mean",
+                            "Max",
+                            "SD",
+                            "N"
+                        ]
+                    },
+                    "ISSUES": {
+                        "description": "Compilation of all issues from the very last day of data collection.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue",
+                            "Value",
+                            "Variable"
+                        ]
+                    }
+                }
+            }
+        },
+        "Completion": {
+            "description": "Cumulative completion metrics, also broken down by group, enumerator, date, non-completion reasons, and replacement samples. Also contains a table of completion-related issues.",
+            "text": "A submission counts complete only if it passes every confirmed screening question in the gate chain, in order - a fail on any one gate means the rest of the survey was never asked, and the respondent's reason is the first gate they failed. A later 'governing' gate (typically consent) can override an earlier one that still reads as failed/blank, since it can legitimately be revisited later in the interview. A gate added to the form partway through data collection is exempted for submissions dated before it existed, so it doesn't retroactively fail earlier respondents.",
+            "content": {
+                "tables": {
+                    "OVERALL": {
+                        "description": "Overall completion statistics",
+                        "columns": [
+                            "Dates",
+                            "Surveys Submitted",
+                            "Completed",
+                            "Completion",
+                            "Primary Sample Completed"
+                        ],
+                        "Notes": "Dates value here is the date range for data collection. Example: 2026-08-12 to 2026-11-02. Completion here is completed / surveys submitted"
+                    },
+                    "BY GROUP": {
+                        "description": "Completion broken down by each configured grouping variable (e.g. extension arm, village, subcounty) - one section of rows per variable.",
+                        "columns": [
+                            "Variable",
+                            "Value",
+                            "Surveys Submitted",
+                            "Completed",
+                            "Primary Completed",
+                            "Target N",
+                            "Progress"
+                        ],
+                        "Notes": "Progress here is Completed / Target N (the roster's planned primary-sample count for that group value), NOT Completed / Surveys Submitted - deliberately called Progress, not Completion, and different from every other completion table on this page, since a group can be under 100% even once every submission in it is complete, if replacements haven't yet filled every primary slot. Primary Completed is, of that group's completed respondents, how many are the roster's original primary-sample respondent rather than a replacement."
+                    },
+                    "BY ENUMERATOR": {
+                        "description": "Completion broken down by enumerator.",
+                        "columns": [
+                            "Enumerator",
+                            "Surveys Submitted",
+                            "Completed",
+                            "Completion"
+                        ],
+                        "Notes": "Completion here is Completed / Surveys Submitted."
+                    },
+                    "BY DATE": {
+                        "description": "Completion broken down by date, most recent first.",
+                        "columns": [
+                            "Date",
+                            "Surveys Submitted",
+                            "Completed",
+                            "Completion"
+                        ],
+                        "Notes": "Completion here is Completed / Surveys Submitted."
+                    },
+                    "BY REASON": {
+                        "description": "Every distinct reason a non-completed submission stopped, most common first - the first gate failed, or a dedicated non-start reason (rejected/unavailable/rescheduled/other) when the respondent was never reached at all. Every non-completed submission has exactly one row's worth of reason here; none fall through uncounted.",
+                        "columns": [
+                            "Reason",
+                            "Count"
+                        ]
+                    },
+                    "BY REPLACEMENT": {
+                        "description": "Replacement-sample usage per group: how many of the primary sample were reached vs. backfilled by a replacement.",
+                        "columns": [
+                            "<Group>",
+                            "Primary Targeted",
+                            "Primary Completed",
+                            "Replaced",
+                            "% Replaced"
+                        ],
+                        "Notes": "The default group to use here is the variable on which respondent sampling has been stratified. Usually found through the roster."
+                    },
+                    "ISSUES": {
+                        "description": "Completion-related findings: An enumerator whose submissions on a given day fell short of the daily target, and a replacement completed out of rank order within its respondent group (an earlier-ranked replacement with no submitted row in the data at all).",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue",
+                            "Value"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator."
+                    }
+                }
+            }
+        },
+        "Duplicates": {
+            "description": "Flags submissions that share the same unique ID or survey key, one row per duplicate GROUP rather than one row per individual duplicate submission.",
+            "text": "Flags submissions that share the same unique ID or survey key, which usually means the same interview was uploaded or entered more than once, or an enumerator's first attempt was interrupted and retried. A respondent with 2 duplicate submissions is 1 issue, not 2 - the finding's Value lists every submission's timestamp so the individual-row detail isn't lost.",
+            "content": {
+                "tables": {
+                    "ISSUES": {
+                        "description": "One row per duplicate group.",
+                        "columns": [
+                            "<Respondent>",
+                            "Issue",
+                            "Value"
+                        ],
+                        "Notes": "No date/enumerator column - this is an entity-level aggregate finding, not a per-row one. Sorted by <Respondent>. Value reads e.g. '2 submissions: 2026-08-13 03:16, 2026-08-13 04:01'."
+                    }
+                }
+            }
+        },
+        "Form Version": {
+            "description": "Tracks which version of the survey instrument was in use on each date, and flags any submission whose recorded version doesn't match the expected window for its date.",
+            "text": "The expected form version for each date is configured as a set of windows (version label + start/end date). A submission recorded under an older version after a newer one went live usually means that device hadn't picked up the latest form push yet - a real, useful thing to catch, not a false positive to suppress by widening the old version's date range.",
+            "content": {
+                "tables": {
+                    "SUMMARY": {
+                        "description": "Which version(s) appear in the data and the date range each was actually seen in, regardless of the configured expected windows.",
+                        "columns": [
+                            "Version",
+                            "N",
+                            "First seen",
+                            "Last seen",
+                            "Expected Dates"
+                        ],
+                        "Notes": "Expected dates here is the range of dates the survey form is expected to be live. Examples 2026-08-12 or 2026-07-17 to 2026-08-01."
+                    },
+                    "ISSUES": {
+                        "description": "Every submission whose recorded form version doesn't match the expected version for its date.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "Enumerator",
+                            "Issue",
+                            "Value"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator. Value reads e.g. 'recorded=2608090708 \nexpected=2608110708'."
+                    }
+                }
+            }
+        },
+        "Survey Duration": {
+            "description": "Reports how long interviews took, in minutes, overall, by section, and by enumerator, and flags individual interviews (or individual sections) that ran unusually SHORT against a fixed, literature/user-supplied threshold. Flagging unusually LONG interviews is an opt-in advanced feature, off by default - a long interview isn't inherently a data-quality problem the way a suspiciously short one is.",
+            "text": "Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews more than 3 SD below the mean (or a user-specified threshold). Flagging interviews more than 3 SD above the mean is available as an opt-in.",
+            "Notes": "By default, only the too-short bound is ever active - no upper bound, so a long interview alone is never flagged. If the advanced long-duration flag is turned on for a project, thresholds are then one-sided wherever the source threshold itself is - a section with only a 'too short' bound configured is never flagged for running long, and vice versa. A section with no threshold configured at all is still timed in the stats tables but never flagged. A section that's only administered to certain respondents (e.g. an arm-specific module) is only checked for the respondents it actually applies to - a respondent who was never shown that section isn't flagged just because its duration reads as very short or blank.",
+            "content": {
+                "tables": {
+                    "OVERALL": {
+                        "description": "Summary statistics for total survey duration.",
+                        "columns": [
+                            "Dates",
+                            "Min",
+                            "Median",
+                            "Mean",
+                            "Max",
+                            "SD",
+                            "N"
+                        ],
+                        "Notes": "Dates denotes the range of data from start to latest day. Example: 2026-07-17 to 2026-08-01."
+                    },
+                    "BY SECTION": {
+                        "description": "Summary statistics for each timed section of the survey (e.g. Introduction, Consent, Knowledge, Human Advice), one row per section.",
+                        "columns": [
+                            "Section",
+                            "Min",
+                            "Median",
+                            "Mean",
+                            "Max",
+                            "SD",
+                            "N"
+                        ]
+                    },
+                    "BY ENUMERATOR": {
+                        "description": "Summary statistics for total survey duration, broken down by enumerator.",
+                        "columns": [
+                            "Enumerator",
+                            "Min",
+                            "Median",
+                            "Mean",
+                            "Max",
+                            "SD",
+                            "N"
+                        ]
+                    },
+                    "ISSUES": {
+                        "description": "Every interview (or section) whose duration crossed a configured threshold.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Treatment Arm>",
+                            "Enumerator",
+                            "Issue",
+                            "Value"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator. Uses <Extension Arm> (examples: Control, Treatment 1, etc) in this table specifically (and only this table). This helps a reviewer see at a glance whether a short/long duration is expected given which arm the respondent is in, since some sections are arm-conditional."
+                    },
+                    "DAY TIMES": {
+                        "description": "Earliest and latest survey start/end on each day of data collection",
+                        "columns": [
+                            "Date",
+                            "Earliest Start",
+                            "Latest Start",
+                            "Earliest End",
+                            "Latest End"
+                        ],
+                        "Notes": "One row per date. Dates should be reported in YYYY-MM-DAY and start/end times in HH-MM am/pm - example: 12:27 pm."
+                    }
+                }
+            }
+        },
+        "Irregular Timing": {
+            "description": "Flags interviews conducted at unusual times: weekends (if configured) or outside normal working hours, using each submission's local time zone.",
+            "text": "Flags interviews conducted at unusual times (<time> local time), using each submission's local time zone.",
+            "Notes": "Working hours and weekend flagging are both configurable. Local time is resolved per submission's own time zone, not the server's.",
+            "content": {
+                "tables": {
+                    "ISSUES": {
+                        "description": "Every interview conducted outside the configured hours (or on a weekend, if enabled).",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue",
+                            "Value"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator. Value is the local timestamp."
+                    }
+                }
+            }
+        },
+        "Numeric Outliers": {
+            "description": "Flags unusually high or low values on key numeric questions against fixed, literature/analyst-supplied thresholds.",
+            "text": "Flags unusually high or low values (<beyond 3 SD from the mean, or user specific thresholds>) on key numeric questions.",
+            "Notes": "Thresholds are one-sided wherever the source threshold itself is. A threshold can apply to a single variable or to the sum of several (e.g. total coffee value summed across cherry/kiboko/parchment/FAQ revenue). Non-substantive sentinel codes are excluded before comparing against a threshold or summing multiple variables together, so a code like -88 can't corrupt a sum or masquerade as a real low value.",
+            "content": {
+                "tables": {
+                    "ISSUES": {
+                        "description": "Every submission with a numeric value crossing a configured threshold.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue",
+                            "Value",
+                            "Variable"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator. Variable is the raw DIME-facing column name (or names, '+'-joined, when the threshold is on a summed total)."
+                    }
+                }
+            }
+        },
+        "Missingness": {
+            "description": "A reference table of missingness on key survey questions - descriptive only, never produces findings.",
+            "text": "Reports missingness on key survey questions on: <variables>. Not flagged as an issue.",
+            "Notes": "Missingness on the configured question list is reported for reference only and is not flagged as an issue, on either the question or the enumerator level. Non-substantive sentinel codes (e.g. -88, -99, 999) count as missing here, same shared list used project-wide. A question a respondent was correctly never asked (routed around it by earlier skip logic) doesn't count toward its missingness at all - dropped from both the numerator and the denominator, not just hidden from the numerator.",
+            "content": {
+                "tables": {
+                    "OVERALL": {
+                        "description": "Missingness for every configured question/variable, whether or not it crosses any threshold.",
+                        "columns": [
+                            "Variable",
+                            "% Missing",
+                            "N Missing",
+                            "Obs"
+                        ]
+                    }
+                }
+            }
+        },
+        "Straightlining": {
+            "description": "Reports enumerators who gave the same answer on a question in every one of their interviews on a single day, and individual submissions where most ordinal/Likert-style questions share one identical value. Not flagged",
+            "text": "Reports enumerators who gave the same answer on a question in 100%+ of their interviews on a single day (minimum 3 that day), and submissions where 90%+ of ordinal/Likert-style answers are identical.",
+            "Notes": "Just a report, not flagged as issues. Non-substantive sentinel codes (e.g. -88 'Other, specify', -99 'Don't know') are excluded before computing the 'same answer' share, in both tables below - two respondents both coded -88 didn't give the same real answer the way two respondents both picking a real choice-list option did, and leaving sentinel codes in would dilute the share enough to mask genuine concentration in the real answers.",
+            "content": {
+                "tables": {
+                    "BY ENUMERATOR": {
+                        "description": "Enumerators who gave the same answer on one or more questions in all of their surveys on a single day (minimum 3 that day).",
+                        "columns": [
+                            "Date",
+                            "Enumerator",
+                            "Issue",
+                            "Value"
+                        ],
+                        "Notes": "One row per (enumerator, day) - every flagged question that day listed together in Issue, every straightlined answer joined with '&' in Value - not one row per (enumerator, day, question) triple."
+                    }
+                }
+            }
+        },
+        "Field Request": {
+            "description": "The field team and user's own daily reconciliation view. Not pre-determined but cached once it is requested, i.e. a custom survey-specific check.",
+            "text": "Describe the requested checks.",
+            "Notes": "This section's own findings table uses 'Info' instead of 'Issue' as the column label, and the section heading reads 'N entries' instead of 'N issues found' - every row here is a status snapshot, not a problem to fix. respondent-ID sample status is scoped to the primary sample only (replacements excluded from the target), and is cumulative as of this report, not a per-day snapshot.",
+            "content": {
+                "Notes": "AI-agent interprets and designs the output schema, but comforming with other sections."
+            }
+        },
+        "Other": {
+            "description": "Findings outside the standard M1-Mx checks and Field Request - AI-authored custom checks specific to this survey's content that don't fit an existing module (e.g. this project's enumerator-ID dropdown mismatch check).",
+            "text": "Findings outside the standard M1-M13 checks and Field Request.",
+            "Notes": "Any noteworthy anomaly worth mentioning in the Summary narrative needs a real tracked finding here (or in an existing module) as well - a narrative-only observation isn't enough on its own.",
+            "content": {
+                "tables": {
+                    "ISSUES": {
+                        "description": "Every finding from a custom check that isn't Field Request.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue",
+                            "Value",
+                            "Variable"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator."
+                    }
+                }
+            }
+        },
+        "GPS Map": {
+            "description": "An interactive map plotting every submission's GPS location, for visual review - descriptive only, this section never flags an issue.",
+            "text": "Plots every submission with a valid coordinate on a map, so unusual clustering, scatter, or off-site points can be reviewed visually.",
+            "Notes": "Purely a visualization - no distance threshold, no flagged points, no findings table. Off in this project: no GPS coordinates are captured on this survey's form.",
+            "content": {
+                "Map": "An interactive map (OpenStreetMap base layer) plotting every submission with a valid coordinate - up to 2,000 points, randomly sampled if there are more, for browser performance. Clicking a point pops up its <Respondent> ID. The view auto-fits to the plotted points, with an initial zoom level set by the project's configured focus (world/country/city)."
+            }
+        },
+        "Summary Statistics": {
+            "description": "A simple reference table of mean, SD, min, max, and observation count for the survey's most important variables, overall and broken out per enumerator. Descriptive only, never produces findings.",
+            "Notes": "Sentinel codes are excluded from every statistic here, same shared list used project-wide.",
+            "content": {
+                "tables": {
+                    "OVERALL": {
+                        "description": "Summary statistics for every configured important variable.",
+                        "columns": [
+                            "Variable",
+                            "Min",
+                            "Median",
+                            "Mean",
+                            "Max",
+                            "SD",
+                            "NA",
+                            "Obs"
+                        ]
+                    },
+                    "BY ENUMERATOR": {
+                        "description": "Same statistics, one table per enumerator.",
+                        "columns": [
+                            "Variable",
+                            "Mean",
+                            "SD",
+                            "Min",
+                            "Max",
+                            "NA",
+                            "Obs"
+                        ],
+                        "Notes": "Collapses into an index + expandable-details layout once there are more than a handful of enumerators, so the page doesn't open with every enumerator's table already expanded."
+                    }
+                }
+            }
+        },
+        "Balance Tables": {
+            "description": "Standard RCT balance check: for each configured covariate, compares means across treatment arms and across other user-specified splits, alongside a completed-vs-submitted reconciliation and a differential-completion regression. Descriptive only, never produces findings - this section describes the randomization and attrition pattern, it doesn't flag a data-quality problem.",
+            "text": "Compares baseline covariates across treatment arms to check the groups are actually comparable.",
+            "Notes": "Rendered with the gt R package for a polished, publication-style look (real spanning column headers, a stacked Mean/SD cell) rather than the plain searchable-table look every other section on this page uses. Appears twice, once per grouping (extension arm, data incentive), each as three tables in a fixed order: the completed-interview count table, the balance table, then the differential-completion regression. This section sits right before 'All Issues'.",
+            "content": {
+                "tables": {
+                    "COMPLETED INTERVIEWS BY TREATMENT ARM": {
+                        "description": "Submitted, Completed, and Completion Rate, one column per group value plus a Total column.",
+                        "columns": [
+                            "Treatment Arm",
+                            "<Treatment value 1>",
+                            "<Treatment value 2>",
+                            "...",
+                            "Total"
+                        ],
+                        "Notes": "Rows are 'Submitted Surveys', 'Completed Interviews', 'Completion Rate' (Completed / Submitted, %). Submitted counts every attempt regardless of completion; Completed is the completed-only subset. Same column-per-group orientation as the balance table right below it."
+                    },
+                    "BY TREATMENT ARM": {
+                        "description": "Covariate balance across treatment arms among completed interviews only, with a joint significance test per covariate.",
+                        "columns": [
+                            "Covariate",
+                            "<Treatment value 1>: Mean (SD) / N",
+                            "<Treatment value 2>: Mean (SD) / N",
+                            "...",
+                            "P value"
+                        ],
+                        "Notes": "Each group gets a spanning header over two sub-columns: a stacked Mean-over-SD cell, and N. P value is from Welch's ANOVA (reduces to a Welch two-sample t-test for exactly 2 groups) testing whether that covariate's mean is equal across all groups shown - a joint test, not pairwise. Bolded and colored red when below .05."
+                    },
+                    "COMPLETION REGRESSION BY TREATMENT ARM": {
+                        "description": "Does treatment arm predict whether a submission was ever completed at all (not just covariate balance among completers) - the standard 'differential attrition' check.",
+                        "columns": [
+                            "Treatment Arm",
+                            "Ref.",
+                            "Ref. Mean",
+                            "Difference",
+                            "SE",
+                            "P value"
+                        ],
+                        "Notes": "Linear probability model of completion on the group (plus the other grouping, in the same joint model) with respondent-group fixed effects, standard errors clustered by respondent group. One row per non-reference group level, difference expressed in percentage points relative to the reference level. P value bolded and colored red when below .05. A source note under the table states the model spec, cluster count, sample size, and (for the extension-arm table) the joint test that no arm differs from the reference."
+                    },
+                    "REPLACEMENTS BY TREATMENT ARM": {
+                        "description": "Replacement counts and proportions in each treatment arms.",
+                        "columns": [
+                            "Treatment Arm",
+                            "Non-Completed Primary",
+                            "Replacements N",
+                            "Replacement Success %"
+                        ],
+                        "Notes": "Here we want to assess how successfully we are replacing respondents in each treatment arm. Replacement Rate = Replacements N / Non-Completed Primary"
+                    }
+                }
+            }
+        },
+        "Media Files": {
+            "description": "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row: usually a form or coding problem, not a per-row file-hygiene issue. Off in this project.",
+            "text": "A single finding per affected column, not per row - if every row is missing a given media field, that's one structural problem (the wrong column was detected, or the field was never actually captured), not hundreds of individual gaps.",
+            "content": {
+                "tables": {
+                    "ISSUES": {
+                        "description": "Every media-indicating column that's completely empty across all surveyed rows.",
+                        "columns": [
+                            "Issue"
+                        ],
+                        "Notes": "Dataset-level finding, no date/respondent/enumerator column."
+                    }
+                }
+            }
+        },
+        "Consent & Assent": {
+            "description": "Flags cases missing a required consent (guardian agreement) or assent (the child's own agreement) flag, which the survey should always capture before proceeding. Off in this project (consent is handled as a Completion gate instead).",
+            "text": "A row missing consent/assent that the form's own skip logic already expected to be blank isn't flagged.",
+            "content": {
+                "tables": {
+                    "ISSUES": {
+                        "description": "Every submission missing a required consent or assent flag.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue"
+                        ],
+                        "Notes": "Single table, sorted by date then enumerator. A column found completely empty across every row instead produces a single dataset-level finding, same pattern as Media Files."
+                    }
+                }
+            }
+        },
+        "All Issues": {
+            "description": "Every tracked finding across every module in one place - the master list.",
+            "text": "Sorted by date (most recent first) then enumerator, distinct from the module-first ordering used within each section above. This is the only section where findings are also broken out per-enumerator into separate collapsible sub-tables below the main table - every section above this one (Completion through Consent & Assent) shows its findings as one single table, never split or collapsed by enumerator.",
+            "content": {
+                "tables": {
+                    "ALL ISSUES": {
+                        "description": "Every finding from every module, one flat table.",
+                        "columns": [
+                            "Date",
+                            "<Respondent>",
+                            "<Group>",
+                            "Enumerator",
+                            "Issue",
+                            "Value",
+                            "Variable"
+                        ]
+                    }
+                },
+                "other": "Below the main table: one collapsible panel per enumerator, each containing that enumerator's own findings only, sorted by date (most recent first). The worst enumerator (most findings) opens expanded by default; the rest collapse behind a summary line."
+            }
+        }
+    }
+}

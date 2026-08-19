@@ -102,7 +102,7 @@ write_product_structure_html <- function(cfg, open = FALSE) {
                 <li class="dir"><span class="name">outputs/</span><span class="meta">&lt;MMDD&gt;_HFCs.html (dated per build) · issues.csv</span></li>
                 <li class="dir"><span class="name">code/</span><span class="meta">main.R</span>
                   <ul>
-                    <li class="dir"><span class="name">checks/</span><span class="meta">M1–M13 (runnable) + custom (e.g. example_check.R)</span></li>
+                    <li class="dir"><span class="name">checks/</span><span class="meta">M1–M14 (runnable) + custom (e.g. example_check.R)</span></li>
                     <li class="dir"><span class="name">resolutions/</span><span class="meta">post-feedback fix scripts</span></li>
                   </ul>
                 </li>

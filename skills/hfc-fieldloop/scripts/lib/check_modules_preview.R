@@ -77,7 +77,7 @@ write_commented_modules_yaml <- function(modules, modules_path) {
         "# HFC FieldLoop check-module configuration",
         "#",
         "# Controls which data-quality checks run and how they're tuned. Each",
-        "# module below (M1-M13) has a short description of what it does, then",
+        "# module below (M1-M14) has a short description of what it does, then",
         "# its settings.",
         "#",
         "# - To turn a check off entirely: change its \"on: yes\" to \"on: no\".",

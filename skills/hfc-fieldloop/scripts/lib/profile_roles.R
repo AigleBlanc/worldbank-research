@@ -255,7 +255,7 @@ detect_completion_signal <- function(ds, roster_candidate = NULL) {
 #' columns' sample values, plus a GPS bounding box if x/y columns exist.
 #' Does NOT resolve a country itself: country inference from place names or
 #' a GPS bounding box is agent judgment (documented in SKILL.md), the same
-#' treatment as M10 custom-check authorship and redundant-variable
+#' treatment as M9 custom-check authorship and redundant-variable
 #' de-duplication — a regex/lookup table can't reliably map "Bujumbura" or
 #' "Gashanga" to a country the way a general-knowledge reader can.
 GEOGRAPHY_SIGNAL_NAME_PATTERN <- "district|region|province|county|village|ward|site_name|school_name|community|admin[1-4]"
@@ -285,95 +285,6 @@ shortlist_geography_signal_cols <- function(ds, x_col = NA_character_, y_col = N
     }
 
     list(geo_col_options = hit, geo_col_samples = samples, gps_bbox = gps_bbox)
-}
-
-#' Scan a shortlisted set of numeric-ish variables' value distributions for
-#' common sentinel/missing-code patterns (99/-99/-9999/999/88 etc.)
-#' appearing disproportionately relative to the variable's apparent scale —
-#' a speculative guess, always shown with a correction box, never trusted
-#' silently. Lets the sentinel-code guess be stated in the SAME message as
-#' the variable shortlist (SKILL.md's Variables bundle tab) instead of
-#' requiring a separate follow-up question once the variables are confirmed.
-SENTINEL_CANDIDATES <- c(-9999, -999, -99, -88, -9, 99, 88, 999, 9999)
-guess_sentinel_codes <- function(ds, vars) {
-    vars <- vars[!is.na(vars) & vars %in% names(ds)]
-    if (!length(vars)) return(integer())
-    hits <- integer()
-    for (vc in vars) {
-        v <- safe_num(ds[[vc]])
-        v <- v[is.finite(v)]
-        if (length(v) < 10) next
-        core <- v[!v %in% SENTINEL_CANDIDATES]
-        if (!length(core)) next
-        core_range <- range(core)
-        for (cand in SENTINEL_CANDIDATES) {
-        n_cand <- sum(v == cand)
-        # A sentinel candidate is "plausible" if it appears at least a
-        # couple of times AND sits well outside the variable's normal
-        # (non-sentinel) range — i.e. looks like an out-of-band code, not
-        # a genuine data value.
-        if (n_cand >= 2 && (cand < core_range[1] - 1 || cand > core_range[2] + 1)) {
-            hits <- c(hits, cand)
-        }
-        }
-    }
-    sort(unique(hits))
-}
-
-#' Candidate Treatment/Control-like columns for completion-by-group (M1) —
-#' the DEFAULT grouping. Requires BOTH a name-pattern hit AND a plausible
-#' value shape (2-3 distinct values that look like Treatment/Control/T/C/1/0)
-#' together, so an unrelated 0/1 flag that merely shares a name fragment
-#' Guess a human-readable label for what roles$group actually represents
-#' (e.g. "school_id" -> "School", "village" -> "Village") — used as the
-#' report/issue-tracking column header in place of the generic "Group ID".
-#' Confirmable/correctable like roles$entity_label (see SKILL.md's later
-#' module-config window, not the required Setup gate); NA when nothing
-#' matches, in which case callers fall back to the generic "Group".
-derive_group_label <- function(group_col_name) {
-    if (is.null(group_col_name) || length(group_col_name) == 0 || is.na(group_col_name) || !nzchar(group_col_name)) {
-        return(NA_character_)
-    }
-    gc <- tolower(group_col_name)
-    label_patterns <- c(
-        "school" = "School", "village" = "Village", "facility" = "Facility",
-        "cluster" = "Cluster", "ea_id|^ea$" = "Enumeration Area", "site" = "Site",
-        "community" = "Community", "ward" = "Ward", "district" = "District"
-    )
-    for (pat in names(label_patterns)) {
-        if (grepl(pat, gc)) return(unname(label_patterns[[pat]]))
-    }
-    NA_character_
-}
-
-#' (e.g. a "group" column that's actually a household roster grouping) isn't
-#' mistaken for a study arm.
-TREAT_NAME_PATTERN <- "treat|^arm$|condition|^tx$|^grp$|assignment"
-TREAT_VALUE_PATTERN <- "^(treatment|control|treat|ctrl|t|c|1|0)$"
-detect_treatment_control_vars <- function(ds, n = 2L) {
-    nms <- names(ds)
-    name_hit <- nms[grepl(TREAT_NAME_PATTERN, nms, ignore.case = TRUE)]
-    hit <- name_hit[vapply(name_hit, function(col) {
-        x <- toupper(trimws(as.character(ds[[col]])))
-        vals <- unique(x[!is.na(x) & nzchar(x)])
-        length(vals) %in% 2:3 && all(grepl(TREAT_VALUE_PATTERN, vals, ignore.case = TRUE))
-    }, logical(1))]
-    utils::head(hit, n)
-}
-
-#' Candidate geographic-unit columns for completion-by-group (M1) — the
-#' OPT-IN secondary grouping, only offered when no Treatment/Control column
-#' exists, or the user explicitly asks for it in addition.
-GEO_GROUP_NAME_PATTERN <- "state|region|district|stratum|province|county|admin[1-4]"
-detect_geographic_group_vars <- function(ds, n = 4L) {
-    nms <- names(ds)
-    hit <- grep(GEO_GROUP_NAME_PATTERN, nms, ignore.case = TRUE, value = TRUE)
-    hit <- hit[vapply(hit, function(col) {
-        x <- as.character(ds[[col]])
-        nu <- length(unique(x[!is.na(x) & nzchar(x)]))
-        nu >= 2 && nu <= 30
-    }, logical(1))]
-    utils::head(hit, n)
 }
 
 #' Candidate disambiguating columns for the M2 duplicate-check key
@@ -437,44 +348,7 @@ detect_section_time_pairs <- function(ds, exclude = character()) {
     stats::setNames(pairs, vapply(names(pairs), title_case, character(1)))
 }
 
-#' Best-effort version-cutover inference when no version column exists (M3).
-#' Bins submissions by month of `start_col` and looks for columns whose
-#' non-missing rate jumps sharply between adjacent bins — a signal that the
-#' instrument changed around that date. Explicitly fuzzy: propose, don't trust.
-infer_version_cutovers <- function(ds, start_col, max_versions = 3L) {
-    if (is.na(start_col) || !start_col %in% names(ds)) return(list())
-    dt <- suppressWarnings(as.Date(as.character(ds[[start_col]])))
-    if (all(is.na(dt))) return(list())
-    bins <- format(dt, "%Y-%m")
-    bin_levels <- sort(unique(bins[!is.na(bins)]))
-    if (length(bin_levels) < 2) return(list())
-    rate_by_bin <- sapply(names(ds), function(col) {
-        tapply(!is.na(ds[[col]]) & as.character(ds[[col]]) != "", bins, mean)[bin_levels]
-    })
-    jumps <- character()
-    for (i in seq_len(nrow(rate_by_bin) - 1)) {
-        delta <- abs(rate_by_bin[i + 1, ] - rate_by_bin[i, ])
-        if (any(delta > 0.9, na.rm = TRUE)) jumps <- c(jumps, bin_levels[i + 1])
-    }
-    jumps <- unique(jumps)
-    if (!length(jumps)) return(list())
-    # Cluster cutover months that are adjacent/close together
-    jumps <- sort(jumps)
-    clustered <- jumps[c(TRUE, diff(as.Date(paste0(jumps, "-01"))) > 14)]
-    clustered <- utils::head(clustered, max_versions - 1)
-    cutoffs <- c(bin_levels[1], clustered, bin_levels[length(bin_levels)])
-    versions <- list()
-    for (i in seq_len(length(cutoffs) - 1)) {
-        versions[[i]] <- list(
-            version_label = paste0("v", i),
-            date_start = paste0(cutoffs[i], "-01"),
-            date_end = paste0(cutoffs[i + 1], "-28")
-        )
-    }
-    versions
-}
-
-#' Candidate ordinally-coded categorical variables for straightlining (M9):
+#' Candidate ordinally-coded categorical variables for straightlining (M8):
 #' numeric columns with a small number of distinct integer values (Likert /
 #' single-select-style), excluding binary yes/no and structural columns.
 detect_ordinal_vars <- function(ds, exclude = character(), n = 20L) {
@@ -588,14 +462,8 @@ profile_roles <- function(ds, media_folder = NA_character_, roster_candidate = N
         NA_character_
         },
         completion_var_candidates = detect_completion_candidates(ds, n = 3L),
-        treatment_control_candidates = detect_treatment_control_vars(ds, n = 2L),
-        geo_group_candidates = detect_geographic_group_vars(ds, n = 4L),
         form_version_col = detect_form_version_col(ds)
     )
-    # Deprecated alias: default_modules()/check_modules_preview.R read
-    # group_var_candidates as their M1$group_vars source, now preferring
-    # Treatment/Control over geography (see default_modules() below).
-    roles$group_var_candidates <- roles$treatment_control_candidates %||% roles$geo_group_candidates
 
     # Section-level start/end timestamp pairs, distinct from the overall
     # roles$start/roles$end — see detect_section_time_pairs(). Empty list
@@ -604,11 +472,11 @@ profile_roles <- function(ds, media_folder = NA_character_, roster_candidate = N
         ds, exclude = c(roles$start, roles$end)
     )
 
-    # A guessed display label for roles$group (e.g. "School", "Village") —
-    # confirmed later, not part of the required Setup gate; see
-    # derive_group_label(). NA until confirmed/guessed successfully, in
-    # which case report/issue-tracking headers fall back to "Group".
-    roles$group_label <- derive_group_label(roles$group)
+    # roles$group_label (e.g. "School", "Village") is agent-judgment only —
+    # stated fresh each setup from the group column's name/values (SKILL.md
+    # A2's Group label tab), never auto-derived here. Downstream code reads
+    # it via `roles$group_label %||% "Group"`, so leaving it unset until the
+    # agent/role_map.yaml supplies it is safe.
 
     # De-identification-by-default policy: HFC data never has the surveyed
     # individual's real name, but usually does have enumerator names — so
@@ -743,20 +611,20 @@ default_modules <- function(roles) {
     audio_cols <- utils::head(audio_cols, 5)
     image_cols <- utils::head(image_cols, 5)
 
-    # Unified "important variables" shortlist (SKILL.md A2.10) drives M6/M9/M13
-    # instead of each module picking its own independent pool. M6/M13 use it
-    # directly (any variable type is fine there); M9 straightlining still
+    # Unified "important variables" shortlist (SKILL.md A2.10) drives M6/M8/M11
+    # instead of each module picking its own independent pool. M6/M11 use it
+    # directly (any variable type is fine there); M8 straightlining still
     # needs ordinal-shaped columns specifically, so it intersects the
     # confirmed list with the auto-detected ordinal pool — falling back to
     # the FULL auto ordinal pool if that intersection is empty, so a
     # variable-selection choice never silently disables the whole module.
     important_vars <- roles$important_vars %||% character()
     m6_vars <- if (length(important_vars)) important_vars else (roles$numeric_shortlist %||% character())
-    m13_vars <- if (length(important_vars)) important_vars else (roles$sumstats_var_candidates %||% character())
-    m9_ordinal <- if (length(important_vars)) {
+    m11_vars <- if (length(important_vars)) important_vars else (roles$sumstats_var_candidates %||% character())
+    m8_ordinal <- if (length(important_vars)) {
         intersect(important_vars, roles$ordinal_vars %||% character())
     } else character()
-    if (!length(m9_ordinal)) m9_ordinal <- roles$ordinal_vars %||% character()
+    if (!length(m8_ordinal)) m8_ordinal <- roles$ordinal_vars %||% character()
 
     # M7 Missingness gets the unified shortlist PLUS up to ~20 more
     # variables (any type, not just numeric) the agent separately judges
@@ -773,11 +641,11 @@ default_modules <- function(roles) {
     # geography is only added when there's no Treatment/Control column at
     # all, or the user explicitly opted in to it alongside T/C (default:
     # declined — see roles$geo_group_opted_in, confirmed in the Media, Map
-    # & Grouping window's Add geography tab).
-    m1_tc <- roles$treatment_control_col %||%
-        (if (length(roles$treatment_control_candidates)) roles$treatment_control_candidates[[1]] else NA_character_)
-    m1_geo <- roles$geo_group_col %||%
-        (if (length(roles$geo_group_candidates)) roles$geo_group_candidates[[1]] else NA_character_)
+    # & Grouping window's Add geography tab). Both columns are pure agent
+    # judgment (SKILL.md A1) — read from the confirmed role_map.yaml value,
+    # NA on a first-ever run before the agent has stated one yet.
+    m1_tc <- roles$treatment_control_col %||% NA_character_
+    m1_geo <- roles$geo_group_col %||% NA_character_
     m1_group_vars <- if (!is.na(m1_tc)) {
         c(m1_tc, if (isTRUE(roles$geo_group_opted_in)) m1_geo else NA_character_)
     } else {
@@ -788,6 +656,10 @@ default_modules <- function(roles) {
     list(
         M1 = list(
         on = TRUE,
+        # M1 alone sees the full, unfiltered dataset (every row, target-list
+        # or all primary+secondary rows) — see ds_for_module() in
+        # run_check_modules(), run_checks.R.
+        full_data = TRUE,
         completion_var = if (length(roles$completion_var_candidates)) roles$completion_var_candidates[[1]] else NA_character_,
         # Which signal type is actually driving check_m1()'s complete_flag
         # for this project ("gating" — the preferred, instrument-read
@@ -803,6 +675,16 @@ default_modules <- function(roles) {
         gate_cols = character(),
         gate_pass_values = list(),
         gate_labels = list(),
+        # gate_min_date (parallel to gate_cols, NA = always applies): the
+        # date a gate was added to the form partway through data collection,
+        # so submissions dated before it existed aren't retroactively failed
+        # for missing a question that didn't exist yet (the "mid-study new
+        # gate" failure mode). governing_gate: a later gate (typically
+        # consent) that, when it passes, overrides an earlier gate's still-
+        # failed/blank status for that row, since it can legitimately be
+        # revisited later in the interview.
+        gate_min_date = character(),
+        governing_gate = NA_character_,
         # Day-by-day enumerator productivity vs. a user-stated target
         # (Completion Signals window) — NA/unset skips that check entirely.
         daily_target_per_enum = NA_real_,
@@ -824,57 +706,122 @@ default_modules <- function(roles) {
         low_completion_on = isTRUE(roles$has_unit),
         pct_median = 0.5
         ),
-        M2 = list(on = TRUE, id = roles$entity_id, extra_keys = roles$dup_key_extra %||% character()),
+        M2 = list(on = TRUE, full_data = FALSE, id = roles$entity_id, extra_keys = roles$dup_key_extra %||% character()),
         M3 = list(
         on = TRUE,
+        full_data = FALSE,
         version_col = roles$form_version_col %||% NA_character_,
         version_map = list()
         ),
         M4 = list(
         on = TRUE,
+        full_data = FALSE,
         duration = roles$duration,
         sd_rule = 3,
         section_map = list(),
         section_pairs = list(),
-        by_enum = TRUE
+        by_enum = TRUE,
+        # One-sided by default: only a suspiciously SHORT duration is a
+        # data-quality flag (report_sections.json: "no upper bound ... only
+        # too-short flagged"). Tested SD-outlier logic for unusually LONG
+        # durations kept available as an opt-in advanced flag, off by
+        # default, same posture as M7/M10's advanced_*_flag toggles.
+        advanced_long_flag = list(on = FALSE)
         ),
         M5 = list(
         on = TRUE,
+        full_data = FALSE,
         flag_weekend = TRUE,
         evening_hour = 19,
         morning_hour = 7
         ),
-        M6 = list(on = TRUE, vars = utils::head(m6_vars, 10), sd_rule = 3),
+        M6 = list(
+        on = TRUE,
+        full_data = FALSE,
+        vars = utils::head(m6_vars, 10),
+        sd_rule = 3,
+        # "sd" (default) = unchanged mean±sd_rule*SD rule. "fixed" = a fixed
+        # absolute range per variable (fixed_thresholds[[var]] = list(low=,
+        # high=), one-sided when either bound is NA) — for surveys where a
+        # relative SD rule doesn't make sense (e.g. plausible age/score
+        # bounds known in advance, independent of this project's own data).
+        outlier_mode = "sd",
+        fixed_thresholds = list()
+        ),
         M7 = list(
         on = TRUE,
+        full_data = FALSE,
         vars = m7_vars,
         sentinel_codes = character(),
         by_enum = TRUE,
         var_issue_threshold = 0.5,
         enum_pool_threshold = 0.9,
-        enum_pct_threshold = 0.5
+        enum_pct_threshold = 0.5,
+        # Descriptive only by default (report_sections.json: "never produces
+        # findings"). Tested enumerator-level flagging logic kept available
+        # as an opt-in advanced flag, off by default.
+        advanced_enum_flag = list(on = FALSE)
         ),
-        M8 = list(on = isTRUE(roles$has_gps), x = roles$x, y = roles$y, threshold_m = 300),
-        M9 = list(
-        on = length(m9_ordinal) > 0,
-        ordinal_vars = utils::head(m9_ordinal, 15),
-        enum_threshold_pct = 0.9,
+        M8 = list(
+        on = length(m8_ordinal) > 0,
+        full_data = FALSE,
+        ordinal_vars = utils::head(m8_ordinal, 15),
+        # Enumerator-level: per enumerator PER DAY (not pooled across their
+        # whole completed-survey history) - 100% means every answer that
+        # day was identical, evaluated only on a day with >= 3 completed
+        # surveys (see check_m8()'s min_n_per_enum_day). Survey-level
+        # (within one submission) is a separate, unrelated check - stays 90%.
+        enum_threshold_pct = 1.0,
         survey_threshold_pct = 0.9
         ),
-        M10 = list(on = FALSE, enabled = character(), custom = character()),
-        M11 = list(
+        M9 = list(
+        on = FALSE,
+        full_data = FALSE,
+        enabled = character(),
+        custom = character(),
+        # Per-custom-check-name opt-in to full_data (ds_full instead of the
+        # completed/surveyed subset) — most custom checks don't need it.
+        custom_full_data = character()
+        ),
+        M10 = list(
+        on = isTRUE(roles$has_gps),
+        full_data = FALSE,
+        x = roles$x,
+        y = roles$y,
+        # Pure visualization by default (report_sections.json: "no distance
+        # threshold, no flagged points, no findings table"). Tested
+        # median-reference distance-outlier logic kept available as an
+        # opt-in advanced flag, off by default.
+        advanced_distance_flag = list(on = FALSE, threshold_m = 300)
+        ),
+        M11 = list(on = TRUE, full_data = FALSE, vars = utils::head(m11_vars, 10), by_enum = TRUE, max_n = 10L),
+        M12 = list(
+        on = FALSE,
+        full_data = FALSE,
+        # No auto-detection — which covariates/groupings matter is a
+        # setup-confirm question, not guessable. Each grouping:
+        # list(group_col=, group_label=, covariates=character(),
+        # other_group_col=NA, roster_value_map=list()) — roster_value_map
+        # remaps a roster-side raw group value to the data-side raw value
+        # when they're coded differently (e.g. roster "1,2,3" vs data
+        # "Control,Treat1,Treat2"), for the roster join the Completed
+        # Interviews and Replacements tables both need.
+        groupings = list()
+        ),
+        M13 = list(
         on = isTRUE(roles$has_media),
+        full_data = FALSE,
         audio_cols = audio_cols,
         image_cols = image_cols,
         other_cols = roles$qualitative_text_cols %||% character()
         ),
-        M12 = list(
+        M14 = list(
         on = isTRUE(roles$has_consentish),
+        full_data = FALSE,
         assent = roles$assent,
         consent = roles$consent,
         audio = roles$audio_flag
-        ),
-        M13 = list(on = TRUE, vars = utils::head(m13_vars, 10), by_enum = TRUE, max_n = 10L)
+        )
     )
 }
 

@@ -67,10 +67,17 @@ m2_desc <- function(modules) {
 
 m4_desc <- function(modules) {
     sd_rule <- modules$M4$sd_rule %||% 3
-    sprintf(
-        "Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews more than %s SD above or below the mean.",
+    base <- sprintf(
+        "Reports how long interviews took, in minutes, overall and by enumerator, and flags individual interviews more than %s SD below the mean.",
         sd_rule
     )
+    if (isTRUE(modules$M4$advanced_long_flag$on)) {
+        base <- paste0(base, sprintf(
+            " Advanced flagging is on for this project: interviews more than %s SD above the mean are also flagged.",
+            sd_rule
+        ))
+    }
+    base
 }
 
 m5_desc <- function(modules) {
@@ -87,49 +94,91 @@ m5_desc <- function(modules) {
 }
 
 m6_desc <- function(modules) {
-    sd_rule <- modules$M6$sd_rule %||% 3
     vars <- fmt_var_list(modules$M6$vars %||% character())
     var_clause <- if (nzchar(vars)) sprintf(" on: %s", vars) else ""
-    sprintf(
+    if (identical(modules$M6$outlier_mode %||% "sd", "fixed") && length(modules$M6$fixed_thresholds %||% list())) {
+        sprintf("Flags values outside a fixed, project-supplied range on key numeric questions%s.", var_clause)
+    } else {
+        sd_rule <- modules$M6$sd_rule %||% 3
+        sprintf(
         "Flags unusually high or low values (beyond %s SD from the mean) on key numeric questions%s.",
         sd_rule, var_clause
-    )
+        )
+    }
 }
 
 m7_desc <- function(modules) {
-    var_issue <- round(100 * (modules$M7$var_issue_threshold %||% 0.5))
-    pool <- round(100 * (modules$M7$enum_pool_threshold %||% 0.9))
-    enum_pct <- round(100 * (modules$M7$enum_pct_threshold %||% 0.5))
     vars <- fmt_var_list(modules$M7$vars %||% character())
     var_clause <- if (nzchar(vars)) sprintf(" on: %s", vars) else ""
-    sprintf(
-        "Reports missingness on key survey questions%s, flagging any variable more than %s%% missing overall. For the worst variables (%s%%+ missing overall), also flags any enumerator whose own missingness on that variable is %s%%+.",
-        var_clause, var_issue, pool, enum_pct
-    )
+    base <- sprintf("Reports missingness on key survey questions%s. Descriptive only, not flagged as an issue.", var_clause)
+    if (isTRUE(modules$M7$advanced_enum_flag$on)) {
+        var_issue <- round(100 * (modules$M7$var_issue_threshold %||% 0.5))
+        pool <- round(100 * (modules$M7$enum_pool_threshold %||% 0.9))
+        enum_pct <- round(100 * (modules$M7$enum_pct_threshold %||% 0.5))
+        base <- paste0(base, sprintf(
+            " Advanced flagging is on for this project: any variable more than %s%% missing overall is treated as an issue, and for the worst variables (%s%%+ missing overall), any enumerator whose own missingness on that variable is %s%%+ is also flagged.",
+            var_issue, pool, enum_pct
+        ))
+    }
+    base
+}
+
+m10_desc <- function(modules) {
+    base <- "Plots every submission with a valid coordinate on a map, for visual review. Descriptive only, not flagged as an issue by default."
+    if (isTRUE(modules$M10$advanced_distance_flag$on)) {
+        thr <- modules$M10$advanced_distance_flag$threshold_m %||% 300
+        base <- paste0(base, sprintf(
+            " Advanced flagging is on for this project: submissions recorded more than %s meters from the median location of other submissions at that site are flagged and shown in red.",
+            thr
+        ))
+    }
+    base
 }
 
 m8_desc <- function(modules) {
-    thr <- modules$M8$threshold_m %||% 300
+    enum_pct <- round(100 * (modules$M8$enum_threshold_pct %||% 1.0))
+    survey_pct <- round(100 * (modules$M8$survey_threshold_pct %||% 0.9))
     sprintf(
-        "Flags submissions recorded more than %s meters from the median location of other submissions at that site.",
-        thr
-    )
-}
-
-m9_desc <- function(modules) {
-    enum_pct <- round(100 * (modules$M9$enum_threshold_pct %||% 0.9))
-    survey_pct <- round(100 * (modules$M9$survey_threshold_pct %||% 0.9))
-    sprintf(
-        "Flags enumerators who gave the same answer on a question in %s%%+ of their interviews, and submissions where %s%%+ of ordinal/Likert-style answers are identical.",
+        "Flags enumerators who gave the same answer on a question in %s%%+ of their interviews on a single day (minimum 3 that day), and submissions where %s%%+ of ordinal/Likert-style answers are identical.",
         enum_pct, survey_pct
     )
 }
 
-m11_desc <- function(modules) {
+m13_desc <- function(modules) {
     "Flags a media-indicating column (audio, image, or qualitative-capture) that is completely empty across every surveyed row: usually a form/coding problem (the field isn't showing up in the enumerator's app, or the question is misconfigured), not a per-row file-hygiene issue."
 }
 
 DYNAMIC_MODULE_DESC <- list(
     M1 = m1_desc, M2 = m2_desc, M4 = m4_desc, M5 = m5_desc, M6 = m6_desc, M7 = m7_desc,
-    M8 = m8_desc, M9 = m9_desc, M11 = m11_desc
+    M10 = m10_desc, M8 = m8_desc, M13 = m13_desc
 )
+
+#' Dynamic description for the "Other" section (report_sections.json: should
+#' specify what's actually found, not a generic sentence). Unlike the
+#' MODULE_DESC functions above, this is findings-dependent rather than
+#' config-dependent — "Other" isn't its own module, it's the split-off part
+#' of M9's output (see build_outputs.R's write_html_report()), so it takes
+#' the already-computed `other_sub` findings subset directly. `other_sub`:
+#' the "Other" section's own findings data frame (category != "field_
+#' request"), already filtered by the caller. `module_notes_custom`:
+#' `module_notes$custom`, used to resolve a category to its registered
+#' check's human label when one exists; falls back to a prettified version
+#' of the raw category string otherwise.
+other_section_desc <- function(other_sub, module_notes_custom = NULL) {
+    base <- "Findings outside the standard checks and Field Request."
+    if (is.null(other_sub) || nrow(other_sub) == 0) return(base)
+    cats <- sort(unique(as.character(other_sub$category)))
+    cats <- cats[!is.na(cats) & nzchar(cats)]
+    if (!length(cats)) return(base)
+    cat_labels <- vapply(cats, function(cg) {
+        entry <- module_notes_custom[[cg]]
+        lbl <- entry$label %||% NA_character_
+        if (!is.na(lbl) && nzchar(lbl)) return(lbl)
+        gsub("(^|\\s)([a-z])", "\\1\\U\\2", gsub("_", " ", cg), perl = TRUE)
+    }, character(1))
+    n <- nrow(other_sub)
+    sprintf(
+        "Findings outside the standard checks and Field Request — %d issue%s found this run: %s.",
+        n, if (n == 1) "" else "s", paste(cat_labels, collapse = ", ")
+    )
+}

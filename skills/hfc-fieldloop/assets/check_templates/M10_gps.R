@@ -1,11 +1,11 @@
-# HFC FieldLoop generated check: M9
-# Standalone, runnable script: reproduces this project's M9 (Straightlining)
+# HFC FieldLoop generated check: M10
+# Standalone, runnable script: reproduces this project's M10 (GPS Location)
 # findings using the same shared logic the build itself calls. Copied into
-# hfc/code/checks/M9_straightlining.R at build time with the skill/code_output_dir lines below
+# hfc/code/checks/M10_gps.R at build time with the skill/code_output_dir lines below
 # substituted for this machine's real paths — this file, as shipped in the
 # skill's assets/check_templates/, is the copy-source template.
 #
-# Usage: Rscript hfc/code/checks/M9_straightlining.R
+# Usage: Rscript hfc/code/checks/M10_gps.R
 
 # Set skill + code output paths (substituted automatically on setup build) ----
 skill <- "your/path/to/hfc-fieldloop/"
@@ -25,9 +25,9 @@ modules <- yaml::read_yaml(hfc_path(code_output_dir, "config", "modules.yaml"))
 proj_yaml <- yaml::read_yaml(hfc_path(code_output_dir, "project.yaml"))
 ds <- load_latest_dataset(cfg$input_data_dir, proj_yaml$data_file)
 ds <- prepare_ds_for_checks(ds, roles, code_output_dir)
-if (any(!ds$.hfc_completed)) ds <- ds[ds$.hfc_completed, , drop = FALSE]
+ds <- ds_for_module_selection(ds, "M10", modules)
 
-res <- check_m9(ds, roles, modules)
+res <- check_m10(ds, roles, modules)
 res$findings <- dedupe_finding_ids(res$findings)
-message("M9 (Straightlining): ", nrow(res$findings), " findings")
+message("M10 (GPS Location): ", nrow(res$findings), " findings")
 print(as.data.frame(res$findings))
